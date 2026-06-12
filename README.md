@@ -61,11 +61,11 @@ Required environment variables:
 - `GH_TOKEN`: token used by `gh`.
 - `GITHUB_REPOSITORY`: repository in `owner/name` form.
 - `PR_NUMBER`: pull request number.
-- `OPENCODE_MODEL`: model id used for OpenCode's configured agents.
+- `OPENCODE_API_KEY`: OpenCode Go API key consumed by the `opencode-go` provider config.
 
 Optional environment variables:
 
-- `OPENCODE_API_KEY`: OpenCode Go API key consumed by the `opencode-go` provider config.
+- `OPENCODE_MODEL`: model id used for OpenCode's configured agents; defaults to `opencode-go/minimax-m2.7`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits; anonymous usage has lower limits.
 - `OPENCODE_AGENT`: agent name for `opencode run`; defaults to `coder`.
 - `REVIEW_BODY`: body text for the submitted GitHub review.
@@ -148,15 +148,15 @@ comments rather than relying on assigning the app as a reviewer.
 
 Set secrets for runtime keys:
 
-- `OPENCODE_API_KEY` or the provider key your OpenCode config uses
-- `CONTEXT7_API_KEY` if higher Context7 limits are needed
 - `OPENCODE_REVIEW_APP_PRIVATE_KEY` for the GitHub App that will author reviews
+- `OPENCODE_API_KEY` for OpenCode Go
+- `CONTEXT7_API_KEY` if higher Context7 limits are needed
 
-Set repository variables:
+Optional repository variable overrides:
 
-- `OPENCODE_MODEL`
-- `OPENCODE_REVIEW_COMMAND`
-- `OPENCODE_REVIEW_APP_CLIENT_ID`
+- `OPENCODE_MODEL`, defaults to `opencode-go/minimax-m2.7`
+- `OPENCODE_REVIEW_COMMAND`, defaults to `@singular-code-review`
+- `SINGULAR_CODE_REVIEW_CLIENT_ID`, defaults to `Iv23liVgvy1yaHapd0Wx`
 
 The GitHub App should be installed on the consuming repository with:
 

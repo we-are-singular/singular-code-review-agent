@@ -28,7 +28,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.OPENCODE_REVIEW_APP_CLIENT_ID }}
+          client-id: ${{ vars.SINGULAR_CODE_REVIEW_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
           private-key: ${{ secrets.OPENCODE_REVIEW_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           permission-contents: read
@@ -55,7 +55,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
           OPENCODE_REVIEW_COMMAND: ${{ vars.OPENCODE_REVIEW_COMMAND || '@singular-code-review' }}

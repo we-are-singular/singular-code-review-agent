@@ -243,6 +243,8 @@ main() {
   export REVIEW_QUEUE_FILE="$queue_file"
   export REVIEW_CONTEXT_FILE="$context_file"
   export REVIEW_DIFF_FILE="$diff_file"
+  export OPENCODE_MODEL="${OPENCODE_MODEL:-opencode-go/minimax-m2.7}"
+  export OPENCODE_REVIEW_COMMAND="${OPENCODE_REVIEW_COMMAND:-@singular-code-review}"
 
   install_opencode_runtime_config
   build_review_context "$context_file" "$diff_file"
