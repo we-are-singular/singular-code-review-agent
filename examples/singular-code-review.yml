@@ -1,4 +1,4 @@
-name: OpenCode Review
+name: Singular Code Review
 
 on:
   issue_comment:
@@ -19,7 +19,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
-        contains(github.event.comment.body, vars.OPENCODE_REVIEW_COMMAND || '@opencode-review'))
+        contains(github.event.comment.body, vars.OPENCODE_REVIEW_COMMAND || '@singular-code-review'))
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/we-are-singular/singular-code-review-agent:latest
@@ -58,5 +58,5 @@ jobs:
           OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
-          OPENCODE_REVIEW_COMMAND: ${{ vars.OPENCODE_REVIEW_COMMAND || '@opencode-review' }}
+          OPENCODE_REVIEW_COMMAND: ${{ vars.OPENCODE_REVIEW_COMMAND || '@singular-code-review' }}
           REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]

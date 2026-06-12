@@ -15,7 +15,7 @@ RIGHT-side changed lines, and submits one batched GitHub review.
 - `opencode/AGENTS.md` contains the review-only operating instructions.
 - `opencode/skills/` contains vendored reviewer skills copied into the image.
 - `.github/workflows/publish-image.yml` builds and publishes this image to GHCR.
-- `examples/opencode-review.yml` is a reference workflow for consuming repositories.
+- `examples/singular-code-review.yml` is a reference workflow for consuming repositories.
 - `test/` contains no-network tests with mocked `gh` and `opencode`.
 
 ## Build
@@ -71,7 +71,7 @@ Optional environment variables:
 - `REVIEW_BODY`: body text for the submitted GitHub review.
 - `DRY_RUN=true`: print the final payload instead of submitting it.
 - `REVIEW_BOT_LOGIN`: bot login used to identify previous bot findings and reply action items.
-- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to `@opencode-review`.
+- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to `@singular-code-review`.
 
 The committed `opencode/opencode.json` uses OpenCode's documented
 `{env:VARIABLE_NAME}` placeholders, so GitHub secrets remain scalar values
@@ -137,9 +137,10 @@ npm test
 
 ## GitHub Actions
 
-Copy `examples/opencode-review.yml` into a consuming repository to trigger
+Copy `examples/singular-code-review.yml` into a consuming repository as
+`.github/workflows/singular-code-review.yml` to trigger
 reviews from PR comments containing `vars.OPENCODE_REVIEW_COMMAND`, defaulting
-to `@opencode-review`.
+to `@singular-code-review`.
 
 A GitHub App can provide the posting identity and token, but review requests are
 for user logins and team slugs. Treat app mentions as text commands in PR
@@ -163,7 +164,7 @@ The GitHub App should be installed on the consuming repository with:
 - Issues: read
 - Pull requests: write
 
-`examples/opencode-review.yml` mints an installation token with
+`examples/singular-code-review.yml` mints an installation token with
 `actions/create-github-app-token` and uses that token for checkout, `gh`, and
 review submission. This keeps compute inside GitHub Actions while comments are
 authored by the app bot, for example `your-app[bot]`, instead of
