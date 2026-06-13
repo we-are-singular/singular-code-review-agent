@@ -5,6 +5,7 @@ const {
   addInlineComment,
   addReply,
   addSuggestion,
+  setConclusion,
   clearQueue,
   contextFileFromEnv,
   loadQueue,
@@ -20,6 +21,7 @@ function usage() {
   review_comments add --path <path> --line <line> [--start-line <line>] --body <body>
   review_comments suggest --path <path> --line <line> [--start-line <line>] --message <body> --replacement-file <file>
   review_comments reply --to <review-comment-id> --body <body>
+  review_comments conclude --body <review-conclusion>
   review_comments list
   review_comments status
   review_comments validate [--context <file>] [--output <file>]
@@ -133,6 +135,11 @@ function main() {
       return;
     }
 
+    if (command === "conclude") {
+      printJson(setConclusion({ body: readBody(options) }, queueFile));
+      return;
+    }
+
     if (command === "list") {
       printJson(loadQueue(queueFile));
       return;
@@ -164,10 +171,11 @@ function main() {
         queue_file: queueFile,
         queued_inline: queue.inlineComments.length,
         queued_replies: queue.replies.length,
+        has_conclusion: Boolean(validated.conclusion),
         valid_inline: validated.inlineComments.length,
         valid_replies: validated.replies.length,
         dropped: validated.dropped.length,
-        submit_would_be_empty: validated.inlineComments.length === 0 && validated.replies.length === 0
+        submit_would_be_empty: validated.inlineComments.length === 0 && validated.replies.length === 0 && !validated.conclusion
       });
       return;
     }

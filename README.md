@@ -1,87 +1,131 @@
 # Singular Code Review Agent
 
-This repository is the source package for a containerized OpenCode PR reviewer.
-The built image runs inside a GitHub Actions job container, reviews a pull request
-diff, stages inline comments through a local tool, filters comments to valid
-RIGHT-side changed lines, and submits one batched GitHub review.
+Singular Code Review Agent packages an automated pull-request reviewer as a
+container image for GitHub Actions. It runs OpenCode against a pull request,
+collects review findings through local helper tools, validates every inline
+comment against the changed lines in the current diff, and submits one batched
+GitHub review from a GitHub App identity.
 
-## Layout
+The project is designed to be operated centrally: this repository builds and
+publishes the reviewer image and exposes a reusable workflow, while consuming
+repositories opt in with a small trigger workflow and runtime secrets.
 
-- `Dockerfile` builds the reviewer image.
-- `bin/review_context` collects normalized PR context, mentions, previous bot comments, valid diff lines, and action items.
-- `bin/review_comments` is the local tool OpenCode calls to queue inline comments, multiline comments, suggestions, and replies.
-- `bin/stage_review_comment` and `bin/filter_review_comments` are compatibility wrappers.
-- `bin/review_orchestrator.sh` fetches the PR diff, runs OpenCode, builds the review payload, and posts it.
-- `opencode/AGENTS.md` contains the review-only operating instructions.
-- `opencode/skills/` contains vendored reviewer skills copied into the image.
-- `.github/workflows/publish-image.yml` builds and publishes this image to GHCR.
-- `.github/workflows/review.yml` is the reusable workflow consumed by target repositories.
-- `examples/singular-code-review.yml` is a reference workflow for consuming repositories.
-- `test/` contains no-network tests with mocked `gh` and `opencode`.
+## What it provides
 
-## Build
+- A reproducible Docker image built from an OpenCode sandbox base image.
+- A reusable GitHub Actions workflow that checks out a pull request, prepares
+  the reviewer runtime, and runs the review orchestrator.
+- A review orchestration script that gathers pull-request context, executes
+  OpenCode, filters staged findings to valid diff positions, and submits the
+  final review payload.
+- Local review tools that let the agent stage inline comments, multiline
+  comments, suggestions, replies, and one overall conclusion comment before
+  submission.
+- A review-only OpenCode prompt and vendored reviewer skills that keep the
+  agent focused on actionable code review feedback.
+- No-network test coverage for the review tools and orchestrator behavior using
+  mocked command-line dependencies.
 
-The default base image is your known working OpenCode sandbox image:
+## How it works
 
-```bash
-docker buildx imagetools inspect docker.io/cloudflare/sandbox:0.9.2-opencode
-docker build -t singular-code-review:local .
-```
+At runtime, the reusable workflow mints a GitHub App installation token and uses
+that token for checkout, `gh` operations, and review submission. The container
+then runs `bin/review_orchestrator.sh`, which:
 
-If you verify a newer compatible OpenCode sandbox tag, override the base:
+1. fetches normalized pull-request context with `bin/review_context`;
+2. starts OpenCode with the bundled configuration and review-only prompt;
+3. lets the agent queue findings and one final conclusion comment through
+   `bin/review_comments`;
+4. filters queued comments so only valid RIGHT-side changed lines are submitted;
+5. posts a single GitHub review whose body uses the queued conclusion and any
+   queued inline comments, plus any queued replies.
 
-```bash
-docker build \
-  --build-arg BASE_IMAGE=docker.io/cloudflare/sandbox:<tag> \
-  -t singular-code-review:local .
-```
+The image keeps credentials out of the build. Tokens, OpenCode credentials,
+model selection, command triggers, and dry-run behavior are all provided through
+runtime environment variables or workflow secrets.
 
-## Publishing
+## Repository map
 
-This repository publishes its container image with `.github/workflows/publish-image.yml`.
-On pushes to `main`, it builds and pushes:
+- `Dockerfile` defines the reviewer image.
+- `bin/review_orchestrator.sh` coordinates context collection, OpenCode
+  execution, review payload creation, and submission.
+- `bin/review_context` collects pull-request metadata, mentions, previous bot
+  comments, valid diff lines, and action items.
+- `bin/review_comments` is the staging interface used by OpenCode for comments,
+  suggestions, multiline findings, replies, the review conclusion, listing, and
+  status checks.
+- `bin/stage_review_comment` and `bin/filter_review_comments` are compatibility
+  wrappers around the review-comment tooling.
+- `lib/review-tools.js` contains the shared implementation for staging,
+  filtering, and validating review comments.
+- `opencode/AGENTS.md` is the image-global review prompt.
+- `opencode/opencode.json` configures OpenCode and reads secrets through
+  environment placeholders.
+- `opencode/skills/` contains vendored reviewer skills used inside the image.
+- `.github/workflows/publish-image.yml` builds and publishes the image to GHCR.
+- `.github/workflows/review.yml` is the reusable workflow consumed by target
+  repositories.
+- `examples/singular-code-review.yml` is an example trigger workflow for a
+  consuming repository.
+- `test/` contains Node test suites with mocked `gh` and `opencode` commands.
+
+## Published image
+
+Pushes to `main` publish the reviewer image to GitHub Container Registry as:
 
 ```text
 ghcr.io/we-are-singular/singular-code-review-agent:latest
 ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
 ```
 
-Pull requests build the image without pushing it.
+Pull requests build the image without publishing it. The source repository can
+remain private while the GHCR package is made public for unauthenticated pulls
+from consuming repositories.
 
-The source repository can be private while the GHCR image is public. After the
-first successful push creates the package, set the package visibility to public
-in GitHub Packages settings if you want consumer repositories to pull it without
-authentication.
+## Runtime inputs
 
-## Runtime Configuration
+Required runtime environment variables:
 
-Credentials are injected at runtime, not baked into the image.
-
-Required environment variables:
-
-- `GH_TOKEN`: token used by `gh`.
+- `GH_TOKEN`: token used by the GitHub CLI and review submission.
 - `GITHUB_REPOSITORY`: repository in `owner/name` form.
-- `PR_NUMBER`: pull request number.
-- `OPENCODE_API_KEY`: OpenCode Go API key consumed by the `opencode-go` provider config.
+- `PR_NUMBER`: pull request number to review.
+- `OPENCODE_API_KEY`: OpenCode Go API key consumed by the bundled provider
+  configuration.
 
-Optional environment variables:
+Optional runtime environment variables:
 
-- `OPENCODE_MODEL`: model id used for OpenCode's configured agents; defaults to `opencode-go/minimax-m2.7`.
-- `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits; anonymous usage has lower limits.
+- `OPENCODE_MODEL`: model id used for configured OpenCode agents; defaults to
+  `opencode-go/minimax-m2.7`.
+- `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `OPENCODE_AGENT`: agent name for `opencode run`; defaults to `coder`.
 - `REVIEW_BODY`: body text for the submitted GitHub review.
-- `DRY_RUN=true`: print the final payload instead of submitting it.
-- `REVIEW_BOT_LOGIN`: bot login used to identify previous bot findings and reply action items.
-- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to `@singular-code-review`.
+- `DRY_RUN=true`: prints the final review payload instead of submitting it.
+- `REVIEW_BOT_LOGIN`: bot login used to identify previous bot findings and
+  reply action items.
+- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to
+  `@singular-code-review`.
 
-The committed `opencode/opencode.json` uses OpenCode's documented
-`{env:VARIABLE_NAME}` placeholders, so GitHub secrets remain scalar values
-instead of whole JSON blobs.
+Dependency installation is automatic when the checked-out pull-request workspace
+contains `package.json`. The runner chooses `pnpm`, `yarn`, or `npm` based on the
+lockfile present in the workspace.
 
-Dependency installation is automatic when the checked-out PR workspace contains
-`package.json`. The runner uses `pnpm`, `yarn`, or `npm` based on the lockfile.
+## Reviewer behavior
 
-## Skills
+The bundled prompt in `opencode/AGENTS.md` is copied into the image as the
+image-global OpenCode instructions. Target repositories can still provide their
+own `AGENTS.md` files for project-specific context, but the image prompt remains
+authoritative for review-only behavior.
+
+The reviewer queues findings and one final conclusion comment through
+`review_comments` instead of posting them directly. The orchestrator is the only
+submitter, which allows it to validate positions against the current diff and
+submit one consolidated review. The queued conclusion becomes the GitHub review
+body; it can be a single-line LGTM for simple pull requests or a sectioned
+summary covering changes, recommendations, and important flags when useful. It
+also tracks previous bot comments and reply action items so follow-up review runs
+can respond to existing threads when appropriate.
+
+## Vendored skills
 
 The image vendors these skills from `we-are-singular/skills` at commit
 `fc5dbad9c36df9f133a1c2221ef8d1212f0c36b1`:
@@ -90,103 +134,25 @@ The image vendors these skills from `we-are-singular/skills` at commit
 - `frontend-architecture`
 - `singular-code-review`
 
-The `git-commit-pr` skill is intentionally excluded.
+The `git-commit-pr` skill is intentionally excluded. Vendoring keeps image
+builds reproducible and avoids pulling skill content with `npx` or GitHub during
+the Docker build. Update the snapshot by replacing the skill directories under
+`opencode/skills/` and updating `opencode/skills/VENDORED_SKILLS.md`.
 
-Vendoring keeps Docker builds reproducible and avoids pulling skill content with
-`npx` or GitHub during the image build. To update the snapshot, replace the
-three skill directories under `opencode/skills/` and update
-`opencode/skills/VENDORED_SKILLS.md`.
+## Local development
 
-## Initial Prompt
-
-The reviewer workflow prompt lives at `opencode/AGENTS.md` and is copied into
-`/root/.config/opencode/AGENTS.md` in the image. A target repository checkout
-under `/github/workspace` can have its own `AGENTS.md`; that file does not
-overwrite the image-global prompt. Repository instructions are useful context,
-but the image prompt explicitly keeps review-only behavior authoritative.
-
-## Agent Tools
-
-The agent should start with:
-
-```bash
-review_context
-```
-
-It queues review output with:
-
-```bash
-review_comments add --path src/foo.ts --line 42 --body "Concrete finding."
-review_comments add --path src/foo.ts --start-line 40 --line 44 --body "Multiline finding."
-review_comments suggest --path src/foo.ts --start-line 40 --line 44 --message "Use the existing guard." --replacement-file /tmp/suggestion.txt
-review_comments reply --to 123456789 --body "This is still reproducible because..."
-review_comments list
-review_comments status
-```
-
-The agent may use `gh` for read-only investigation, but the orchestrator is the
-only submitter. It validates queued items against the current diff and posts one
-batched review plus any queued replies.
-
-## Local Tests
-
-The tests use only Node built-ins and mocked CLIs.
+The local test suite uses Node's built-in test runner and mocked external CLIs:
 
 ```bash
 npm test
 ```
 
-## GitHub Actions
+For local image validation, build the container with:
 
-This repository exposes `.github/workflows/review.yml` as a reusable workflow.
-Consuming repositories only need a small trigger workflow that calls it with
-`jobs.<job_id>.uses`:
-
-```yaml
-jobs:
-  review:
-    uses: we-are-singular/singular-code-review-agent/.github/workflows/review.yml@main
+```bash
+docker build -t singular-code-review:local .
 ```
 
-Use `@main` if consumers should receive central workflow changes immediately, or
-pin to a release tag such as `@v1` once you want a controlled update channel.
-Public consuming repositories can only call reusable workflows from public
-repositories, so this repository must be public for broad adoption.
-
-Copy `examples/singular-code-review.yml` into a consuming repository as
-`.github/workflows/singular-code-review.yml` to trigger reviews from PR comments
-containing `vars.OPENCODE_REVIEW_COMMAND`, defaulting to
-`@singular-code-review`.
-
-A GitHub App can provide the posting identity and token, but review requests are
-for user logins and team slugs. Treat app mentions as text commands in PR
-comments rather than relying on assigning the app as a reviewer.
-
-For PR comment triggers, the workflow first adds an `eyes` reaction to the
-triggering comment as the app bot. If that same app bot already reacted with
-`eyes`, the workflow skips the review so the same command comment is not
-processed twice.
-
-Set secrets for runtime keys:
-
-- `SINGULAR_CODE_REVIEW_PRIVATE_KEY` for the GitHub App that will author reviews
-- `OPENCODE_API_KEY` for OpenCode Go
-- `CONTEXT7_API_KEY` if higher Context7 limits are needed
-
-Optional repository variable overrides:
-
-- `OPENCODE_MODEL`, defaults to `opencode-go/minimax-m2.7`
-- `OPENCODE_REVIEW_COMMAND`, defaults to `@singular-code-review`
-- `SINGULAR_CODE_REVIEW_CLIENT_ID`, defaults to `Iv23liVgvy1yaHapd0Wx`
-
-The GitHub App should be installed on the consuming repository with:
-
-- Contents: read
-- Issues: write
-- Pull requests: write
-
-The reusable workflow mints an installation token with
-`actions/create-github-app-token` and uses that token for checkout, `gh`, and
-review submission. This keeps compute inside GitHub Actions while comments are
-authored by the app bot, for example `your-app[bot]`, instead of
-`github-actions[bot]`.
+The base image defaults to the known working OpenCode sandbox image and can be
+overridden with the `BASE_IMAGE` build argument when validating a newer sandbox
+release.
