@@ -105,19 +105,20 @@ run_opencode_review() {
   local workspace="$1"
   local context_file="$2"
   local diff_file="$3"
+  local output_file="$4"
   local prompt
 
   require_tool opencode
   require_tool review_comments
   require_tool review_context
 
-  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, queue replies to existing review discussions with review_comments reply, and queue one final conclusion comment with review_comments conclude. Use the conclusion for the review body; it may include sections for a summary of the changes, recommendations, and important flags, or a single-line LGTM for simple PRs. Never use gh api to post review comments or reviews directly. Do not edit repository files."
+  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. Do not queue a final conclusion; a second synthesis pass will turn your review output into the GitHub review body. Never use gh api to post review comments or reviews directly. Do not edit repository files."
 
   log "running OpenCode review"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && opencode run --agent "${OPENCODE_AGENT:-coder}" --file "$context_file" --file "$diff_file" -- "$prompt")
+    (cd "$workspace" && opencode run --agent "${OPENCODE_AGENT:-coder}" --file "$context_file" --file "$diff_file" -- "$prompt") 2>&1 | tee "$output_file"
   else
-    (cd "$workspace" && opencode -q -c "$workspace" -p "$prompt")
+    (cd "$workspace" && opencode -q -c "$workspace" -p "$prompt") 2>&1 | tee "$output_file"
   fi
 }
 
@@ -147,6 +148,72 @@ const value = JSON.parse(fs.readFileSync(file, "utf8"));
 const selected = expr.split(".").reduce((current, key) => current?.[key], value);
 process.stdout.write(`${typeof selected === "string" && selected.trim() ? 1 : 0}\n`);
 NODE
+}
+
+sanitize_conclusion_text() {
+  local input_file="$1"
+
+  node - "$input_file" <<'NODE'
+const fs = require("node:fs");
+
+const [, , inputFile] = process.argv;
+let output = "";
+try {
+  output = fs.readFileSync(inputFile, "utf8");
+} catch {
+  output = "";
+}
+
+output = output
+  .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+  .split(/\r?\n/)
+  .map((line) => line.trimEnd())
+  .filter((line) => line.trim())
+  .join("\n")
+  .trim();
+
+const maxOutputLength = 6000;
+if (output.length > maxOutputLength) {
+  output = `${output.slice(0, maxOutputLength).trimEnd()}\n\n[Conclusion truncated]`;
+}
+
+process.stdout.write(output);
+NODE
+}
+
+build_static_fallback_conclusion() {
+  local output_file="$1"
+  local reviewer_output
+
+  reviewer_output="$(sanitize_conclusion_text "$output_file")"
+  if [[ -n "$reviewer_output" ]]; then
+    printf 'Automated review completed, but the reviewer did not queue structured comments or a conclusion. Posting the reviewer output so the run still leaves a GitHub review:\n\n%s' "$reviewer_output"
+  else
+    printf 'Automated review completed, but the reviewer did not queue structured comments or a conclusion.'
+  fi
+}
+
+run_opencode_conclusion_synthesis() {
+  local workspace="$1"
+  local reviewer_output_file="$2"
+  local conclusion_output_file="$3"
+  local prompt
+  local reviewer_output
+
+  require_tool opencode
+
+  reviewer_output="$(sanitize_conclusion_text "$reviewer_output_file")"
+  prompt="The previous OpenCode reviewer produced terminal output for a pull request but did not queue a final GitHub review conclusion. Synthesize a concise, polished GitHub pull request review body from that output. Preserve any substantive findings, recommendations, and overall verdict. Do not invent issues that are not present. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
+
+  log "running OpenCode conclusion synthesis"
+  if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
+    (cd "$workspace" && opencode run --agent "${OPENCODE_CONCLUSION_AGENT:-${OPENCODE_AGENT:-coder}}" --file "$reviewer_output_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
+  else
+    (cd "$workspace" && opencode -q -c "$workspace" -p "${prompt}
+
+Reviewer terminal output:
+${reviewer_output}") 2>&1 | tee "$conclusion_output_file"
+  fi
 }
 
 build_review_payload() {
@@ -252,6 +319,8 @@ main() {
   local diff_file="${REVIEW_DIFF_FILE:-/tmp/pr.diff}"
   local validated_file="${REVIEW_VALIDATED_FILE:-/tmp/review_validated.json}"
   local payload_file="${REVIEW_PAYLOAD_FILE:-/tmp/final_review.json}"
+  local opencode_output_file="${OPENCODE_OUTPUT_FILE:-/tmp/opencode_review_output.log}"
+  local opencode_conclusion_file="${OPENCODE_CONCLUSION_OUTPUT_FILE:-/tmp/opencode_review_conclusion.log}"
   local inline_count
   local reply_count
   local conclusion_count
@@ -266,19 +335,27 @@ main() {
   build_review_context "$context_file" "$diff_file"
   review_comments clear --queue "$queue_file" >/dev/null
   install_dependencies "$workspace"
-  run_opencode_review "$workspace" "$context_file" "$diff_file"
+  run_opencode_review "$workspace" "$context_file" "$diff_file" "$opencode_output_file"
 
   review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >/tmp/review_validate.stdout.json
-  log "comment validation: $(cat /tmp/review_validate.stdout.json)"
+  log "finding validation: $(cat /tmp/review_validate.stdout.json)"
+
+  log "synthesizing final review conclusion with OpenCode"
+  run_opencode_conclusion_synthesis "$workspace" "$opencode_output_file" "$opencode_conclusion_file"
+  local synthesized_conclusion
+  synthesized_conclusion="$(sanitize_conclusion_text "$opencode_conclusion_file")"
+  if [[ -z "$synthesized_conclusion" ]]; then
+    log "OpenCode conclusion synthesis was empty; using reviewer output as fallback conclusion"
+    synthesized_conclusion="$(build_static_fallback_conclusion "$opencode_output_file")"
+  fi
+  review_comments conclude --queue "$queue_file" --body "$synthesized_conclusion" >/dev/null
+
+  review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >/tmp/review_validate.stdout.json
+  log "final review validation: $(cat /tmp/review_validate.stdout.json)"
 
   inline_count="$(json_count "$validated_file" "inlineComments")"
   reply_count="$(json_count "$validated_file" "replies")"
   conclusion_count="$(json_has_text "$validated_file" "conclusion")"
-
-  if [[ "$inline_count" -eq 0 && "$reply_count" -eq 0 && "$conclusion_count" -eq 0 ]]; then
-    log "no valid comments, replies, or review conclusion queued; skipping GitHub submission"
-    exit 0
-  fi
 
   require_tool gh
 
