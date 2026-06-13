@@ -6,14 +6,19 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CONTEXT7_MCP_VERSION=3.2.0
+ARG NODE_VERSION=26.3.0
+ARG NPM_MIN_VERSION=11.13.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+      build-essential \
       ca-certificates \
       curl \
       git \
       gnupg \
       jq \
+      python3 \
+      xz-utils \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -25,6 +30,20 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION}
+
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) node_arch="x64" ;; \
+      arm64) node_arch="arm64" ;; \
+      *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}"; \
+    tar -xJf "${node_archive}" -C /usr/local --strip-components=1 --no-same-owner; \
+    rm "${node_archive}"; \
+    node --version; \
+    npm --version; \
+    node -e 'const min = process.argv[1].split(".").map(Number); const got = process.argv[2].split(".").map(Number); const ok = got[0] > min[0] || (got[0] === min[0] && (got[1] > min[1] || (got[1] === min[1] && got[2] >= min[2]))); if (!ok) { console.error(`npm ${got.join(".")} is below required ${min.join(".")}`); process.exit(1); }' "${NPM_MIN_VERSION}" "$(npm --version)"
 
 RUN mkdir -p /root/.config/opencode/skills \
     /root/.local/share/opencode \
@@ -58,7 +77,8 @@ RUN chmod +x \
 
 ENV OPENCODE_DISABLE_CLAUDE_CODE=1 \
     OPENCODE_DISABLE_AUTOUPDATE=true \
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 \
+    PYTHON=/usr/bin/python3
 
 WORKDIR /workspace
 CMD ["/bin/bash"]
