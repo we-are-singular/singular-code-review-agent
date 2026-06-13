@@ -52,8 +52,8 @@ Rules:
 
 - Only stage comments for issues that are concrete, actionable, and introduced or exposed by the pull request.
 - Only target repository-relative paths and RIGHT-side changed lines from the supplied PR diff.
-- Before staging a new inline comment, check `unresolved_bot_threads` and `previous_bot_findings` from `review_context`. If an unresolved bot thread already covers the same issue on the same line, do not stage a duplicate; reply to the existing thread only when a human asked for follow-up.
-- Before finishing, do a final pass over the comments you queued. If multiple review lanes or retry attempts queued comments for the same path and line, make sure the last queued comment for that location is the clearest combined wording; the runner keeps the latest same-location queued comment and drops older ones.
+- Before staging a new inline comment, check `unresolved_bot_threads` and `previous_bot_findings` from `review_context`. If an unresolved bot thread or previous bot comment already covers the same issue, do not stage a duplicate; reply to the existing thread only when a human asked for follow-up.
+- Before finishing, do a final pass over the comments you queued. If multiple review lanes or retry attempts queued comments for the same path and line, combine overlapping comments when they describe the same issue and keep separate comments only when they are genuinely distinct actionable issues.
 - Do not stage style nits, speculative concerns, praise, conclusions, or comments for unchanged lines.
 - Put the overall summary, recommendations, important flags, and LGTM message in your terminal output, not inline comments.
 - Do not list style nits or readability-only observations as review issues in the terminal output. Mention them only when they materially affect correctness, maintainability, API clarity, or reviewer-requested scope.

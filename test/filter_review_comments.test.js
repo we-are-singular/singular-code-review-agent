@@ -30,7 +30,7 @@ test("keeps only staged comments on RIGHT-side added lines", () => {
 
   assert.deepEqual(stats, { staged: 5, valid: 2, dropped: 3 });
   assert.deepEqual(filtered, [
-    { path: "src/new.js", line: 2, side: "RIGHT", body: "Valid new file line." },
-    { path: "src/app.js", line: 2, side: "RIGHT", body: "Valid added line." }
+    { path: "src/app.js", line: 2, side: "RIGHT", body: "Valid added line." },
+    { path: "src/new.js", line: 2, side: "RIGHT", body: "Valid new file line." }
   ]);
 });

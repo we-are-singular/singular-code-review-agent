@@ -90,7 +90,7 @@ test("reads comment bodies from stdin without shell escaping", async () => {
   );
 });
 
-test("keeps the latest queued comment for the same line", () => {
+test("keeps distinct queued comments on the same line", () => {
   const queueFile = tempFile("queue.json");
   const diffText = fs.readFileSync(fixture, "utf8");
   clearQueue(queueFile);
@@ -110,18 +110,16 @@ test("keeps the latest queued comment for the same line", () => {
     review_comments: []
   });
 
-  assert.equal(validated.inlineComments.length, 1);
-  assert.equal(validated.inlineComments[0].body, 'If `this.lang` is missing, return `"undefined, World!"` instead.');
-  assert.equal(validated.dropped.length, 1);
-  assert.equal(validated.dropped[0].reason, "superseded by a later queued comment for this line");
+  assert.equal(validated.inlineComments.length, 2);
+  assert.equal(validated.dropped.length, 0);
 });
 
-test("drops comments covered by unresolved bot threads", () => {
+test("drops comments exactly covered by unresolved bot threads", () => {
   const queueFile = tempFile("queue.json");
   const diffText = fs.readFileSync(fixture, "utf8");
   clearQueue(queueFile);
 
-  addInlineComment({ path: "src/app.js", line: 2, body: "The timeout can become NaN." }, queueFile);
+  addInlineComment({ path: "src/app.js", line: 2, body: "Existing finding." }, queueFile);
 
   const validated = validateQueue(loadQueue(queueFile), {
     run: { bot_login: "review-bot" },
@@ -142,15 +140,15 @@ test("drops comments covered by unresolved bot threads", () => {
 
   assert.equal(validated.inlineComments.length, 0);
   assert.equal(validated.dropped.length, 1);
-  assert.equal(validated.dropped[0].reason, "unresolved bot thread already exists for this line");
+  assert.equal(validated.dropped[0].reason, "matching unresolved bot thread already exists");
 });
 
-test("falls back to REST same-line duplicate detection when thread state is unavailable", () => {
+test("falls back to REST exact duplicate detection when thread state is unavailable", () => {
   const queueFile = tempFile("queue.json");
   const diffText = fs.readFileSync(fixture, "utf8");
   clearQueue(queueFile);
 
-  addInlineComment({ path: "src/app.js", line: 2, body: "This is the same finding with newer wording." }, queueFile);
+  addInlineComment({ path: "src/app.js", line: 2, body: "The timeout can become NaN." }, queueFile);
 
   const validated = validateQueue(loadQueue(queueFile), {
     run: { bot_login: "review-bot" },
@@ -170,5 +168,5 @@ test("falls back to REST same-line duplicate detection when thread state is unav
 
   assert.equal(validated.inlineComments.length, 0);
   assert.equal(validated.dropped.length, 1);
-  assert.equal(validated.dropped[0].reason, "previous bot comment already exists for this line");
+  assert.equal(validated.dropped[0].reason, "matching previous bot comment already exists");
 });

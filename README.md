@@ -38,10 +38,14 @@ then runs `bin/review_orchestrator.sh`, which:
 1. fetches normalized pull-request context with `bin/review_context`;
 2. starts OpenCode with the bundled configuration and review-only prompt;
 3. lets the agent queue findings and replies through `bin/review_comments`;
-4. filters queued comments so only valid RIGHT-side changed lines are submitted;
-5. runs a second OpenCode pass to synthesize the final review body from the
+4. validates queued comments against the current diff;
+5. runs a no-MCP OpenCode audit pass that edits the queue file to remove
+   duplicates, merge overlapping comments, and keep distinct same-line findings;
+6. validates the audited queue so only valid RIGHT-side changed lines are
+   submitted;
+7. runs a no-MCP OpenCode pass to synthesize the final review body from the
    reviewer output;
-6. posts a single GitHub review whose body uses the synthesized conclusion and
+8. posts a single GitHub review whose body uses the synthesized conclusion and
    any queued inline comments, plus any queued replies.
 
 The image keeps credentials out of the build. Runtime secrets are provided by
@@ -145,9 +149,11 @@ REVIEW_COMMENT
 ```
 
 When GitHub review thread data is available, validation drops new inline
-comments that target a line already covered by an unresolved bot thread. If
-thread state is unavailable, validation still uses the REST review-comment list
-to drop new bot comments on lines where the bot has already commented.
+comments that exactly match unresolved bot thread comments. If thread state is
+unavailable, validation still uses the REST review-comment list to drop exact
+repeated bot comments. Broader semantic cleanup, such as merging overlapping
+same-line comments while preserving genuinely distinct issues, is handled by the
+queue audit pass before final validation.
 
 ## Vendored skills
 

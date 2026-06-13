@@ -137,6 +137,10 @@ set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
+if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+  printf 'Audit complete.\n'
+  exit 0
+fi
 if [[ "$*" == *"Reviewer terminal output"* ]]; then
   printf 'Synthesized conclusion: one blocking finding.\n'
   exit 0
@@ -160,6 +164,54 @@ review_comments add --path "src/app.js" --line "2" --body "The new timeout can b
   });
 });
 
+test("audits the queued review file before submission", () => {
+  const harness = makeHarness(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  exit 1
+fi
+if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+  node -e '
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync(process.env.OPENCODE_CONFIG, "utf8"));
+if (config.mcp) process.exit(2);
+const queue = JSON.parse(fs.readFileSync(process.env.REVIEW_QUEUE_FILE, "utf8"));
+queue.inlineComments = [
+  {
+    kind: "comment",
+    path: "src/app.js",
+    line: 2,
+    side: "RIGHT",
+    body: "The timeout can become NaN and break callers; validate or default it before use."
+  }
+];
+fs.writeFileSync(process.env.REVIEW_QUEUE_FILE, JSON.stringify(queue, null, 2) + "\\n");
+'
+  printf 'Audit complete.\n'
+  exit 0
+fi
+if [[ "$*" == *"Reviewer terminal output"* ]]; then
+  printf 'Synthesized conclusion: audited finding.\n'
+  exit 0
+fi
+review_comments add --path "src/app.js" --line "2" --body "The timeout can become NaN."
+review_comments add --path "src/app.js" --line "2" --body "This breaks callers when the timeout is NaN."
+`);
+
+  runOrchestrator(harness);
+
+  const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
+  assert.equal(payload.body, "Synthesized conclusion: audited finding.");
+  assert.deepEqual(payload.comments, [
+    {
+      path: "src/app.js",
+      line: 2,
+      side: "RIGHT",
+      body: "The timeout can become NaN and break callers; validate or default it before use."
+    }
+  ]);
+});
+
 test("synthesizes a fallback conclusion with OpenCode when no valid review content remains", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
@@ -178,6 +230,10 @@ if [[ "$count" -eq 1 ]]; then
   printf 'Reviewer summary from stdout.\n'
   exit 0
 fi
+if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+  printf 'Audit complete.\n'
+  exit 0
+fi
 printf 'Polished synthesis: the PR only removes a blank line and has no blocking findings.\n'
 `);
   const countFile = path.join(harness.dir, "opencode-count");
@@ -193,7 +249,7 @@ printf 'Polished synthesis: the PR only removes a blank line and has no blocking
     "Polished synthesis: the PR only removes a blank line and has no blocking findings."
   );
   assert.deepEqual(payload.comments, []);
-  assert.equal(fs.readFileSync(countFile, "utf8"), "2");
+  assert.equal(fs.readFileSync(countFile, "utf8"), "3");
 });
 
 
@@ -238,13 +294,28 @@ fi
 
   assert.equal(config.model, "{env:OPENCODE_MODEL}");
   assert.equal(config.default_agent, "reviewer");
+  assert.deepEqual(config.permission, {
+    edit: {
+      "*": "deny",
+      ".git/singular-code-review/review_queue.json": "allow",
+      "**/.git/singular-code-review/review_queue.json": "allow",
+      "/**/.git/singular-code-review/review_queue.json": "allow"
+    },
+    bash: "allow",
+    webfetch: "allow"
+  });
   assert.deepEqual(config.agent.reviewer, {
     description: "Reviews pull requests and queues structured GitHub review feedback.",
     mode: "primary",
     model: "{env:OPENCODE_MODEL}",
     prompt: "{file:./AGENTS.md}",
     permission: {
-      edit: "deny",
+      edit: {
+        "*": "deny",
+        ".git/singular-code-review/review_queue.json": "allow",
+        "**/.git/singular-code-review/review_queue.json": "allow",
+        "/**/.git/singular-code-review/review_queue.json": "allow"
+      },
       bash: "allow",
       webfetch: "allow"
     }
@@ -340,6 +411,10 @@ test("submits queued replies to existing review comments", () => {
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
+fi
+if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+  printf 'Audit complete.\n'
+  exit 0
 fi
 review_comments reply --to "456" --body "This still needs a fix."
 `);
