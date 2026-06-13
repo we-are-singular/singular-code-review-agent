@@ -128,17 +128,20 @@ set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
+if [[ "$*" == *"Reviewer terminal output"* ]]; then
+  printf 'Synthesized conclusion: one blocking finding.\n'
+  exit 0
+fi
 review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
 review_comments add --path "src/app.js" --line "1" --body "This context-line comment should be filtered."
 review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
-review_comments conclude --body "Review conclusion: one blocking finding."
 `);
 
   runOrchestrator(harness);
 
   const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
   assert.equal(payload.event, "COMMENT");
-  assert.equal(payload.body, "Review conclusion: one blocking finding.");
+  assert.equal(payload.body, "Synthesized conclusion: one blocking finding.");
   assert.equal(payload.comments.length, 1);
   assert.deepEqual(payload.comments[0], {
     path: "src/app.js",
@@ -148,18 +151,40 @@ review_comments conclude --body "Review conclusion: one blocking finding."
   });
 });
 
-test("skips GitHub review submission when no valid comments or conclusion remain", () => {
+test("synthesizes a fallback conclusion with OpenCode when no valid review content remains", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
-review_comments add --path "src/app.js" --line "1" --body "Context-line comment should be filtered."
+count_file="$OPENCODE_INVOCATION_COUNT_FILE"
+count=0
+if [[ -f "$count_file" ]]; then
+  count="$(cat "$count_file")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [[ "$count" -eq 1 ]]; then
+  review_comments add --path "src/app.js" --line "1" --body "Context-line comment should be filtered."
+  printf 'Reviewer summary from stdout.\n'
+  exit 0
+fi
+printf 'Polished synthesis: the PR only removes a blank line and has no blocking findings.\n'
 `);
+  const countFile = path.join(harness.dir, "opencode-count");
 
-  runOrchestrator(harness);
+  runOrchestrator(harness, {
+    OPENCODE_INVOCATION_COUNT_FILE: countFile
+  });
 
-  assert.equal(fs.existsSync(harness.apiPayloadFile), false);
+  const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
+  assert.equal(payload.event, "COMMENT");
+  assert.equal(
+    payload.body,
+    "Polished synthesis: the PR only removes a blank line and has no blocking findings."
+  );
+  assert.deepEqual(payload.comments, []);
+  assert.equal(fs.readFileSync(countFile, "utf8"), "2");
 });
 
 
@@ -170,7 +195,11 @@ set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
-review_comments conclude --body "LGTM — no blocking findings."
+if [[ "$*" == *"Reviewer terminal output"* ]]; then
+  printf 'LGTM — no blocking findings.\n'
+  exit 0
+fi
+printf 'No blocking findings.\n'
 `);
 
   runOrchestrator(harness);
@@ -221,7 +250,10 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 0
 fi
 if [[ "\${1:-}" == "run" ]]; then
-  printf '%s\\n' "$@" > "$OPENCODE_ARGS_FILE"
+  if [[ "$*" != *"opencode_review_output.log"* ]]; then
+    printf '%s\\n' "$@" > "$OPENCODE_ARGS_FILE"
+  fi
+  printf 'LGTM.\n'
   exit 0
 fi
 echo "unexpected opencode invocation: $*" >&2
