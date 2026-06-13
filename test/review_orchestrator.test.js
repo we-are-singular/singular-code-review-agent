@@ -97,7 +97,16 @@ echo "context7 mock"
   return { dir, workspace, mockbin, apiPayloadFile };
 }
 
-function runOrchestrator(harness, overrides = {}) {
+function runOrchestrator(harness, overrides = {}, options = {}) {
+  const reviewFileEnv = options.useDefaultReviewFiles
+    ? {}
+    : {
+        REVIEW_QUEUE_FILE: path.join(harness.dir, "review_queue.json"),
+        REVIEW_CONTEXT_FILE: path.join(harness.dir, "review_context.json"),
+        REVIEW_DIFF_FILE: path.join(harness.dir, "pr.diff"),
+        REVIEW_VALIDATED_FILE: path.join(harness.dir, "review_validated.json"),
+        REVIEW_PAYLOAD_FILE: path.join(harness.dir, "final_review.json")
+      };
   const env = {
     ...process.env,
     PATH: `${harness.mockbin}:${path.join(repoRoot, "bin")}:${process.env.PATH}`,
@@ -105,12 +114,8 @@ function runOrchestrator(harness, overrides = {}) {
     PR_NUMBER: "42",
     GITHUB_REPOSITORY: "owner/repo",
     GH_TOKEN: "test-token",
-    REVIEW_QUEUE_FILE: path.join(harness.dir, "review_queue.json"),
-    REVIEW_CONTEXT_FILE: path.join(harness.dir, "review_context.json"),
-    REVIEW_DIFF_FILE: path.join(harness.dir, "pr.diff"),
-    REVIEW_VALIDATED_FILE: path.join(harness.dir, "review_validated.json"),
-    REVIEW_PAYLOAD_FILE: path.join(harness.dir, "final_review.json"),
     HOME: path.join(harness.dir, "home"),
+    ...reviewFileEnv,
     ...overrides
   };
 
@@ -288,6 +293,40 @@ exit 1
   assert.deepEqual(args.slice(0, 3), ["run", "--agent", "reviewer"]);
   assert.equal(args[separatorIndex - 1], path.join(harness.dir, "pr.diff"));
   assert.match(args[separatorIndex + 1], /^Review this pull request using the normalized context /);
+});
+
+test("keeps default review runtime files inside the git checkout", () => {
+  const harness = makeHarness(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "run" ]]; then
+  if [[ "$*" != *"opencode_review_output.log"* ]]; then
+    printf '%s\\n' "$@" > "$OPENCODE_ARGS_FILE"
+  fi
+  printf 'LGTM.\n'
+  exit 0
+fi
+echo "unexpected opencode invocation: $*" >&2
+exit 1
+`);
+  fs.mkdirSync(path.join(harness.workspace, ".git"));
+  const argsFile = path.join(harness.dir, "opencode-args.txt");
+
+  runOrchestrator(
+    harness,
+    {
+      OPENCODE_ARGS_FILE: argsFile
+    },
+    {
+      useDefaultReviewFiles: true
+    }
+  );
+
+  const args = fs.readFileSync(argsFile, "utf8").trimEnd().split("\n");
+  assert(args.includes(path.join(harness.workspace, ".git", "singular-code-review", "review_context.json")));
+  assert(args.includes(path.join(harness.workspace, ".git", "singular-code-review", "pr.diff")));
 });
 
 test("submits queued replies to existing review comments", () => {

@@ -35,6 +35,16 @@ resolve_workspace() {
   fi
 }
 
+resolve_runtime_dir() {
+  local workspace="$1"
+
+  if [[ -d "$workspace/.git" ]]; then
+    printf '%s\n' "$workspace/.git/singular-code-review"
+  else
+    printf '%s\n' "/tmp/opencode/singular-code-review"
+  fi
+}
+
 install_opencode_runtime_config() {
   local home_dir="${HOME:-/root}"
   local config_file="$home_dir/.config/opencode/opencode.json"
@@ -331,7 +341,10 @@ main() {
   workspace="$(resolve_workspace)"
   [[ -d "$workspace" ]] || die "workspace does not exist: $workspace"
 
-  local runtime_dir="/tmp/opencode/singular-code-review"
+  local runtime_dir
+  runtime_dir="$(resolve_runtime_dir "$workspace")"
+  log "review workspace: $workspace"
+  log "review runtime dir: $runtime_dir"
   local queue_file="${REVIEW_QUEUE_FILE:-${runtime_dir}/review_queue.json}"
   local context_file="${REVIEW_CONTEXT_FILE:-${runtime_dir}/review_context.json}"
   local diff_file="${REVIEW_DIFF_FILE:-${runtime_dir}/pr.diff}"
