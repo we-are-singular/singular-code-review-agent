@@ -92,8 +92,10 @@ variable to try a different model without changing workflow YAML.
    `opencode-go/minimax-m2.7`.
 4. Copy `examples/singular-code-review.yml` into the target repository as
    `.github/workflows/singular-code-review.yml`.
-5. Open a non-draft pull request, mark a draft pull request ready for review, or
-   comment `@singular-code-review` on a pull request.
+5. Open a non-draft same-repository pull request, mark a same-repository draft
+   pull request ready for review, or have a human `OWNER`, `MEMBER`, or
+   `COLLABORATOR` comment `@singular-code-review` on a same-repository pull
+   request.
 
 For one repository, secrets can be added directly:
 
@@ -111,6 +113,26 @@ workflow run, `actions/create-github-app-token` uses the private key to mint a
 short-lived installation token for the App installation on that repository.
 That token is used for checkout, GitHub context reads, review comment replies,
 and the final batched review submission.
+
+## Security model
+
+The reviewer checks out pull-request code and may run dependency installation,
+so it must treat fork pull requests as untrusted code. The example trigger
+workflow avoids calling the reusable workflow for fork `pull_request` events,
+and the reusable workflow has its own preflight guard that blocks fork pull
+requests before creating the GitHub App token, checking out code, installing
+dependencies, or starting OpenCode.
+
+Mention-triggered reviews are restricted to human `OWNER`, `MEMBER`, or
+`COLLABORATOR` comments and are still denied when the pull request head is a
+fork. The caller job also cancels older in-progress review runs for the same
+pull request so repeated commands do not run paid reviews in parallel.
+
+This still assumes the consuming repository's branches and write collaborators
+are trusted enough to run code with the repository's Actions secrets. For public
+repositories that accept arbitrary fork PRs, keep this workflow on the normal
+`pull_request`/`issue_comment` model and do not convert it to
+`pull_request_target`.
 
 ## Repository map
 

@@ -39,7 +39,17 @@ jobs:
     container:
       image: ghcr.io/we-are-singular/singular-code-review-agent:latest
     steps:
+      - name: Run review guard
+        id: review-guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TRIGGER_COMMENT_ID: ${{ inputs.trigger_comment_id }}
+        run: /usr/local/bin/review_guard.sh
+
       - name: Create GitHub App token
+        if: steps.review-guard.outputs.should_review == 'true'
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -49,43 +59,15 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
 
-      - name: Prepare review request
+      - name: Acknowledge review request
+        if: steps.review-guard.outputs.should_review == 'true'
         id: review-request
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COMMENT_ID: ${{ inputs.trigger_comment_id }}
           BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${COMMENT_ID}" ]]; then
-            echo "should_review=true" >> "$GITHUB_OUTPUT"
-            echo "direct pull request trigger; continuing review"
-            exit 0
-          fi
-
-          existing="$(
-            gh api \
-              -H "Accept: application/vnd.github+json" \
-              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-              --jq '.[] | select(.content == "eyes" and .user.login == env.BOT_LOGIN) | .id'
-          )"
-
-          if [[ -n "$existing" ]]; then
-            echo "should_review=false" >> "$GITHUB_OUTPUT"
-            echo "trigger comment already acknowledged by ${BOT_LOGIN}; skipping review"
-            exit 0
-          fi
-
-          gh api \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content='eyes' \
-            --silent
-
-          echo "should_review=true" >> "$GITHUB_OUTPUT"
+        run: /usr/local/bin/review_ack.sh
 
       - name: Checkout repository
         if: steps.review-request.outputs.should_review == 'true'
@@ -117,3 +99,4 @@ jobs:
           OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+          TRIGGER_COMMENT_ID: ${{ inputs.trigger_comment_id }}

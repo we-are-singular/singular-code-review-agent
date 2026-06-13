@@ -16,6 +16,8 @@ test("reviewer image pins Node 26 and native addon build tooling", () => {
   assert.match(dockerfile, /\bxz-utils\b/);
   assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
   assert.match(dockerfile, /minipass-flush/);
+  assert.match(dockerfile, /review_guard\.sh/);
+  assert.match(dockerfile, /review_ack\.sh/);
   assert.match(dockerfile, /below required/);
   assert.match(dockerfile, /PYTHON=\/usr\/bin\/python3/);
 });
