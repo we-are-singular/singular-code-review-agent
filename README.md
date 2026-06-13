@@ -71,7 +71,7 @@ Optional environment variables:
 - `REVIEW_BODY`: body text for the submitted GitHub review.
 - `DRY_RUN=true`: print the final payload instead of submitting it.
 - `REVIEW_BOT_LOGIN`: bot login used to identify previous bot findings and reply action items.
-- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to `@singular-code-review`.
+- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to `/singular-code-review`.
 
 The committed `opencode/opencode.json` uses OpenCode's documented
 `{env:VARIABLE_NAME}` placeholders, so GitHub secrets remain scalar values
@@ -140,7 +140,7 @@ npm test
 Copy `examples/singular-code-review.yml` into a consuming repository as
 `.github/workflows/singular-code-review.yml` to trigger
 reviews from PR comments containing `vars.OPENCODE_REVIEW_COMMAND`, defaulting
-to `@singular-code-review`.
+to `/singular-code-review`.
 
 A GitHub App can provide the posting identity and token, but review requests are
 for user logins and team slugs. Treat app mentions as text commands in PR
@@ -155,7 +155,7 @@ Set secrets for runtime keys:
 Optional repository variable overrides:
 
 - `OPENCODE_MODEL`, defaults to `opencode-go/minimax-m2.7`
-- `OPENCODE_REVIEW_COMMAND`, defaults to `@singular-code-review`
+- `OPENCODE_REVIEW_COMMAND`, defaults to `/singular-code-review`
 - `SINGULAR_CODE_REVIEW_CLIENT_ID`, defaults to `Iv23liVgvy1yaHapd0Wx`
 
 The GitHub App should be installed on the consuming repository with:
