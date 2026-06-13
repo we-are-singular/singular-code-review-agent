@@ -142,6 +142,7 @@ if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"Reviewer terminal output"* ]]; then
+  [[ "$*" == *"Final validated review queue"* ]] || exit 3
   printf 'Synthesized conclusion: one blocking finding.\n'
   exit 0
 fi
@@ -191,6 +192,7 @@ fs.writeFileSync(process.env.REVIEW_QUEUE_FILE, JSON.stringify(queue, null, 2) +
   exit 0
 fi
 if [[ "$*" == *"Reviewer terminal output"* ]]; then
+  [[ "$*" == *"Final validated review queue"* ]] || exit 3
   printf 'Synthesized conclusion: audited finding.\n'
   exit 0
 fi
@@ -261,7 +263,7 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
 if [[ "$*" == *"Reviewer terminal output"* ]]; then
-  printf '> reviewer · minimax-m2.7\nLGTM — no blocking findings.\n'
+  printf '> reviewer · minimax-m2.7\n\n> reviewer · minimax-m2.7\nLGTM — no blocking findings.\n'
   exit 0
 fi
 printf 'No blocking findings.\n'
@@ -370,6 +372,48 @@ exit 1
   assert.match(args[separatorIndex + 1], /^Review this pull request using the normalized context /);
   assert.match(args[separatorIndex + 1], /top-level @singular-code-review trigger comment/);
   assert.match(args[separatorIndex + 1], /--body-stdin/);
+});
+
+test("passes the validated queue to modern conclusion synthesis", () => {
+  const harness = makeHarness(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "run" ]]; then
+  if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+    printf 'Audit complete.\\n'
+    exit 0
+  fi
+  if [[ "$*" == *"Synthesize a concise, polished GitHub pull request review body"* ]]; then
+    printf '%s\\n' "$@" > "$OPENCODE_CONCLUSION_ARGS_FILE"
+    printf '> reviewer · minimax-m2.7\\n\\nRequest changes: keep the queued finding.\\n'
+    exit 0
+  fi
+  review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
+  printf '> reviewer · minimax-m2.7\\nQueued one finding.\\n'
+  exit 0
+fi
+echo "unexpected opencode invocation: $*" >&2
+exit 1
+`);
+  const outputFile = path.join(harness.dir, "opencode_review_output.log");
+  const argsFile = path.join(harness.dir, "opencode-conclusion-args.txt");
+
+  runOrchestrator(harness, {
+    OPENCODE_OUTPUT_FILE: outputFile,
+    OPENCODE_CONCLUSION_ARGS_FILE: argsFile
+  });
+
+  const args = fs.readFileSync(argsFile, "utf8").trimEnd().split("\n");
+  const separatorIndex = args.indexOf("--");
+  assert.notEqual(separatorIndex, -1);
+  assert(args.includes(`${outputFile}.sanitized`));
+  assert(args.includes(path.join(harness.dir, "review_validated.json")));
+  assert.match(args[separatorIndex + 1], /validated queue as the source of truth/);
+
+  const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
+  assert.equal(payload.body, "> reviewer · minimax-m2.7\n\nRequest changes: keep the queued finding.");
 });
 
 test("keeps default review runtime files inside the git checkout", () => {

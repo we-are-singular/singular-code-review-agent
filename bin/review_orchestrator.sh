@@ -281,13 +281,29 @@ while (cleanedLines[cleanedLines.length - 1] === "") {
   cleanedLines.pop();
 }
 
-for (let index = 0; index < cleanedLines.length - 1; index += 1) {
-  if (/^>\s+\S+\s+·\s+.+$/.test(cleanedLines[index].trim()) && cleanedLines[index + 1] !== "") {
-    cleanedLines.splice(index + 1, 0, "");
+const finalLines = [];
+let keptBanner = false;
+for (const line of cleanedLines) {
+  const trimmed = line.trim();
+  const isBanner = /^(?:>\s*)?\S+\s+·\s+.+$/.test(trimmed);
+  if (isBanner) {
+    if (keptBanner) {
+      continue;
+    }
+    keptBanner = true;
+    finalLines.push(trimmed.startsWith(">") ? line : `> ${trimmed}`);
+    continue;
+  }
+  finalLines.push(line);
+}
+
+for (let index = 0; index < finalLines.length - 1; index += 1) {
+  if (/^>\s+\S+\s+·\s+.+$/.test(finalLines[index].trim()) && finalLines[index + 1] !== "") {
+    finalLines.splice(index + 1, 0, "");
   }
 }
 
-output = cleanedLines.join("\n").trim();
+output = finalLines.join("\n").trim();
 
 const maxOutputLength = 6000;
 if (output.length > maxOutputLength) {
@@ -315,25 +331,31 @@ run_opencode_conclusion_synthesis() {
   local reviewer_output_file="$2"
   local conclusion_output_file="$3"
   local opencode_config="$4"
+  local validated_file="$5"
   local prompt
   local reviewer_output
   local reviewer_output_sanitized_file
+  local validated_queue
 
   require_tool opencode
 
   reviewer_output="$(sanitize_conclusion_text "$reviewer_output_file")"
+  validated_queue="$(cat "$validated_file" 2>/dev/null || true)"
   reviewer_output_sanitized_file="${reviewer_output_file}.sanitized"
   printf '%s\n' "$reviewer_output" > "$reviewer_output_sanitized_file"
-  prompt="The previous OpenCode reviewer produced terminal output for a pull request but did not queue a final GitHub review conclusion. Synthesize a concise, polished GitHub pull request review body from that output. Preserve a leading reviewer/model banner if present, and keep a blank line after it. Preserve any direct answer to a top-level @singular-code-review trigger comment near the top of the body, addressed to the commenter by GitHub handle when present, then add a blank line before the review summary and verdict. Use normal Markdown paragraphs separated by blank lines. Do not include command transcripts, queued-comment JSON, or tool status lines. Do not convert direct answers into buried notes or indirect summaries such as 'a user asked'. Preserve only substantive findings, recommendations, and the overall verdict. Do not promote style nits, readability-only observations, or unqueued side notes into review issues. Do not invent issues that are not present. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
+  prompt="The previous OpenCode reviewer produced terminal output for a pull request, and the runner has attached the final validated review queue. Synthesize a concise, polished GitHub pull request review body. Use the validated queue as the source of truth for actionable review findings: mention findings only when they appear in validated inlineComments or validated replies. Do not mention findings, style notes, or side observations that appear only in the raw reviewer output but are absent from the validated queue. Preserve a leading reviewer/model banner if present, and keep a blank line after it. Preserve any direct answer to a top-level @singular-code-review trigger comment near the top of the body, addressed to the commenter by GitHub handle when present, then add a blank line before the review summary and verdict. If there was no direct trigger question, do not say that none was found. Use normal Markdown paragraphs separated by blank lines. Do not include command transcripts, queued-comment JSON, dropped/merged bookkeeping, or tool status lines. Do not convert direct answers into buried notes or indirect summaries such as 'a user asked'. Do not invent issues that are not present in the validated queue. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
 
   log "running OpenCode conclusion synthesis"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode run --agent reviewer --file "$reviewer_output_sanitized_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
+    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode run --agent reviewer --file "$reviewer_output_sanitized_file" --file "$validated_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
   else
     (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode -q -c "$workspace" -p "${prompt}
 
 Reviewer terminal output:
-${reviewer_output}") 2>&1 | tee "$conclusion_output_file"
+${reviewer_output}
+
+Final validated review queue:
+${validated_queue}") 2>&1 | tee "$conclusion_output_file"
   fi
 }
 
@@ -488,7 +510,7 @@ main() {
   fi
 
   log "synthesizing final review conclusion with OpenCode"
-  run_opencode_conclusion_synthesis "$workspace" "$opencode_output_file" "$opencode_conclusion_file" "$no_mcp_opencode_config"
+  run_opencode_conclusion_synthesis "$workspace" "$opencode_output_file" "$opencode_conclusion_file" "$no_mcp_opencode_config" "$validated_file"
   local synthesized_conclusion
   synthesized_conclusion="$(sanitize_conclusion_text "$opencode_conclusion_file")"
   if [[ -z "$synthesized_conclusion" ]]; then

@@ -58,6 +58,7 @@ Rules:
 - Put the overall summary, recommendations, important flags, and LGTM message in your terminal output, not inline comments.
 - Do not list style nits or readability-only observations as review issues in the terminal output. Mention them only when they materially affect correctness, maintainability, API clarity, or reviewer-requested scope.
 - Put direct answers to top-level `@singular-code-review` comments at the top of your terminal output, addressed to the commenter. This is the reply shape for top-level PR conversation comments; do not queue a separate comment for them.
+- If there is no direct top-level question or instruction, do not say so in the terminal output. Just write the review summary and verdict.
 - Format terminal output as normal Markdown paragraphs separated by blank lines. Keep direct answers, review summaries, and verdicts as separate paragraphs or sections.
 - Use `--body-stdin`, `--body-file`, `--message-stdin`, or `--message-file` for review text. Prefer the single-quoted heredoc delimiter pattern shown above. Never put Markdown, backticks, `$`, quotes, or code snippets directly in a shell command argument.
 - Do not run `review_comments conclude`; final review body synthesis is handled by the runner after this pass.
