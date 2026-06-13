@@ -219,6 +219,7 @@ fi
 `);
 
   runOrchestrator(harness, {
+    OPENCODE_MODEL: "test/model",
     CONTEXT7_API_KEY: "ctx7-test"
   });
 
@@ -226,12 +227,12 @@ fi
     fs.readFileSync(path.join(harness.dir, "home", ".config", "opencode", "opencode.json"), "utf8")
   );
 
-  assert.equal(config.model, "opencode-go/minimax-m2.7");
+  assert.equal(config.model, "{env:OPENCODE_MODEL}");
   assert.equal(config.default_agent, "reviewer");
   assert.deepEqual(config.agent.reviewer, {
     description: "Reviews pull requests and queues structured GitHub review feedback.",
     mode: "primary",
-    model: "opencode-go/minimax-m2.7",
+    model: "{env:OPENCODE_MODEL}",
     prompt: "{file:./AGENTS.md}",
     permission: {
       edit: "deny",

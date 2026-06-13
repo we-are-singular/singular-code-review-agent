@@ -43,8 +43,9 @@ then runs `bin/review_orchestrator.sh`, which:
 
 The image keeps credentials out of the build. Runtime secrets are provided by
 the consuming repository, while reviewer settings such as the command trigger,
-GitHub App client ID, image, model, and OpenCode agent are owned by this
-repository.
+GitHub App client ID, image, and OpenCode agent are owned by this repository.
+Consuming repositories can optionally set the `OPENCODE_MODEL` repository
+variable to try a different model without changing workflow YAML.
 
 ## Repository map
 
@@ -90,8 +91,8 @@ The reusable workflow exposes only the pull request/comment identifiers as
 inputs. It owns the GitHub App client ID, command trigger, container image,
 OpenCode model, and OpenCode agent.
 
-The orchestrator still receives these required runtime environment variables
-from the reusable workflow:
+The orchestrator receives these required runtime environment variables from the
+reusable workflow:
 
 - `GH_TOKEN`: token used by the GitHub CLI and review submission.
 - `GITHUB_REPOSITORY`: repository in `owner/name` form.
@@ -101,6 +102,8 @@ from the reusable workflow:
 
 Optional runtime environment variables:
 
+- `OPENCODE_MODEL`: model id used by the bundled `reviewer` agent; defaults to
+  `opencode-go/minimax-m2.7`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `DRY_RUN=true`: local development override that prints the final review
   payload instead of submitting it.

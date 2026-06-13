@@ -54,10 +54,7 @@ RUN chmod +x \
 
 ENV OPENCODE_DISABLE_CLAUDE_CODE=1 \
     OPENCODE_DISABLE_AUTOUPDATE=true \
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 \
-    REVIEW_QUEUE_FILE=/tmp/review_queue.json \
-    REVIEW_CONTEXT_FILE=/tmp/review_context.json \
-    REVIEW_DIFF_FILE=/tmp/pr.diff
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
 WORKDIR /workspace
 CMD ["/bin/bash"]

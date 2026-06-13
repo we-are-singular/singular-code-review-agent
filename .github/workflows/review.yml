@@ -123,5 +123,6 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}

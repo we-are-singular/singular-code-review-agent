@@ -17,6 +17,14 @@ require_tool() {
   command -v "$1" >/dev/null 2>&1 || die "required tool not found: $1"
 }
 
+ensure_parent_dir() {
+  local file="$1"
+  local dir="${file%/*}"
+  if [[ "$dir" != "$file" ]]; then
+    mkdir -p "$dir"
+  fi
+}
+
 resolve_workspace() {
   if [[ -n "${WORKSPACE:-}" ]]; then
     printf '%s\n' "$WORKSPACE"
@@ -323,13 +331,14 @@ main() {
   workspace="$(resolve_workspace)"
   [[ -d "$workspace" ]] || die "workspace does not exist: $workspace"
 
-  local queue_file="${REVIEW_QUEUE_FILE:-/tmp/review_queue.json}"
-  local context_file="${REVIEW_CONTEXT_FILE:-/tmp/review_context.json}"
-  local diff_file="${REVIEW_DIFF_FILE:-/tmp/pr.diff}"
-  local validated_file="${REVIEW_VALIDATED_FILE:-/tmp/review_validated.json}"
-  local payload_file="${REVIEW_PAYLOAD_FILE:-/tmp/final_review.json}"
-  local opencode_output_file="${OPENCODE_OUTPUT_FILE:-/tmp/opencode_review_output.log}"
-  local opencode_conclusion_file="${OPENCODE_CONCLUSION_OUTPUT_FILE:-/tmp/opencode_review_conclusion.log}"
+  local runtime_dir="/tmp/opencode/singular-code-review"
+  local queue_file="${REVIEW_QUEUE_FILE:-${runtime_dir}/review_queue.json}"
+  local context_file="${REVIEW_CONTEXT_FILE:-${runtime_dir}/review_context.json}"
+  local diff_file="${REVIEW_DIFF_FILE:-${runtime_dir}/pr.diff}"
+  local validated_file="${REVIEW_VALIDATED_FILE:-${runtime_dir}/review_validated.json}"
+  local payload_file="${REVIEW_PAYLOAD_FILE:-${runtime_dir}/final_review.json}"
+  local opencode_output_file="${OPENCODE_OUTPUT_FILE:-${runtime_dir}/opencode_review_output.log}"
+  local opencode_conclusion_file="${OPENCODE_CONCLUSION_OUTPUT_FILE:-${runtime_dir}/opencode_review_conclusion.log}"
   local inline_count
   local reply_count
   local conclusion_count
@@ -337,6 +346,15 @@ main() {
   export REVIEW_QUEUE_FILE="$queue_file"
   export REVIEW_CONTEXT_FILE="$context_file"
   export REVIEW_DIFF_FILE="$diff_file"
+  export OPENCODE_MODEL="${OPENCODE_MODEL:-opencode-go/minimax-m2.7}"
+
+  ensure_parent_dir "$queue_file"
+  ensure_parent_dir "$context_file"
+  ensure_parent_dir "$diff_file"
+  ensure_parent_dir "$validated_file"
+  ensure_parent_dir "$payload_file"
+  ensure_parent_dir "$opencode_output_file"
+  ensure_parent_dir "$opencode_conclusion_file"
 
   install_opencode_runtime_config
   build_review_context "$context_file" "$diff_file"
