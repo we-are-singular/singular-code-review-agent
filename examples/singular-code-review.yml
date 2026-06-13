@@ -38,6 +38,7 @@ jobs:
           client-id: ${{ vars.SINGULAR_CODE_REVIEW_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
           private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
           permission-issues: write
+          permission-pull-requests: write
 
       - name: Acknowledge trigger comment
         id: ack
