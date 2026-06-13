@@ -56,7 +56,8 @@ variable to try a different model without changing workflow YAML.
 - `bin/review_orchestrator.sh` coordinates context collection, OpenCode
   execution, review payload creation, and submission.
 - `bin/review_context` collects pull-request metadata, mentions, previous bot
-  comments, valid diff lines, and action items.
+  comments, review thread state when available, valid diff lines, and action
+  items.
 - `bin/review_comments` is the staging interface used by OpenCode and the
   orchestrator for comments, suggestions, multiline findings, replies, the
   synthesized review conclusion, listing, and status checks.
@@ -133,6 +134,20 @@ previous bot comments and reply action items so follow-up review runs can
 respond to existing threads when appropriate. When a top-level
 `@singular-code-review` comment asks a direct question, the single review body
 answers the commenter first and then continues with the review summary.
+
+Review text should be passed with stdin or files rather than shell-quoted inline
+arguments, for example:
+
+```bash
+review_comments add --path "src/app.js" --line "42" --body-stdin <<'REVIEW_COMMENT'
+This preserves Markdown like `code`, "$values", and code snippets without shell escaping.
+REVIEW_COMMENT
+```
+
+When GitHub review thread data is available, validation drops new inline
+comments that target a line already covered by an unresolved bot thread. If
+thread state is unavailable, validation still uses the REST review-comment list
+to drop new bot comments on lines where the bot has already commented.
 
 ## Vendored skills
 

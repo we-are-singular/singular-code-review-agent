@@ -140,7 +140,7 @@ run_opencode_review() {
   require_tool review_comments
   require_tool review_context
 
-  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. If a top-level @singular-code-review trigger comment asks a direct question or gives instructions, answer it at the top of your terminal output addressed to the commenter, then continue with the review. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. Do not queue a final conclusion; a second synthesis pass will turn your review output into the GitHub review body. Never use gh api to post review comments or reviews directly. Do not edit repository files."
+  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. If a top-level @singular-code-review trigger comment asks a direct question or gives instructions, answer it at the top of your terminal output addressed to the commenter, then continue with the review. Check unresolved_bot_threads and previous_bot_findings before adding inline comments so you do not duplicate active bot findings. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. If multiple comments are queued for the same path and line, make the last one the best combined wording; the runner drops older same-location queued comments. Always pass review text with --body-stdin, --body-file, --message-stdin, or --message-file; prefer a single-quoted heredoc such as <<'REVIEW_COMMENT'. Never put Markdown, backticks, quotes, or code snippets directly in shell arguments. Do not queue a final conclusion; a second synthesis pass will turn your review output into the GitHub review body. Never use gh api to post review comments or reviews directly. Do not edit repository files."
 
   log "running OpenCode review"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
@@ -192,13 +192,44 @@ try {
   output = "";
 }
 
-output = output
+const cleanedLines = [];
+for (const line of output
   .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
   .split(/\r?\n/)
-  .map((line) => line.trimEnd())
-  .filter((line) => line.trim())
-  .join("\n")
-  .trim();
+  .map((value) => value.trimEnd())) {
+  const trimmed = line.trim();
+  if (
+    /^Performing one time database migration/.test(trimmed) ||
+    trimmed === "sqlite-migration:done" ||
+    trimmed === "Database migration complete."
+  ) {
+    continue;
+  }
+
+  if (!trimmed) {
+    if (cleanedLines.length && cleanedLines[cleanedLines.length - 1] !== "") {
+      cleanedLines.push("");
+    }
+    continue;
+  }
+
+  cleanedLines.push(line);
+}
+
+while (cleanedLines[0] === "") {
+  cleanedLines.shift();
+}
+while (cleanedLines[cleanedLines.length - 1] === "") {
+  cleanedLines.pop();
+}
+
+for (let index = 0; index < cleanedLines.length - 1; index += 1) {
+  if (/^>\s+\S+\s+·\s+.+$/.test(cleanedLines[index].trim()) && cleanedLines[index + 1] !== "") {
+    cleanedLines.splice(index + 1, 0, "");
+  }
+}
+
+output = cleanedLines.join("\n").trim();
 
 const maxOutputLength = 6000;
 if (output.length > maxOutputLength) {
@@ -227,15 +258,18 @@ run_opencode_conclusion_synthesis() {
   local conclusion_output_file="$3"
   local prompt
   local reviewer_output
+  local reviewer_output_sanitized_file
 
   require_tool opencode
 
   reviewer_output="$(sanitize_conclusion_text "$reviewer_output_file")"
-  prompt="The previous OpenCode reviewer produced terminal output for a pull request but did not queue a final GitHub review conclusion. Synthesize a concise, polished GitHub pull request review body from that output. Preserve any direct answer to a top-level @singular-code-review trigger comment at the top of the body, addressed to the commenter by GitHub handle when present, then continue with the review summary and verdict. Do not convert direct answers into buried notes or indirect summaries such as 'a user asked'. Preserve any substantive findings, recommendations, and overall verdict. Do not invent issues that are not present. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
+  reviewer_output_sanitized_file="${reviewer_output_file}.sanitized"
+  printf '%s\n' "$reviewer_output" > "$reviewer_output_sanitized_file"
+  prompt="The previous OpenCode reviewer produced terminal output for a pull request but did not queue a final GitHub review conclusion. Synthesize a concise, polished GitHub pull request review body from that output. Preserve a leading reviewer/model banner if present, and keep a blank line after it. Preserve any direct answer to a top-level @singular-code-review trigger comment near the top of the body, addressed to the commenter by GitHub handle when present, then add a blank line before the review summary and verdict. Use normal Markdown paragraphs separated by blank lines. Do not include command transcripts, queued-comment JSON, or tool status lines. Do not convert direct answers into buried notes or indirect summaries such as 'a user asked'. Preserve only substantive findings, recommendations, and the overall verdict. Do not promote style nits, readability-only observations, or unqueued side notes into review issues. Do not invent issues that are not present. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
 
   log "running OpenCode conclusion synthesis"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && opencode run --agent reviewer --file "$reviewer_output_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
+    (cd "$workspace" && opencode run --agent reviewer --file "$reviewer_output_sanitized_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
   else
     (cd "$workspace" && opencode -q -c "$workspace" -p "${prompt}
 

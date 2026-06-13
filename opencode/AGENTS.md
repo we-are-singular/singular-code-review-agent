@@ -15,34 +15,51 @@ Workflow:
 For every distinct logic error, security vulnerability, or architectural bug you find, you MUST stage an inline comment by running:
 
 ```bash
-review_comments add --path "<repo-relative-path>" --line "<right-side-line-number>" --body "<concise review comment>"
+review_comments add --path "<repo-relative-path>" --line "<right-side-line-number>" --body-stdin <<'REVIEW_COMMENT'
+<concise review comment>
+REVIEW_COMMENT
 ```
 
 For multiline comments, use:
 
 ```bash
-review_comments add --path "<repo-relative-path>" --start-line "<first-right-side-line>" --line "<last-right-side-added-line>" --body "<concise review comment>"
+review_comments add --path "<repo-relative-path>" --start-line "<first-right-side-line>" --line "<last-right-side-added-line>" --body-stdin <<'REVIEW_COMMENT'
+<concise review comment>
+REVIEW_COMMENT
 ```
 
 For high-confidence code suggestions, write the replacement to a temporary file and run:
 
 ```bash
-review_comments suggest --path "<repo-relative-path>" --start-line "<first-right-side-line>" --line "<last-right-side-added-line>" --message "<why this replacement is needed>" --replacement-file "<temp-file>"
+replacement_file="$(mktemp)"
+cat > "$replacement_file" <<'REPLACEMENT'
+<replacement code>
+REPLACEMENT
+review_comments suggest --path "<repo-relative-path>" --start-line "<first-right-side-line>" --line "<last-right-side-added-line>" --replacement-file "$replacement_file" --message-stdin <<'REVIEW_COMMENT'
+<why this replacement is needed>
+REVIEW_COMMENT
 ```
 
 For existing review discussions that need a response, run:
 
 ```bash
-review_comments reply --to "<top-level-review-comment-id>" --body "<concise reply>"
+review_comments reply --to "<top-level-review-comment-id>" --body-stdin <<'REVIEW_COMMENT'
+<concise reply>
+REVIEW_COMMENT
 ```
 
 Rules:
 
 - Only stage comments for issues that are concrete, actionable, and introduced or exposed by the pull request.
 - Only target repository-relative paths and RIGHT-side changed lines from the supplied PR diff.
+- Before staging a new inline comment, check `unresolved_bot_threads` and `previous_bot_findings` from `review_context`. If an unresolved bot thread already covers the same issue on the same line, do not stage a duplicate; reply to the existing thread only when a human asked for follow-up.
+- Before finishing, do a final pass over the comments you queued. If multiple review lanes or retry attempts queued comments for the same path and line, make sure the last queued comment for that location is the clearest combined wording; the runner keeps the latest same-location queued comment and drops older ones.
 - Do not stage style nits, speculative concerns, praise, conclusions, or comments for unchanged lines.
 - Put the overall summary, recommendations, important flags, and LGTM message in your terminal output, not inline comments.
+- Do not list style nits or readability-only observations as review issues in the terminal output. Mention them only when they materially affect correctness, maintainability, API clarity, or reviewer-requested scope.
 - Put direct answers to top-level `@singular-code-review` comments at the top of your terminal output, addressed to the commenter. This is the reply shape for top-level PR conversation comments; do not queue a separate comment for them.
+- Format terminal output as normal Markdown paragraphs separated by blank lines. Keep direct answers, review summaries, and verdicts as separate paragraphs or sections.
+- Use `--body-stdin`, `--body-file`, `--message-stdin`, or `--message-file` for review text. Prefer the single-quoted heredoc delimiter pattern shown above. Never put Markdown, backticks, `$`, quotes, or code snippets directly in a shell command argument.
 - Do not run `review_comments conclude`; final review body synthesis is handled by the runner after this pass.
 - Use `review_comments reply` for existing discussion follow-up instead of creating duplicate inline findings.
 - Use read-only `gh` commands freely for investigation, but never use `gh api` to post comments, reviews, or replies.

@@ -14,6 +14,7 @@ const {
   validateQueue,
   validCommentRangesFromDiff
 } = require("../lib/review-tools");
+const { readBody } = require("../bin/review_comments");
 
 const repoRoot = path.resolve(__dirname, "..");
 const fixture = path.join(repoRoot, "test", "fixtures", "sample.patch");
@@ -70,4 +71,104 @@ test("validates queued items against diff context and reply targets", () => {
   assert.equal(validated.dropped.length, 2);
   assert.equal(validated.conclusion, "LGTM aside from the queued finding.");
   assert.equal(validated.stats.has_conclusion, true);
+});
+
+test("reads comment bodies from stdin without shell escaping", async () => {
+  const queueFile = tempFile("queue.json");
+  clearQueue(queueFile);
+
+  const body = await readBody({ body_stdin: true }, "body", async () => {
+    return 'If `this.lang` is missing, return `"undefined, World!"`. Use `this.greetings[this.lang] ?? "Hello"`.';
+  });
+  addInlineComment({ path: "src/app.js", line: 2, body }, queueFile);
+
+  const queue = loadQueue(queueFile);
+  assert.equal(queue.inlineComments.length, 1);
+  assert.equal(
+    queue.inlineComments[0].body,
+    'If `this.lang` is missing, return `"undefined, World!"`. Use `this.greetings[this.lang] ?? "Hello"`.'
+  );
+});
+
+test("keeps the latest queued comment for the same line", () => {
+  const queueFile = tempFile("queue.json");
+  const diffText = fs.readFileSync(fixture, "utf8");
+  clearQueue(queueFile);
+
+  addInlineComment({ path: "src/app.js", line: 2, body: "If  is missing, return  instead." }, queueFile);
+  addInlineComment(
+    {
+      path: "src/app.js",
+      line: 2,
+      body: 'If `this.lang` is missing, return `"undefined, World!"` instead.'
+    },
+    queueFile
+  );
+
+  const validated = validateQueue(loadQueue(queueFile), {
+    valid_comment_ranges: validCommentRangesFromDiff(diffText),
+    review_comments: []
+  });
+
+  assert.equal(validated.inlineComments.length, 1);
+  assert.equal(validated.inlineComments[0].body, 'If `this.lang` is missing, return `"undefined, World!"` instead.');
+  assert.equal(validated.dropped.length, 1);
+  assert.equal(validated.dropped[0].reason, "superseded by a later queued comment for this line");
+});
+
+test("drops comments covered by unresolved bot threads", () => {
+  const queueFile = tempFile("queue.json");
+  const diffText = fs.readFileSync(fixture, "utf8");
+  clearQueue(queueFile);
+
+  addInlineComment({ path: "src/app.js", line: 2, body: "The timeout can become NaN." }, queueFile);
+
+  const validated = validateQueue(loadQueue(queueFile), {
+    run: { bot_login: "review-bot" },
+    valid_comment_ranges: validCommentRangesFromDiff(diffText),
+    review_comments: [],
+    review_threads_available: true,
+    unresolved_bot_threads: [
+      {
+        id: "thread-1",
+        path: "src/app.js",
+        line: 2,
+        side: "RIGHT",
+        top_level_author: "review-bot",
+        comments: [{ id: 456, user: { login: "review-bot" }, body: "Existing finding." }]
+      }
+    ]
+  });
+
+  assert.equal(validated.inlineComments.length, 0);
+  assert.equal(validated.dropped.length, 1);
+  assert.equal(validated.dropped[0].reason, "unresolved bot thread already exists for this line");
+});
+
+test("falls back to REST same-line duplicate detection when thread state is unavailable", () => {
+  const queueFile = tempFile("queue.json");
+  const diffText = fs.readFileSync(fixture, "utf8");
+  clearQueue(queueFile);
+
+  addInlineComment({ path: "src/app.js", line: 2, body: "This is the same finding with newer wording." }, queueFile);
+
+  const validated = validateQueue(loadQueue(queueFile), {
+    run: { bot_login: "review-bot" },
+    valid_comment_ranges: validCommentRangesFromDiff(diffText),
+    review_threads_available: false,
+    review_comments: [
+      {
+        id: 456,
+        path: "src/app.js",
+        line: 2,
+        side: "RIGHT",
+        body: "The timeout can become NaN.",
+        user: { login: "review-bot" }
+      }
+    ]
+  });
+
+  assert.equal(validated.inlineComments.length, 0);
+  assert.equal(validated.dropped.length, 1);
+  assert.equal(validated.dropped[0].reason, "previous bot comment already exists for this line");
 });

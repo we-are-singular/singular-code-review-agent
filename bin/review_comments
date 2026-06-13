@@ -19,9 +19,17 @@ const {
 function usage() {
   console.error(`usage:
   review_comments add --path <path> --line <line> [--start-line <line>] --body <body>
+  review_comments add --path <path> --line <line> [--start-line <line>] --body-file <file>
+  review_comments add --path <path> --line <line> [--start-line <line>] --body-stdin
   review_comments suggest --path <path> --line <line> [--start-line <line>] --message <body> --replacement-file <file>
+  review_comments suggest --path <path> --line <line> [--start-line <line>] --message-file <file> --replacement-file <file>
+  review_comments suggest --path <path> --line <line> [--start-line <line>] --message-stdin --replacement-file <file>
   review_comments reply --to <review-comment-id> --body <body>
+  review_comments reply --to <review-comment-id> --body-file <file>
+  review_comments reply --to <review-comment-id> --body-stdin
   review_comments conclude --body <review-conclusion>
+  review_comments conclude --body-file <file>
+  review_comments conclude --body-stdin
   review_comments list
   review_comments status
   review_comments validate [--context <file>] [--output <file>]
@@ -56,9 +64,24 @@ function parseArgs(argv) {
   return result;
 }
 
-function readBody(options, field = "body") {
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      body += chunk;
+    });
+    process.stdin.on("end", () => resolve(body));
+    process.stdin.on("error", reject);
+  });
+}
+
+async function readBody(options, field = "body", stdinReader = readStdin) {
   if (options[`${field}_file`]) {
     return fs.readFileSync(options[`${field}_file`], "utf8");
+  }
+  if (options[`${field}_stdin`] || options[field] === "-") {
+    return stdinReader();
   }
   if (options[field]) {
     return options[field];
@@ -86,7 +109,7 @@ function toReviewPayloadComment(comment) {
   return payload;
 }
 
-function main() {
+async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const options = parseArgs(rest);
   const queueFile = options.queue || queueFileFromEnv();
@@ -99,7 +122,7 @@ function main() {
             path: options.path,
             line: options.line,
             start_line: options.start_line,
-            body: readBody(options),
+            body: await readBody(options),
             side: "RIGHT",
             start_side: "RIGHT"
           },
@@ -119,7 +142,7 @@ function main() {
             path: options.path,
             line: options.line,
             start_line: options.start_line,
-            message: options.message || readBody(options, "message"),
+            message: options.message || (await readBody(options, "message")),
             replacement: fs.readFileSync(options.replacement_file, "utf8"),
             side: "RIGHT",
             start_side: "RIGHT"
@@ -131,12 +154,12 @@ function main() {
     }
 
     if (command === "reply") {
-      printJson(addReply({ to: options.to, body: readBody(options) }, queueFile));
+      printJson(addReply({ to: options.to, body: await readBody(options) }, queueFile));
       return;
     }
 
     if (command === "conclude") {
-      printJson(setConclusion({ body: readBody(options) }, queueFile));
+      printJson(setConclusion({ body: await readBody(options) }, queueFile));
       return;
     }
 
@@ -194,5 +217,12 @@ function main() {
 }
 
 if (require.main === module) {
-  main();
+  main().catch((error) => {
+    fail(error.message || String(error));
+  });
 }
+
+module.exports = {
+  parseArgs,
+  readBody
+};

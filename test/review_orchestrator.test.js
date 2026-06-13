@@ -39,6 +39,10 @@ if [[ "\${1:-}" == "api" ]]; then
     printf '{"login":"review-bot"}\\n'
     exit 0
   fi
+  if [[ "\${2:-}" == "graphql" ]]; then
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\\n'
+    exit 0
+  fi
   if [[ " $* " == *" --paginate "* ]]; then
     for arg in "$@"; do
       case "$arg" in
@@ -201,7 +205,7 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
 if [[ "$*" == *"Reviewer terminal output"* ]]; then
-  printf 'LGTM — no blocking findings.\n'
+  printf '> reviewer · minimax-m2.7\nLGTM — no blocking findings.\n'
   exit 0
 fi
 printf 'No blocking findings.\n'
@@ -211,7 +215,7 @@ printf 'No blocking findings.\n'
 
   const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
   assert.equal(payload.event, "COMMENT");
-  assert.equal(payload.body, "LGTM — no blocking findings.");
+  assert.equal(payload.body, "> reviewer · minimax-m2.7\n\nLGTM — no blocking findings.");
   assert.deepEqual(payload.comments, []);
 });
 
@@ -294,6 +298,7 @@ exit 1
   assert.equal(args[separatorIndex - 1], path.join(harness.dir, "pr.diff"));
   assert.match(args[separatorIndex + 1], /^Review this pull request using the normalized context /);
   assert.match(args[separatorIndex + 1], /top-level @singular-code-review trigger comment/);
+  assert.match(args[separatorIndex + 1], /--body-stdin/);
 });
 
 test("keeps default review runtime files inside the git checkout", () => {
