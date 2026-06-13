@@ -131,12 +131,14 @@ fi
 review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
 review_comments add --path "src/app.js" --line "1" --body "This context-line comment should be filtered."
 review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
+review_comments conclude --body "Review conclusion: one blocking finding."
 `);
 
   runOrchestrator(harness);
 
   const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
   assert.equal(payload.event, "COMMENT");
+  assert.equal(payload.body, "Review conclusion: one blocking finding.");
   assert.equal(payload.comments.length, 1);
   assert.deepEqual(payload.comments[0], {
     path: "src/app.js",
@@ -146,7 +148,7 @@ review_comments add --path "src/app.js" --line "2" --body "The new timeout can b
   });
 });
 
-test("skips GitHub review submission when no valid comments remain", () => {
+test("skips GitHub review submission when no valid comments or conclusion remain", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
@@ -158,6 +160,25 @@ review_comments add --path "src/app.js" --line "1" --body "Context-line comment 
   runOrchestrator(harness);
 
   assert.equal(fs.existsSync(harness.apiPayloadFile), false);
+});
+
+
+
+test("submits a conclusion-only review when there are no inline findings", () => {
+  const harness = makeHarness(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  exit 1
+fi
+review_comments conclude --body "LGTM — no blocking findings."
+`);
+
+  runOrchestrator(harness);
+
+  const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
+  assert.equal(payload.event, "COMMENT");
+  assert.equal(payload.body, "LGTM — no blocking findings.");
+  assert.deepEqual(payload.comments, []);
 });
 
 test("installs the committed OpenCode config template", () => {

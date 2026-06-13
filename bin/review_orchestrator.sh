@@ -111,7 +111,7 @@ run_opencode_review() {
   require_tool review_comments
   require_tool review_context
 
-  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. Never use gh api to post review comments or reviews directly. Do not edit repository files."
+  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, queue replies to existing review discussions with review_comments reply, and queue one final conclusion comment with review_comments conclude. Use the conclusion for the review body; it may include sections for a summary of the changes, recommendations, and important flags, or a single-line LGTM for simple PRs. Never use gh api to post review comments or reviews directly. Do not edit repository files."
 
   log "running OpenCode review"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
@@ -135,16 +135,31 @@ process.stdout.write(`${Array.isArray(selected) ? selected.length : 0}\n`);
 NODE
 }
 
+json_has_text() {
+  local file="$1"
+  local expr="$2"
+
+  node - "$file" "$expr" <<'NODE'
+const fs = require("node:fs");
+
+const [, , file, expr] = process.argv;
+const value = JSON.parse(fs.readFileSync(file, "utf8"));
+const selected = expr.split(".").reduce((current, key) => current?.[key], value);
+process.stdout.write(`${typeof selected === "string" && selected.trim() ? 1 : 0}\n`);
+NODE
+}
+
 build_review_payload() {
   local validated_file="$1"
   local output_file="$2"
-  local review_body="${REVIEW_BODY:-OpenCode automated code review completed.}"
+  local review_body="${REVIEW_BODY:-}"
 
   node - "$validated_file" "$output_file" "$review_body" <<'NODE'
 const fs = require("node:fs");
 
 const [, , validatedFile, outputFile, reviewBody] = process.argv;
 const validated = JSON.parse(fs.readFileSync(validatedFile, "utf8"));
+const body = String(reviewBody || validated.conclusion || "OpenCode automated code review completed.").trim();
 const comments = validated.inlineComments.map((comment) => {
   const payload = {
     path: comment.path,
@@ -161,7 +176,7 @@ const comments = validated.inlineComments.map((comment) => {
 
 fs.writeFileSync(
   outputFile,
-  `${JSON.stringify({ body: reviewBody, event: "COMMENT", comments }, null, 2)}\n`
+  `${JSON.stringify({ body, event: "COMMENT", comments }, null, 2)}\n`
 );
 NODE
 }
@@ -239,6 +254,7 @@ main() {
   local payload_file="${REVIEW_PAYLOAD_FILE:-/tmp/final_review.json}"
   local inline_count
   local reply_count
+  local conclusion_count
 
   export REVIEW_QUEUE_FILE="$queue_file"
   export REVIEW_CONTEXT_FILE="$context_file"
@@ -257,18 +273,19 @@ main() {
 
   inline_count="$(json_count "$validated_file" "inlineComments")"
   reply_count="$(json_count "$validated_file" "replies")"
+  conclusion_count="$(json_has_text "$validated_file" "conclusion")"
 
-  if [[ "$inline_count" -eq 0 && "$reply_count" -eq 0 ]]; then
-    log "no valid comments or replies queued; skipping GitHub submission"
+  if [[ "$inline_count" -eq 0 && "$reply_count" -eq 0 && "$conclusion_count" -eq 0 ]]; then
+    log "no valid comments, replies, or review conclusion queued; skipping GitHub submission"
     exit 0
   fi
 
   require_tool gh
 
-  if [[ "$inline_count" -gt 0 ]]; then
+  if [[ "$inline_count" -gt 0 || "$conclusion_count" -gt 0 ]]; then
     build_review_payload "$validated_file" "$payload_file"
     submit_inline_review "$payload_file"
-    log "submitted ${inline_count} inline comment(s)"
+    log "submitted review with ${inline_count} inline comment(s)"
   fi
 
   if [[ "$reply_count" -gt 0 ]]; then
