@@ -24,7 +24,7 @@ test("reusable review workflow keeps acknowledgment inside one job", () => {
     "utf8"
   );
 
-  assert.match(workflow, /\njobs:\s*\n\s+review:/);
+  assert.match(workflow, /\njobs:\s*\n\s+agent:/);
   assert.match(workflow, /\ndefaults:\s*\n\s+run:\s*\n\s+shell: bash/);
   assert.doesNotMatch(workflow, /\n\s+ack:/);
   assert.doesNotMatch(workflow, /\n\s+needs: ack/);

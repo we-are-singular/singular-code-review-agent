@@ -34,7 +34,7 @@ defaults:
     shell: bash
 
 jobs:
-  review:
+  agent:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/we-are-singular/singular-code-review-agent:latest
