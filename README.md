@@ -69,6 +69,8 @@ variable to try a different model without changing workflow YAML.
 - `bin/review_comments` is the staging interface used by OpenCode and the
   orchestrator for comments, suggestions, multiline findings, replies, the
   synthesized review conclusion, listing, and status checks.
+- `bin/review_dry_run` checks out a real GitHub pull request into a disposable
+  workspace and runs the normal orchestrator with GitHub writes blocked.
 - `bin/opencode_step` is the OpenCode CLI adapter used by the orchestrator. It
   handles feature detection, JSON event rendering, raw JSONL logs, and explicit
   session continuation.
@@ -195,3 +197,17 @@ docker build -t singular-code-review:local .
 The base image defaults to the known working OpenCode sandbox image and can be
 overridden with the `BASE_IMAGE` build argument when validating a newer sandbox
 release.
+
+To inspect the review that would be posted for a real pull request without
+posting anything to GitHub, run:
+
+```bash
+OPENCODE_API_KEY=... bin/review_dry_run owner/repo 123
+```
+
+The command clones the target repository into `/tmp/singular-code-review-dry-run`,
+checks out the PR head, sets `DRY_RUN=true`, and puts a read-only `gh` wrapper in
+front of the review process. The orchestrator prints the final review payload to
+stdout and keeps artifacts under the checkout's `.git/singular-code-review/`
+directory, including `final_review.json`, `review_validated.json`,
+`review_context.json`, `pr.diff`, and the OpenCode output logs.

@@ -43,6 +43,7 @@ COPY bin/stage_review_comment /usr/local/bin/stage_review_comment
 COPY bin/filter_review_comments /usr/local/bin/filter_review_comments
 COPY bin/review_comments /usr/local/bin/review_comments
 COPY bin/review_context /usr/local/bin/review_context
+COPY bin/review_dry_run /usr/local/bin/review_dry_run
 COPY bin/opencode_step /usr/local/bin/opencode_step
 COPY bin/review_orchestrator.sh /usr/local/bin/review_orchestrator.sh
 
@@ -51,6 +52,7 @@ RUN chmod +x \
       /usr/local/bin/filter_review_comments \
       /usr/local/bin/review_comments \
       /usr/local/bin/review_context \
+      /usr/local/bin/review_dry_run \
       /usr/local/bin/opencode_step \
       /usr/local/bin/review_orchestrator.sh
 
