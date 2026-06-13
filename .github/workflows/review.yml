@@ -29,6 +29,10 @@ permissions:
   packages: read
   pull-requests: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   review:
     runs-on: ubuntu-latest
