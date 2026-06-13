@@ -44,9 +44,13 @@ then runs `bin/review_orchestrator.sh`, which:
 6. validates the audited queue so only valid RIGHT-side changed lines are
    submitted;
 7. runs a no-MCP OpenCode pass to synthesize the final review body from the
-   reviewer output;
+   reviewer output and validated queue;
 8. posts a single GitHub review whose body uses the synthesized conclusion and
    any queued inline comments, plus any queued replies.
+
+OpenCode invocations are routed through `bin/opencode_step`, which keeps raw
+JSON event streams as runtime artifacts when supported and reuses the same
+post-processing OpenCode session for queue audit and final synthesis.
 
 The image keeps credentials out of the build. Runtime secrets are provided by
 the consuming repository, while reviewer settings such as the command trigger,
@@ -65,6 +69,9 @@ variable to try a different model without changing workflow YAML.
 - `bin/review_comments` is the staging interface used by OpenCode and the
   orchestrator for comments, suggestions, multiline findings, replies, the
   synthesized review conclusion, listing, and status checks.
+- `bin/opencode_step` is the OpenCode CLI adapter used by the orchestrator. It
+  handles feature detection, JSON event rendering, raw JSONL logs, and explicit
+  session continuation.
 - `bin/stage_review_comment` and `bin/filter_review_comments` are compatibility
   wrappers around the review-comment tooling.
 - `lib/review-tools.js` contains the shared implementation for staging,
@@ -130,12 +137,14 @@ authoritative for review-only behavior.
 The reviewer queues findings and replies through `review_comments` instead of
 posting them directly. The orchestrator is the only submitter, which allows it
 to validate positions against the current diff and submit one consolidated
-review. After the finding pass, the orchestrator runs a second OpenCode pass to
-synthesize the GitHub review body from the reviewer output. That body can be a
-single-line LGTM for simple pull requests or a sectioned summary covering
-changes, recommendations, and important flags when useful. It also tracks
-previous bot comments and reply action items so follow-up review runs can
-respond to existing threads when appropriate. When a top-level
+review. After the finding pass, the orchestrator validates the queue, runs a
+no-MCP queue audit pass, validates again, and then runs a no-MCP synthesis pass
+from the reviewer output and final validated queue. The audit and synthesis
+passes reuse one OpenCode session when JSON event output exposes a session id.
+The final body can be a single-line LGTM for simple pull requests or a sectioned
+summary covering changes, recommendations, and important flags when useful. It
+also tracks previous bot comments and reply action items so follow-up review
+runs can respond to existing threads when appropriate. When a top-level
 `@singular-code-review` comment asks a direct question, the single review body
 answers the commenter first and then continues with the review summary.
 

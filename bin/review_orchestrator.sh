@@ -87,16 +87,17 @@ create_opencode_no_mcp_config() {
   local runtime_dir="$1"
   local home_dir="${HOME:-/root}"
   local source_config="$home_dir/.config/opencode/opencode.json"
-  local source_prompt="$home_dir/.config/opencode/AGENTS.md"
   local no_mcp_dir="$runtime_dir/opencode-no-mcp"
   local no_mcp_config="$no_mcp_dir/opencode.json"
   local no_mcp_prompt="$no_mcp_dir/AGENTS.md"
 
   mkdir -p "$no_mcp_dir"
 
-  if [[ -f "$source_prompt" ]]; then
-    cp "$source_prompt" "$no_mcp_prompt"
-  fi
+  cat > "$no_mcp_prompt" <<'PROMPT'
+You are running a Singular Code Review post-processing pass.
+
+Follow the user prompt exactly. Read only the files named in the prompt or attached to the message. Do not investigate the repository for new findings. Do not call gh, review_comments, or any posting tool. Do not edit repository files. The only allowed edit is to review_queue.json when the user prompt explicitly asks for queue audit changes.
+PROMPT
 
   node - "$source_config" "$no_mcp_config" <<'NODE'
 const fs = require("node:fs");
@@ -104,6 +105,9 @@ const fs = require("node:fs");
 const [, , sourceConfig, outputConfig] = process.argv;
 const config = JSON.parse(fs.readFileSync(sourceConfig, "utf8"));
 delete config.mcp;
+if (config.agent?.reviewer) {
+  config.agent.reviewer.prompt = "{file:./AGENTS.md}";
+}
 fs.writeFileSync(outputConfig, `${JSON.stringify(config, null, 2)}\n`);
 NODE
 
@@ -145,11 +149,12 @@ install_dependencies() {
 build_review_context() {
   local context_file="$1"
   local diff_file="$2"
+  local context_stdout_file="${context_file}.stdout.json"
 
   require_tool review_context
   require_tool gh
 
-  review_context --refresh --output "$context_file" --diff-file "$diff_file" >/tmp/review_context.stdout.json
+  review_context --refresh --output "$context_file" --diff-file "$diff_file" >"$context_stdout_file"
   if [[ ! -s "$diff_file" ]]; then
     log "PR diff is empty; nothing to review"
     exit 0
@@ -161,20 +166,27 @@ run_opencode_review() {
   local context_file="$2"
   local diff_file="$3"
   local output_file="$4"
+  local capabilities_file="$5"
+  local session_file="$6"
   local prompt
 
-  require_tool opencode
+  require_tool opencode_step
   require_tool review_comments
   require_tool review_context
 
-  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. If a top-level @singular-code-review trigger comment asks a direct question or gives instructions, answer it at the top of your terminal output addressed to the commenter, then continue with the review. Check unresolved_bot_threads and previous_bot_findings before adding inline comments so you do not duplicate active bot findings. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. If multiple comments are queued for the same path and line, combine overlapping comments when they describe the same issue and keep separate comments only when they are genuinely distinct actionable issues. Always pass review text with --body-stdin, --body-file, --message-stdin, or --message-file; prefer a single-quoted heredoc such as <<'REVIEW_COMMENT'. Never put Markdown, backticks, quotes, or code snippets directly in shell arguments. Do not queue a final conclusion; a later audit/synthesis pass will tighten queued comments and turn your review output into the GitHub review body. Never use gh api to post review comments or reviews directly. Do not edit repository files."
+  prompt="Review this pull request using the normalized context at ${context_file} and diff at ${diff_file}. Start by running review_context if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation. When a top-level @singular-code-review trigger comment asks a direct question or gives instructions, begin your terminal output with a concise answer addressed to the commenter, then continue with the review. Check unresolved_bot_threads and previous_bot_findings before adding inline comments so active bot findings are handled as existing review context. Queue new findings with review_comments add, queue multiline findings with review_comments add --start-line, queue code suggestions with review_comments suggest, and queue replies to existing review discussions with review_comments reply. If multiple comments are queued for the same path and line, combine overlapping comments when they describe the same issue and keep separate comments only when they are genuinely distinct actionable issues. Always pass review text with --body-stdin, --body-file, --message-stdin, or --message-file; prefer a single-quoted heredoc such as <<'REVIEW_COMMENT'. Never put Markdown, backticks, quotes, or code snippets directly in shell arguments. Do not queue a final conclusion; a later audit/synthesis pass will tighten queued comments and turn your review output into the GitHub review body. Never use gh api to post review comments or reviews directly. Do not edit repository files."
 
   log "running OpenCode review"
-  if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && opencode run --agent reviewer --file "$context_file" --file "$diff_file" -- "$prompt") 2>&1 | tee "$output_file"
-  else
-    (cd "$workspace" && opencode -q -c "$workspace" -p "$prompt") 2>&1 | tee "$output_file"
-  fi
+  opencode_step \
+    --workspace "$workspace" \
+    --output "$output_file" \
+    --json-output "${output_file}.jsonl" \
+    --capabilities-file "$capabilities_file" \
+    --session-file "$session_file" \
+    --agent reviewer \
+    --file "$context_file" \
+    --file "$diff_file" \
+    --prompt "$prompt"
 }
 
 run_opencode_queue_audit() {
@@ -185,11 +197,13 @@ run_opencode_queue_audit() {
   local reviewer_output_file="$5"
   local audit_output_file="$6"
   local opencode_config="$7"
+  local session_file="$8"
+  local capabilities_file="$9"
   local prompt
   local reviewer_output_sanitized_file
   local queue_prompt_path
 
-  require_tool opencode
+  require_tool opencode_step
 
   reviewer_output_sanitized_file="${reviewer_output_file}.sanitized"
   sanitize_conclusion_text "$reviewer_output_file" > "$reviewer_output_sanitized_file"
@@ -201,11 +215,19 @@ run_opencode_queue_audit() {
   prompt="Audit the queued pull request review comments before submission. Edit only this file: ${queue_prompt_path}. Do not edit repository files. Do not call gh, review_comments, or any posting tool. Use ${queue_file} as the queue to modify, ${validated_file} for current validation and dropped reasons, ${context_file} for previous bot comments and unresolved review threads, and the attached reviewer output for the findings already discovered. Tighten the queue in place: remove duplicate comments, merge overlapping same-line comments when they are the same issue, keep multiple same-line comments only when they are genuinely distinct actionable issues, remove comments already covered by unresolved bot threads or previous bot comments, and fix obvious shell-escaping damage or truncated wording. Do not add new findings unless they are already present in the first reviewer output. Preserve valid replies. Keep review_queue.json valid JSON with the existing schema. When finished, write a brief audit summary to stdout."
 
   log "running OpenCode review queue audit"
-  if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode run --agent reviewer --file "$queue_file" --file "$validated_file" --file "$context_file" --file "$reviewer_output_sanitized_file" -- "$prompt") 2>&1 | tee "$audit_output_file"
-  else
-    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode -q -c "$workspace" -p "$prompt") 2>&1 | tee "$audit_output_file"
-  fi
+  opencode_step \
+    --workspace "$workspace" \
+    --output "$audit_output_file" \
+    --json-output "${audit_output_file}.jsonl" \
+    --config "$opencode_config" \
+    --capabilities-file "$capabilities_file" \
+    --session-file "$session_file" \
+    --agent reviewer \
+    --file "$queue_file" \
+    --file "$validated_file" \
+    --file "$context_file" \
+    --file "$reviewer_output_sanitized_file" \
+    --prompt "$prompt"
 }
 
 json_count() {
@@ -332,31 +354,44 @@ run_opencode_conclusion_synthesis() {
   local conclusion_output_file="$3"
   local opencode_config="$4"
   local validated_file="$5"
+  local context_file="$6"
+  local session_file="$7"
+  local capabilities_file="$8"
   local prompt
   local reviewer_output
   local reviewer_output_sanitized_file
-  local validated_queue
 
-  require_tool opencode
+  require_tool opencode_step
 
   reviewer_output="$(sanitize_conclusion_text "$reviewer_output_file")"
-  validated_queue="$(cat "$validated_file" 2>/dev/null || true)"
   reviewer_output_sanitized_file="${reviewer_output_file}.sanitized"
   printf '%s\n' "$reviewer_output" > "$reviewer_output_sanitized_file"
-  prompt="The previous OpenCode reviewer produced terminal output for a pull request, and the runner has attached the final validated review queue. Synthesize a concise, polished GitHub pull request review body. Use the validated queue as the source of truth for actionable review findings: mention findings only when they appear in validated inlineComments or validated replies. Do not mention findings, style notes, or side observations that appear only in the raw reviewer output but are absent from the validated queue. Preserve a leading reviewer/model banner if present, and keep a blank line after it. Preserve any direct answer to a top-level @singular-code-review trigger comment near the top of the body, addressed to the commenter by GitHub handle when present, then add a blank line before the review summary and verdict. If there was no direct trigger question, do not say that none was found. Use normal Markdown paragraphs separated by blank lines. Do not include command transcripts, queued-comment JSON, dropped/merged bookkeeping, or tool status lines. Do not convert direct answers into buried notes or indirect summaries such as 'a user asked'. Do not invent issues that are not present in the validated queue. Do not call review_comments, gh, or any other posting tool. Write only the final review body text to stdout."
+  prompt="Write the final GitHub pull request review body for Singular Code Review. Use the sanitized reviewer output at ${reviewer_output_sanitized_file}, the final validated review queue at ${validated_file}, and the normalized review context at ${context_file}. The runner attaches all three files when supported.
+
+Desired shape:
+- Keep a leading reviewer/model banner when one is present, followed by a blank line.
+- When the context contains a top-level @singular-code-review trigger question or instruction, begin with a concise direct answer addressed to the commenter by GitHub handle. Put that answer before the review summary.
+- Write a short Review Summary paragraph that explains what the PR changes and the overall review state.
+- Write Recommendations as a compact thematic summary of what the inline comments cover, such as input validation, API behavior, naming clarity, or test coverage. The inline comments carry line-by-line details; the body should group them into useful themes.
+- Surface severe, dangerous, security-sensitive, or merge-blocking concerns explicitly in the body. Routine findings can stay summarized by theme.
+- Write a Verdict paragraph with practical merge guidance, severity, and appropriate reviewer tone. Include brief praise when the PR has a sound direction or useful improvement.
+
+Use the validated queue as the source for issue themes and severity. Use the context for trigger-comment answers and commenter handles. Use normal Markdown paragraphs separated by blank lines. Write only the final review body text to stdout."
 
   log "running OpenCode conclusion synthesis"
-  if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode run --agent reviewer --file "$reviewer_output_sanitized_file" --file "$validated_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
-  else
-    (cd "$workspace" && OPENCODE_CONFIG="$opencode_config" opencode -q -c "$workspace" -p "${prompt}
-
-Reviewer terminal output:
-${reviewer_output}
-
-Final validated review queue:
-${validated_queue}") 2>&1 | tee "$conclusion_output_file"
-  fi
+  opencode_step \
+    --workspace "$workspace" \
+    --output "$conclusion_output_file" \
+    --json-output "${conclusion_output_file}.jsonl" \
+    --config "$opencode_config" \
+    --capabilities-file "$capabilities_file" \
+    --session-file "$session_file" \
+    --reuse-session \
+    --agent reviewer \
+    --file "$reviewer_output_sanitized_file" \
+    --file "$validated_file" \
+    --file "$context_file" \
+    --prompt "$prompt"
 }
 
 build_review_payload() {
@@ -408,7 +443,8 @@ submit_inline_review() {
 
 submit_replies() {
   local validated_file="$1"
-  local reply_dir="/tmp/review_replies.${RANDOM}.$$"
+  local runtime_dir="${2:-${TMPDIR:-/tmp}}"
+  local reply_dir="${runtime_dir}/review_replies.${RANDOM}.$$"
 
   mkdir -p "$reply_dir"
 
@@ -468,6 +504,10 @@ main() {
   local opencode_output_file="${OPENCODE_OUTPUT_FILE:-${runtime_dir}/opencode_review_output.log}"
   local opencode_audit_file="${OPENCODE_AUDIT_OUTPUT_FILE:-${runtime_dir}/opencode_review_audit.log}"
   local opencode_conclusion_file="${OPENCODE_CONCLUSION_OUTPUT_FILE:-${runtime_dir}/opencode_review_conclusion.log}"
+  local opencode_capabilities_file="${runtime_dir}/opencode_capabilities.json"
+  local opencode_review_session_file="${runtime_dir}/opencode_review_session.txt"
+  local opencode_post_session_file="${runtime_dir}/opencode_postprocess_session.txt"
+  local validate_stdout_file="${runtime_dir}/review_validate.stdout.json"
   local no_mcp_opencode_config
   local queued_inline_count
   local queued_reply_count
@@ -488,29 +528,33 @@ main() {
   ensure_parent_dir "$opencode_output_file"
   ensure_parent_dir "$opencode_audit_file"
   ensure_parent_dir "$opencode_conclusion_file"
+  ensure_parent_dir "$opencode_capabilities_file"
+  ensure_parent_dir "$opencode_review_session_file"
+  ensure_parent_dir "$opencode_post_session_file"
+  ensure_parent_dir "$validate_stdout_file"
 
   install_opencode_runtime_config
   no_mcp_opencode_config="$(create_opencode_no_mcp_config "$runtime_dir")"
   build_review_context "$context_file" "$diff_file"
   review_comments clear --queue "$queue_file" >/dev/null
   install_dependencies "$workspace"
-  run_opencode_review "$workspace" "$context_file" "$diff_file" "$opencode_output_file"
+  run_opencode_review "$workspace" "$context_file" "$diff_file" "$opencode_output_file" "$opencode_capabilities_file" "$opencode_review_session_file"
 
-  review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >/tmp/review_validate.stdout.json
-  log "finding validation: $(cat /tmp/review_validate.stdout.json)"
+  review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >"$validate_stdout_file"
+  log "finding validation: $(cat "$validate_stdout_file")"
 
   queued_inline_count="$(json_count "$queue_file" "inlineComments")"
   queued_reply_count="$(json_count "$queue_file" "replies")"
   if [[ "$queued_inline_count" -gt 0 || "$queued_reply_count" -gt 0 ]]; then
-    run_opencode_queue_audit "$workspace" "$queue_file" "$validated_file" "$context_file" "$opencode_output_file" "$opencode_audit_file" "$no_mcp_opencode_config"
-    review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >/tmp/review_validate.stdout.json
-    log "post-audit validation: $(cat /tmp/review_validate.stdout.json)"
+    run_opencode_queue_audit "$workspace" "$queue_file" "$validated_file" "$context_file" "$opencode_output_file" "$opencode_audit_file" "$no_mcp_opencode_config" "$opencode_post_session_file" "$opencode_capabilities_file"
+    review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >"$validate_stdout_file"
+    log "post-audit validation: $(cat "$validate_stdout_file")"
   else
     log "review queue is empty; skipping queue audit"
   fi
 
   log "synthesizing final review conclusion with OpenCode"
-  run_opencode_conclusion_synthesis "$workspace" "$opencode_output_file" "$opencode_conclusion_file" "$no_mcp_opencode_config" "$validated_file"
+  run_opencode_conclusion_synthesis "$workspace" "$opencode_output_file" "$opencode_conclusion_file" "$no_mcp_opencode_config" "$validated_file" "$context_file" "$opencode_post_session_file" "$opencode_capabilities_file"
   local synthesized_conclusion
   synthesized_conclusion="$(sanitize_conclusion_text "$opencode_conclusion_file")"
   if [[ -z "$synthesized_conclusion" ]]; then
@@ -519,8 +563,8 @@ main() {
   fi
   review_comments conclude --queue "$queue_file" --body "$synthesized_conclusion" >/dev/null
 
-  review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >/tmp/review_validate.stdout.json
-  log "final review validation: $(cat /tmp/review_validate.stdout.json)"
+  review_comments validate --queue "$queue_file" --context "$context_file" --output "$validated_file" >"$validate_stdout_file"
+  log "final review validation: $(cat "$validate_stdout_file")"
 
   inline_count="$(json_count "$validated_file" "inlineComments")"
   reply_count="$(json_count "$validated_file" "replies")"
@@ -535,7 +579,7 @@ main() {
   fi
 
   if [[ "$reply_count" -gt 0 ]]; then
-    submit_replies "$validated_file"
+    submit_replies "$validated_file" "$runtime_dir"
     log "submitted ${reply_count} review reply/replies"
   fi
 }

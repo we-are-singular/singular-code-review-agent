@@ -1,0 +1,328 @@
+#!/usr/bin/env node
+
+const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
+function usage() {
+  console.error(`usage:
+  opencode_step --workspace <dir> --output <file> --prompt <prompt>
+    [--agent <agent>] [--config <file>] [--session-file <file>] [--reuse-session]
+    [--capabilities-file <file>] [--json-output <file>] [--file <file>]...`);
+}
+
+function fail(message) {
+  console.error(`opencode_step: ${message}`);
+  process.exit(1);
+}
+
+function parseArgs(argv) {
+  const result = { files: [] };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--file") {
+      result.files.push(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("--")) {
+      continue;
+    }
+
+    const key = arg.slice(2).replace(/-/g, "_");
+    const next = argv[index + 1];
+    if (!next || next.startsWith("--")) {
+      result[key] = true;
+    } else {
+      result[key] = next;
+      index += 1;
+    }
+  }
+
+  return result;
+}
+
+function ensureParentDir(file) {
+  if (!file) {
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+}
+
+function readTextFile(file) {
+  try {
+    return fs.readFileSync(file, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeTextFile(file, value) {
+  ensureParentDir(file);
+  fs.writeFileSync(file, `${value}\n`);
+}
+
+function detectCapabilities(cacheFile) {
+  if (cacheFile && fs.existsSync(cacheFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    } catch {
+      // Fall through and regenerate the cache.
+    }
+  }
+
+  const result = spawnSync("opencode", ["run", "--help"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const help = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const capabilities = {
+    run: result.status === 0,
+    formatJson: result.status === 0 && help.includes("--format"),
+    file: result.status === 0 && help.includes("--file"),
+    session: result.status === 0 && help.includes("--session")
+  };
+
+  if (cacheFile) {
+    ensureParentDir(cacheFile);
+    fs.writeFileSync(cacheFile, `${JSON.stringify(capabilities, null, 2)}\n`);
+  }
+
+  return capabilities;
+}
+
+function findSessionID(value, depth = 0) {
+  if (!value || depth > 6) {
+    return "";
+  }
+  if (typeof value !== "object") {
+    return "";
+  }
+
+  for (const key of ["sessionID", "sessionId", "session_id"]) {
+    if (typeof value[key] === "string" && value[key]) {
+      return value[key];
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findSessionID(item, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return "";
+  }
+
+  for (const item of Object.values(value)) {
+    const found = findSessionID(item, depth + 1);
+    if (found) {
+      return found;
+    }
+  }
+  return "";
+}
+
+function textFromJsonEvent(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  if (value.type === "text" && typeof value.text === "string") {
+    return value.text;
+  }
+  if (typeof value.text === "string" && value.type === undefined) {
+    return value.text;
+  }
+  if (value.part && typeof value.part === "object") {
+    return textFromJsonEvent(value.part);
+  }
+  if (value.event && typeof value.event === "object") {
+    return textFromJsonEvent(value.event);
+  }
+  if (value.properties && typeof value.properties === "object") {
+    return textFromJsonEvent(value.properties);
+  }
+  return "";
+}
+
+function createWriters(outputFile, jsonOutputFile) {
+  ensureParentDir(outputFile);
+  const output = fs.createWriteStream(outputFile, { flags: "w", mode: 0o600 });
+  const jsonOutput = jsonOutputFile
+    ? (ensureParentDir(jsonOutputFile), fs.createWriteStream(jsonOutputFile, { flags: "w", mode: 0o600 }))
+    : null;
+
+  return {
+    writeRendered(text, stream = process.stdout) {
+      if (!text) {
+        return;
+      }
+      output.write(text);
+      stream.write(text);
+    },
+    writeLine(line, stream = process.stdout) {
+      const text = `${line}\n`;
+      output.write(text);
+      stream.write(text);
+    },
+    writeJsonLine(line) {
+      if (jsonOutput) {
+        jsonOutput.write(`${line}\n`);
+      }
+    },
+    close() {
+      return Promise.all([
+        new Promise((resolve) => output.end(resolve)),
+        jsonOutput ? new Promise((resolve) => jsonOutput.end(resolve)) : Promise.resolve()
+      ]);
+    }
+  };
+}
+
+function buildModernArgs(options, capabilities) {
+  const args = ["run"];
+  if (options.agent) {
+    args.push("--agent", options.agent);
+  }
+  if (capabilities.formatJson) {
+    args.push("--format", "json");
+  }
+
+  const sessionID = options.reuse_session && options.session_file ? readTextFile(options.session_file) : "";
+  if (sessionID && capabilities.session) {
+    args.push("--session", sessionID);
+  }
+
+  if (capabilities.file) {
+    for (const file of options.files || []) {
+      args.push("--file", file);
+    }
+  }
+
+  args.push("--", options.prompt);
+  return args;
+}
+
+function buildLegacyArgs(options) {
+  return ["-q", "-c", options.workspace, "-p", options.prompt];
+}
+
+async function runStep(options) {
+  if (!options.workspace) {
+    throw new Error("--workspace is required");
+  }
+  if (!options.output) {
+    throw new Error("--output is required");
+  }
+  if (!options.prompt) {
+    throw new Error("--prompt is required");
+  }
+
+  const capabilities = detectCapabilities(options.capabilities_file);
+  const modern = capabilities.run;
+  const args = modern ? buildModernArgs(options, capabilities) : buildLegacyArgs(options);
+  const commandEnv = { ...process.env };
+  if (options.config) {
+    commandEnv.OPENCODE_CONFIG = options.config;
+  }
+
+  const writers = createWriters(options.output, modern && capabilities.formatJson ? options.json_output : null);
+  let stdoutBuffer = "";
+  let sessionID = "";
+
+  const child = spawn("opencode", args, {
+    cwd: options.workspace,
+    env: commandEnv,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    if (!modern || !capabilities.formatJson) {
+      writers.writeRendered(chunk);
+      return;
+    }
+
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const event = JSON.parse(line);
+        writers.writeJsonLine(line);
+        sessionID ||= findSessionID(event);
+        const text = textFromJsonEvent(event);
+        if (text) {
+          writers.writeRendered(text);
+        }
+      } catch {
+        writers.writeLine(line);
+      }
+    }
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    writers.writeRendered(chunk, process.stderr);
+  });
+
+  const code = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  if (stdoutBuffer.trim()) {
+    try {
+      const event = JSON.parse(stdoutBuffer);
+      writers.writeJsonLine(stdoutBuffer);
+      sessionID ||= findSessionID(event);
+      const text = textFromJsonEvent(event);
+      if (text) {
+        writers.writeRendered(text);
+      }
+    } catch {
+      writers.writeLine(stdoutBuffer);
+    }
+  }
+
+  await writers.close();
+
+  if (sessionID && options.session_file) {
+    writeTextFile(options.session_file, sessionID);
+  }
+
+  if (code !== 0) {
+    throw new Error(`opencode exited with status ${code}`);
+  }
+
+  return { sessionID, modern, args };
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  await runStep(options);
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    if (/^--.+ is required$/.test(error.message || "")) {
+      usage();
+    }
+    fail(error.message || String(error));
+  });
+}
+
+module.exports = {
+  buildModernArgs,
+  detectCapabilities,
+  findSessionID,
+  parseArgs,
+  runStep,
+  textFromJsonEvent
+};

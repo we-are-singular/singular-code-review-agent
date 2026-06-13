@@ -18,6 +18,7 @@ function makeHarness(opencodeBody) {
   const workspace = path.join(dir, "workspace");
   const mockbin = path.join(dir, "mockbin");
   fs.mkdirSync(workspace);
+  fs.mkdirSync(path.join(workspace, ".git"));
   fs.mkdirSync(mockbin);
 
   const apiPayloadFile = path.join(dir, "api-payload.json");
@@ -141,8 +142,7 @@ if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
   printf 'Audit complete.\n'
   exit 0
 fi
-if [[ "$*" == *"Reviewer terminal output"* ]]; then
-  [[ "$*" == *"Final validated review queue"* ]] || exit 3
+if [[ "$*" == *"Write the final GitHub pull request review body"* ]]; then
   printf 'Synthesized conclusion: one blocking finding.\n'
   exit 0
 fi
@@ -191,8 +191,7 @@ fs.writeFileSync(process.env.REVIEW_QUEUE_FILE, JSON.stringify(queue, null, 2) +
   printf 'Audit complete.\n'
   exit 0
 fi
-if [[ "$*" == *"Reviewer terminal output"* ]]; then
-  [[ "$*" == *"Final validated review queue"* ]] || exit 3
+if [[ "$*" == *"Write the final GitHub pull request review body"* ]]; then
   printf 'Synthesized conclusion: audited finding.\n'
   exit 0
 fi
@@ -262,7 +261,7 @@ set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 1
 fi
-if [[ "$*" == *"Reviewer terminal output"* ]]; then
+if [[ "$*" == *"Write the final GitHub pull request review body"* ]]; then
   printf '> reviewer · minimax-m2.7\n\n> reviewer · minimax-m2.7\nLGTM — no blocking findings.\n'
   exit 0
 fi
@@ -346,6 +345,7 @@ test("separates opencode run file attachments from the prompt", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  printf '%s\n' '--format' '--file' '--session'
   exit 0
 fi
 if [[ "\${1:-}" == "run" ]]; then
@@ -378,6 +378,7 @@ test("passes the validated queue to modern conclusion synthesis", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  printf '%s\n' '--format' '--file' '--session'
   exit 0
 fi
 if [[ "\${1:-}" == "run" ]]; then
@@ -385,7 +386,7 @@ if [[ "\${1:-}" == "run" ]]; then
     printf 'Audit complete.\\n'
     exit 0
   fi
-  if [[ "$*" == *"Synthesize a concise, polished GitHub pull request review body"* ]]; then
+  if [[ "$*" == *"Write the final GitHub pull request review body"* ]]; then
     printf '%s\\n' "$@" > "$OPENCODE_CONCLUSION_ARGS_FILE"
     printf '> reviewer · minimax-m2.7\\n\\nRequest changes: keep the queued finding.\\n'
     exit 0
@@ -408,18 +409,66 @@ exit 1
   const args = fs.readFileSync(argsFile, "utf8").trimEnd().split("\n");
   const separatorIndex = args.indexOf("--");
   assert.notEqual(separatorIndex, -1);
+  const prompt = args.slice(separatorIndex + 1).join("\n");
   assert(args.includes(`${outputFile}.sanitized`));
   assert(args.includes(path.join(harness.dir, "review_validated.json")));
-  assert.match(args[separatorIndex + 1], /validated queue as the source of truth/);
+  assert(args.includes(path.join(harness.dir, "review_context.json")));
+  assert.match(prompt, /Recommendations as a compact thematic summary/);
+  assert.match(prompt, /trigger question or instruction/);
 
   const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
   assert.equal(payload.body, "> reviewer · minimax-m2.7\n\nRequest changes: keep the queued finding.");
+});
+
+test("reuses the audit session for conclusion synthesis when JSON events expose it", () => {
+  const harness = makeHarness(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  printf '%s\n' '--format' '--file' '--session'
+  exit 0
+fi
+if [[ "\${1:-}" == "run" ]]; then
+  if [[ "$*" == *"Audit the queued pull request review comments"* ]]; then
+    [[ "$*" != *"--session post-session"* ]] || exit 4
+    printf '{"type":"text","sessionID":"post-session","text":"Audit complete.\\\\n"}\\n'
+    exit 0
+  fi
+  if [[ "$*" == *"Write the final GitHub pull request review body"* ]]; then
+    [[ "$*" == *"--session post-session"* ]] || exit 5
+    printf '%s\\n' "$@" > "$OPENCODE_CONCLUSION_ARGS_FILE"
+    printf '{"type":"text","sessionID":"post-session","text":"> reviewer · minimax-m2.7\\\\n\\\\nRequest changes: reused session.\\\\n"}\\n'
+    exit 0
+  fi
+  review_comments add --path "src/app.js" --line "2" --body "The new timeout can become NaN and break callers."
+  printf '{"type":"text","sessionID":"review-session","text":"Queued one finding.\\\\n"}\\n'
+  exit 0
+fi
+echo "unexpected opencode invocation: $*" >&2
+exit 1
+`);
+  const argsFile = path.join(harness.dir, "opencode-conclusion-args.txt");
+
+  runOrchestrator(harness, {
+    OPENCODE_CONCLUSION_ARGS_FILE: argsFile
+  });
+
+  const runtimeDir = path.join(harness.workspace, ".git", "singular-code-review");
+  assert.equal(
+    fs.readFileSync(path.join(runtimeDir, "opencode_postprocess_session.txt"), "utf8").trim(),
+    "post-session"
+  );
+  assert.match(fs.readFileSync(argsFile, "utf8"), /--session\npost-session/);
+  assert(fs.existsSync(path.join(runtimeDir, "opencode_review_audit.log.jsonl")));
+
+  const payload = JSON.parse(fs.readFileSync(harness.apiPayloadFile, "utf8"));
+  assert.equal(payload.body, "> reviewer · minimax-m2.7\n\nRequest changes: reused session.");
 });
 
 test("keeps default review runtime files inside the git checkout", () => {
   const harness = makeHarness(`#!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  printf '%s\n' '--format' '--file' '--session'
   exit 0
 fi
 if [[ "\${1:-}" == "run" ]]; then
@@ -432,7 +481,7 @@ fi
 echo "unexpected opencode invocation: $*" >&2
 exit 1
 `);
-  fs.mkdirSync(path.join(harness.workspace, ".git"));
+  fs.mkdirSync(path.join(harness.workspace, ".git"), { recursive: true });
   const argsFile = path.join(harness.dir, "opencode-args.txt");
 
   runOrchestrator(
