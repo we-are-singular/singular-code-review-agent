@@ -37,7 +37,6 @@ jobs:
         with:
           client-id: ${{ vars.SINGULAR_CODE_REVIEW_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
           private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
           permission-issues: write
 
       - name: Acknowledge trigger comment
@@ -86,7 +85,6 @@ jobs:
         with:
           client-id: ${{ vars.SINGULAR_CODE_REVIEW_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
           private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
           permission-contents: read
           permission-issues: read
           permission-pull-requests: write
