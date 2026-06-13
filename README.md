@@ -19,7 +19,7 @@ repositories opt in with a small trigger workflow and runtime secrets.
   OpenCode, filters staged findings to valid diff positions, and submits the
   final review payload.
 - Local review tools that let the agent stage inline comments, multiline
-  comments, suggestions, replies, and one overall conclusion comment before
+  comments, suggestions, replies, and the synthesized overall conclusion before
   submission.
 - A review-only OpenCode prompt and vendored reviewer skills that keep the
   agent focused on actionable code review feedback.
@@ -34,15 +34,17 @@ then runs `bin/review_orchestrator.sh`, which:
 
 1. fetches normalized pull-request context with `bin/review_context`;
 2. starts OpenCode with the bundled configuration and review-only prompt;
-3. lets the agent queue findings and one final conclusion comment through
-   `bin/review_comments`;
+3. lets the agent queue findings and replies through `bin/review_comments`;
 4. filters queued comments so only valid RIGHT-side changed lines are submitted;
-5. posts a single GitHub review whose body uses the queued conclusion and any
-   queued inline comments, plus any queued replies.
+5. runs a second OpenCode pass to synthesize the final review body from the
+   reviewer output;
+6. posts a single GitHub review whose body uses the synthesized conclusion and
+   any queued inline comments, plus any queued replies.
 
-The image keeps credentials out of the build. Tokens, OpenCode credentials,
-model selection, command triggers, and dry-run behavior are all provided through
-runtime environment variables or workflow secrets.
+The image keeps credentials out of the build. Runtime secrets are provided by
+the consuming repository, while reviewer settings such as the command trigger,
+GitHub App client ID, image, model, and OpenCode agent are owned by this
+repository.
 
 ## Repository map
 
@@ -51,9 +53,9 @@ runtime environment variables or workflow secrets.
   execution, review payload creation, and submission.
 - `bin/review_context` collects pull-request metadata, mentions, previous bot
   comments, valid diff lines, and action items.
-- `bin/review_comments` is the staging interface used by OpenCode for comments,
-  suggestions, multiline findings, replies, the review conclusion, listing, and
-  status checks.
+- `bin/review_comments` is the staging interface used by OpenCode and the
+  orchestrator for comments, suggestions, multiline findings, replies, the
+  synthesized review conclusion, listing, and status checks.
 - `bin/stage_review_comment` and `bin/filter_review_comments` are compatibility
   wrappers around the review-comment tooling.
 - `lib/review-tools.js` contains the shared implementation for staging,
@@ -82,9 +84,14 @@ Pull requests build the image without publishing it. The source repository can
 remain private while the GHCR package is made public for unauthenticated pulls
 from consuming repositories.
 
-## Runtime inputs
+## Runtime Inputs
 
-Required runtime environment variables:
+The reusable workflow exposes only the pull request/comment identifiers as
+inputs. It owns the GitHub App client ID, command trigger, container image,
+OpenCode model, and OpenCode agent.
+
+The orchestrator still receives these required runtime environment variables
+from the reusable workflow:
 
 - `GH_TOKEN`: token used by the GitHub CLI and review submission.
 - `GITHUB_REPOSITORY`: repository in `owner/name` form.
@@ -94,16 +101,9 @@ Required runtime environment variables:
 
 Optional runtime environment variables:
 
-- `OPENCODE_MODEL`: model id used for configured OpenCode agents; defaults to
-  `opencode-go/minimax-m2.7`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
-- `OPENCODE_AGENT`: agent name for `opencode run`; defaults to `coder`.
-- `REVIEW_BODY`: body text for the submitted GitHub review.
-- `DRY_RUN=true`: prints the final review payload instead of submitting it.
-- `REVIEW_BOT_LOGIN`: bot login used to identify previous bot findings and
-  reply action items.
-- `OPENCODE_REVIEW_COMMAND`: PR comment command; defaults to
-  `@singular-code-review`.
+- `DRY_RUN=true`: local development override that prints the final review
+  payload instead of submitting it.
 
 Dependency installation is automatic when the checked-out pull-request workspace
 contains `package.json`. The runner chooses `pnpm`, `yarn`, or `npm` based on the
@@ -116,14 +116,15 @@ image-global OpenCode instructions. Target repositories can still provide their
 own `AGENTS.md` files for project-specific context, but the image prompt remains
 authoritative for review-only behavior.
 
-The reviewer queues findings and one final conclusion comment through
-`review_comments` instead of posting them directly. The orchestrator is the only
-submitter, which allows it to validate positions against the current diff and
-submit one consolidated review. The queued conclusion becomes the GitHub review
-body; it can be a single-line LGTM for simple pull requests or a sectioned
-summary covering changes, recommendations, and important flags when useful. It
-also tracks previous bot comments and reply action items so follow-up review runs
-can respond to existing threads when appropriate.
+The reviewer queues findings and replies through `review_comments` instead of
+posting them directly. The orchestrator is the only submitter, which allows it
+to validate positions against the current diff and submit one consolidated
+review. After the finding pass, the orchestrator runs a second OpenCode pass to
+synthesize the GitHub review body from the reviewer output. That body can be a
+single-line LGTM for simple pull requests or a sectioned summary covering
+changes, recommendations, and important flags when useful. It also tracks
+previous bot comments and reply action items so follow-up review runs can
+respond to existing threads when appropriate.
 
 ## Vendored skills
 

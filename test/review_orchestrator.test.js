@@ -219,7 +219,6 @@ fi
 `);
 
   runOrchestrator(harness, {
-    OPENCODE_MODEL: "test/model",
     CONTEXT7_API_KEY: "ctx7-test"
   });
 
@@ -227,7 +226,19 @@ fi
     fs.readFileSync(path.join(harness.dir, "home", ".config", "opencode", "opencode.json"), "utf8")
   );
 
-  assert.equal(config.model, "{env:OPENCODE_MODEL}");
+  assert.equal(config.model, "opencode-go/minimax-m2.7");
+  assert.equal(config.default_agent, "reviewer");
+  assert.deepEqual(config.agent.reviewer, {
+    description: "Reviews pull requests and queues structured GitHub review feedback.",
+    mode: "primary",
+    model: "opencode-go/minimax-m2.7",
+    prompt: "{file:./AGENTS.md}",
+    permission: {
+      edit: "deny",
+      bash: "allow",
+      webfetch: "allow"
+    }
+  });
   assert.deepEqual(config.provider["opencode-go"], {
     options: {
       apiKey: "{env:OPENCODE_API_KEY}"
@@ -241,6 +252,11 @@ fi
       CONTEXT7_API_KEY: "{env:CONTEXT7_API_KEY}"
     }
   });
+
+  assert.equal(
+    fs.readFileSync(path.join(harness.dir, "home", ".config", "opencode", "AGENTS.md"), "utf8"),
+    fs.readFileSync(path.join(repoRoot, "opencode", "AGENTS.md"), "utf8")
+  );
 });
 
 test("separates opencode run file attachments from the prompt", () => {
@@ -268,6 +284,7 @@ exit 1
   const args = fs.readFileSync(argsFile, "utf8").trimEnd().split("\n");
   const separatorIndex = args.indexOf("--");
   assert.notEqual(separatorIndex, -1);
+  assert.deepEqual(args.slice(0, 3), ["run", "--agent", "reviewer"]);
   assert.equal(args[separatorIndex - 1], path.join(harness.dir, "pr.diff"));
   assert.match(args[separatorIndex + 1], /^Review this pull request using the normalized context /);
 });

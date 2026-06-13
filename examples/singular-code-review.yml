@@ -17,47 +17,16 @@ permissions:
   pull-requests: write
 
 jobs:
-  config:
+  review:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
-        contains(github.event.comment.body, vars.OPENCODE_REVIEW_COMMAND || '@singular-code-review'))
-    runs-on: ubuntu-latest
-    outputs:
-      pr_number: ${{ steps.values.outputs.pr_number }}
-      trigger_comment_id: ${{ steps.values.outputs.trigger_comment_id }}
-      app_client_id: ${{ steps.values.outputs.app_client_id }}
-      opencode_model: ${{ steps.values.outputs.opencode_model }}
-      opencode_review_command: ${{ steps.values.outputs.opencode_review_command }}
-    steps:
-      - name: Resolve configuration
-        id: values
-        env:
-          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          TRIGGER_COMMENT_ID: ${{ github.event.comment.id || '' }}
-          APP_CLIENT_ID: ${{ vars.SINGULAR_CODE_REVIEW_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
-          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}
-          OPENCODE_REVIEW_COMMAND: ${{ vars.OPENCODE_REVIEW_COMMAND || '@singular-code-review' }}
-        run: |
-          {
-            echo "pr_number=${PR_NUMBER}"
-            echo "trigger_comment_id=${TRIGGER_COMMENT_ID}"
-            echo "app_client_id=${APP_CLIENT_ID}"
-            echo "opencode_model=${OPENCODE_MODEL}"
-            echo "opencode_review_command=${OPENCODE_REVIEW_COMMAND}"
-          } >> "$GITHUB_OUTPUT"
-
-  review:
-    needs: config
-    if: needs.config.result == 'success'
+        contains(github.event.comment.body, '@singular-code-review'))
     uses: we-are-singular/singular-code-review-agent/.github/workflows/review.yml@main
     with:
-      pr_number: ${{ needs.config.outputs.pr_number }}
-      trigger_comment_id: ${{ needs.config.outputs.trigger_comment_id }}
-      app_client_id: ${{ needs.config.outputs.app_client_id }}
-      opencode_model: ${{ needs.config.outputs.opencode_model }}
-      opencode_review_command: ${{ needs.config.outputs.opencode_review_command }}
+      pr_number: ${{ github.event.issue.number || github.event.inputs.pr_number }}
+      trigger_comment_id: ${{ github.event.comment.id || '' }}
     secrets:
       SINGULAR_CODE_REVIEW_PRIVATE_KEY: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

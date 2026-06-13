@@ -30,7 +30,9 @@ resolve_workspace() {
 install_opencode_runtime_config() {
   local home_dir="${HOME:-/root}"
   local config_file="$home_dir/.config/opencode/opencode.json"
-  local template_file="${OPENCODE_CONFIG_TEMPLATE:-/usr/local/share/singular-code-review/opencode.json}"
+  local prompt_file="$home_dir/.config/opencode/AGENTS.md"
+  local template_file="/usr/local/share/singular-code-review/opencode.json"
+  local template_prompt_file="/usr/local/share/singular-code-review/AGENTS.md"
 
   mkdir -p \
     "$home_dir/.config/opencode" \
@@ -40,6 +42,9 @@ install_opencode_runtime_config() {
 
   if [[ ! -f "$template_file" && -f "$REPO_ROOT/opencode/opencode.json" ]]; then
     template_file="$REPO_ROOT/opencode/opencode.json"
+  fi
+  if [[ ! -f "$template_prompt_file" && -f "$REPO_ROOT/opencode/AGENTS.md" ]]; then
+    template_prompt_file="$REPO_ROOT/opencode/AGENTS.md"
   fi
 
   if [[ -f "$template_file" ]]; then
@@ -52,6 +57,11 @@ install_opencode_runtime_config() {
   else
     printf '{}\n' > "$config_file"
     log "no OpenCode config template found; wrote empty config"
+  fi
+
+  if [[ -f "$template_prompt_file" && "$template_prompt_file" != "$prompt_file" ]]; then
+    cp "$template_prompt_file" "$prompt_file"
+    log "installed OpenCode prompt template"
   fi
 }
 
@@ -116,7 +126,7 @@ run_opencode_review() {
 
   log "running OpenCode review"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && opencode run --agent "${OPENCODE_AGENT:-coder}" --file "$context_file" --file "$diff_file" -- "$prompt") 2>&1 | tee "$output_file"
+    (cd "$workspace" && opencode run --agent reviewer --file "$context_file" --file "$diff_file" -- "$prompt") 2>&1 | tee "$output_file"
   else
     (cd "$workspace" && opencode -q -c "$workspace" -p "$prompt") 2>&1 | tee "$output_file"
   fi
@@ -207,7 +217,7 @@ run_opencode_conclusion_synthesis() {
 
   log "running OpenCode conclusion synthesis"
   if opencode run --help >/tmp/opencode-run-help.txt 2>&1; then
-    (cd "$workspace" && opencode run --agent "${OPENCODE_CONCLUSION_AGENT:-${OPENCODE_AGENT:-coder}}" --file "$reviewer_output_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
+    (cd "$workspace" && opencode run --agent reviewer --file "$reviewer_output_file" -- "$prompt") 2>&1 | tee "$conclusion_output_file"
   else
     (cd "$workspace" && opencode -q -c "$workspace" -p "${prompt}
 
@@ -219,14 +229,13 @@ ${reviewer_output}") 2>&1 | tee "$conclusion_output_file"
 build_review_payload() {
   local validated_file="$1"
   local output_file="$2"
-  local review_body="${REVIEW_BODY:-}"
 
-  node - "$validated_file" "$output_file" "$review_body" <<'NODE'
+  node - "$validated_file" "$output_file" <<'NODE'
 const fs = require("node:fs");
 
-const [, , validatedFile, outputFile, reviewBody] = process.argv;
+const [, , validatedFile, outputFile] = process.argv;
 const validated = JSON.parse(fs.readFileSync(validatedFile, "utf8"));
-const body = String(reviewBody || validated.conclusion || "OpenCode automated code review completed.").trim();
+const body = String(validated.conclusion || "OpenCode automated code review completed.").trim();
 const comments = validated.inlineComments.map((comment) => {
   const payload = {
     path: comment.path,
@@ -328,8 +337,6 @@ main() {
   export REVIEW_QUEUE_FILE="$queue_file"
   export REVIEW_CONTEXT_FILE="$context_file"
   export REVIEW_DIFF_FILE="$diff_file"
-  export OPENCODE_MODEL="${OPENCODE_MODEL:-opencode-go/minimax-m2.7}"
-  export OPENCODE_REVIEW_COMMAND="${OPENCODE_REVIEW_COMMAND:-@singular-code-review}"
 
   install_opencode_runtime_config
   build_review_context "$context_file" "$diff_file"

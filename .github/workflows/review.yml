@@ -12,26 +12,6 @@ on:
         required: false
         type: string
         default: ""
-      app_client_id:
-        description: GitHub App client ID used to mint the review token.
-        required: false
-        type: string
-        default: Iv23liVgvy1yaHapd0Wx
-      opencode_model:
-        description: Model ID used for OpenCode's configured agents.
-        required: false
-        type: string
-        default: opencode-go/minimax-m2.7
-      opencode_review_command:
-        description: PR comment command that requested the review.
-        required: false
-        type: string
-        default: "@singular-code-review"
-      image:
-        description: Container image to run for the reviewer.
-        required: false
-        type: string
-        default: ghcr.io/we-are-singular/singular-code-review-agent:latest
     secrets:
       SINGULAR_CODE_REVIEW_PRIVATE_KEY:
         description: GitHub App private key used to author review comments.
@@ -65,7 +45,7 @@ jobs:
         if: inputs.trigger_comment_id != ''
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.app_client_id }}
+          client-id: Iv23liVgvy1yaHapd0Wx
           private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
           permission-issues: write
           permission-pull-requests: write
@@ -77,7 +57,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COMMENT_ID: ${{ inputs.trigger_comment_id }}
-          REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+          BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
         run: |
           set -euo pipefail
 
@@ -85,12 +65,12 @@ jobs:
             gh api \
               -H "Accept: application/vnd.github+json" \
               "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-              --jq '.[] | select(.content == "eyes" and .user.login == env.REVIEW_BOT_LOGIN) | .id'
+              --jq '.[] | select(.content == "eyes" and .user.login == env.BOT_LOGIN) | .id'
           )"
 
           if [[ -n "$existing" ]]; then
             echo "should_review=false" >> "$GITHUB_OUTPUT"
-            echo "trigger comment already acknowledged by ${REVIEW_BOT_LOGIN}; skipping review"
+            echo "trigger comment already acknowledged by ${BOT_LOGIN}; skipping review"
             exit 0
           fi
 
@@ -108,13 +88,13 @@ jobs:
     if: needs.ack.outputs.should_review == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ${{ inputs.image }}
+      image: ghcr.io/we-are-singular/singular-code-review-agent:latest
     steps:
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.app_client_id }}
+          client-id: Iv23liVgvy1yaHapd0Wx
           private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
           permission-contents: read
           permission-issues: read
@@ -143,8 +123,5 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          OPENCODE_MODEL: ${{ inputs.opencode_model }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
-          OPENCODE_REVIEW_COMMAND: ${{ inputs.opencode_review_command }}
-          REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]

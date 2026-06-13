@@ -36,6 +36,7 @@ RUN mkdir -p /root/.config/opencode/skills \
 COPY opencode/opencode.json /root/.config/opencode/opencode.json
 COPY opencode/opencode.json /usr/local/share/singular-code-review/opencode.json
 COPY opencode/AGENTS.md /root/.config/opencode/AGENTS.md
+COPY opencode/AGENTS.md /usr/local/share/singular-code-review/AGENTS.md
 COPY opencode/skills/ /root/.config/opencode/skills/
 COPY lib/review-tools.js /usr/local/lib/review-tools.js
 COPY bin/stage_review_comment /usr/local/bin/stage_review_comment
