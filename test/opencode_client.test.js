@@ -104,4 +104,8 @@ test("audit and synthesis prompts stay phase-specific because auditor owns post-
   assert.match(auditPrompt, /Audit the queued pull request review comments/u);
   assert.doesNotMatch(synthesisPrompt, /^You are running a Singular Code Review post-processing phase\./u);
   assert.match(synthesisPrompt, /Write the final GitHub pull request review body/u);
+  assert.match(synthesisPrompt, /Always end with a `Verdict` section/u);
+  assert.match(synthesisPrompt, /✅ LGTM\./u);
+  assert.match(synthesisPrompt, /⚠️ Request changes/u);
+  assert.match(synthesisPrompt, /⛔ Block/u);
 });

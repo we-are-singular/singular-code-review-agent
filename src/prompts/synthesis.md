@@ -15,12 +15,14 @@ Output contract:
 Desired shape:
 
 - When the context contains a top-level `@singular-code-review` trigger question or instruction, begin with a concise direct answer addressed to the commenter by GitHub handle. Put that answer before the review summary.
-- Write a short Review Summary paragraph that explains what the PR changes and the overall review state.
-- Write Recommendations as a compact thematic summary of what the validated inline comments cover, such as input validation, API behavior, naming clarity, or test coverage. The inline comments carry line-by-line details; the body should group them into useful themes.
-- When the validated queue has no inlineComments and no replies, write a brief summary and verdict with no Recommendations section. In that case, raw reviewer observations are useful for understanding the PR, direct answers, and praise, while actionable recommendations come from the validated queue.
+- Prefer one short opening paragraph that explains what the PR changes and the overall review state.
+- Use titled sections when they improve scanability. Good default section titles are `Review Summary`, `Recommendations`, and `Verdict`; omit sections that do not fit the review.
+- Write `Recommendations` as a compact thematic summary of what the validated inline comments cover, such as input validation, API behavior, naming clarity, or test coverage. The inline comments carry line-by-line details; the body should group them into useful themes.
+- When the validated queue has no inlineComments and no replies, write a brief summary and final `Verdict` section with no `Recommendations` section. In that case, raw reviewer observations are useful for understanding the PR, direct answers, and praise, while actionable recommendations come from the validated queue.
 - Surface severe, dangerous, security-sensitive, or merge-blocking concerns explicitly in the body. Routine findings can stay summarized by theme.
 - Call out dangerous or critical issues explicitly, even when the inline queue already labels them.
-- Write a Verdict paragraph with practical merge guidance and severity. Do not sugar coat or elaborate further.
-- Keep the verdict caveman-simple: `LGTM.`, `Request changes: <one concrete reason>.`, or `Block: <one concrete reason>.`
+- Always end with a `Verdict` section. Make it visually separated from the rest of the body.
+- Start the verdict with exactly one compact severity marker: `✅ LGTM.`, `⚠️ Request changes: <one concrete reason>.`, or `⛔ Block: <one concrete reason>.`
+- Keep the verdict caveman-simple. Do not sugar coat or elaborate further after the practical merge guidance.
 
-Use the context for trigger-comment answers and commenter handles. Use normal Markdown paragraphs separated by blank lines. The first paragraph should be a direct answer, Review Summary, or verdict, depending on the review context.
+Use the context for trigger-comment answers and commenter handles. Use normal Markdown paragraphs separated by blank lines. The first paragraph should be a direct answer, short summary, or verdict, depending on the review context.
