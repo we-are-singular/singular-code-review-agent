@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { createGitHubClient } from "../clients/github.js";
+import { runCliMain } from "../lib/cli-main.js";
 import { REVIEW_COMMAND } from "../review/types.js";
-import { runCliMain } from "../shared/cli-main.js";
 
 function output(name: string, value: string, env: NodeJS.ProcessEnv): void {
   if (env.GITHUB_OUTPUT) {
@@ -63,6 +63,10 @@ function parseIssueUrl(value: string | null | undefined): { repository: string; 
   };
 }
 
+/**
+ * Re-checks whether the request is safe to review inside the reusable workflow.
+ * Client workflows also gate triggers, but this protects against drift.
+ */
 export async function evaluateGuard(options: {
   github: Pick<ReturnType<typeof createGitHubClient>, "getPullRequest" | "getIssueComment">;
   repository: string;
@@ -77,6 +81,8 @@ export async function evaluateGuard(options: {
   }
 
   if (pr.head?.repo?.full_name !== options.repository) {
+    // Fork PRs cannot receive repository secrets or App tokens safely in this
+    // workflow model.
     return { shouldReview: false, reason: "fork pull requests are not reviewed" };
   }
 
@@ -90,6 +96,8 @@ export async function evaluateGuard(options: {
 
     const issue = parseIssueUrl(comment.issue_url);
     if (issue?.repository !== options.repository || issue.issueNumber !== options.prNumber) {
+      // COMMENT_ID is user-controlled workflow input in some paths; bind it
+      // back to the PR before trusting the comment body or author.
       return { shouldReview: false, reason: "trigger comment does not belong to this pull request" };
     }
 

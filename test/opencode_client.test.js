@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildOpenCodeArgs, createCliOpenCodeClient, findSessionId, textFromJsonEvent } from "../dist/clients/opencode.js";
-import { createNoMcpOpenCodeConfig } from "../dist/config/opencode-config.js";
+import { buildAuditPrompt, buildSynthesisPrompt } from "../dist/prompts/prompts.js";
 
 function makeExecutable(file, body) {
   fs.writeFileSync(file, body, { mode: 0o755 });
@@ -86,44 +86,22 @@ printf '{"type":"text","sessionID":"ses_789","text":"Rendered review.\\\\n"}\\n'
   }
 });
 
-test("post-process OpenCode config is derived from XDG config home", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-config-"));
-  const home = path.join(dir, "home");
-  const xdgConfigHome = path.join(dir, "xdg-config");
-  const configDir = path.join(xdgConfigHome, "opencode");
-  fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(configDir, "opencode.json"),
-    `${JSON.stringify(
-      {
-        default_agent: "reviewer",
-        permission: { bash: "allow" },
-        agent: { reviewer: { prompt: "{file:./OLD.md}" } },
-        mcp: { context7: { enabled: true } },
-      },
-      null,
-      2,
-    )}\n`,
-  );
+test("audit and synthesis prompts stay phase-specific because auditor owns post-processing scope", () => {
+  const auditPrompt = buildAuditPrompt({
+    workspace: "/repo",
+    queueFile: "/tmp/.singular-code-review/run/review_queue.json",
+    validatedFile: "/tmp/.singular-code-review/run/review_validated.json",
+    auditorContextFile: "/tmp/.singular-code-review/run/review_auditor_context.json",
+    reviewerOutputFile: "/tmp/.singular-code-review/run/opencode_review.log",
+  });
+  const synthesisPrompt = buildSynthesisPrompt({
+    reviewerOutputFile: "opencode_review.log",
+    validatedFile: "review_validated.json",
+    auditorContextFile: "review_auditor_context.json",
+  });
 
-  const oldHome = process.env.HOME;
-  const oldXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  process.env.HOME = home;
-  process.env.XDG_CONFIG_HOME = xdgConfigHome;
-  try {
-    const outputConfig = createNoMcpOpenCodeConfig({ runtimeDir: path.join(dir, "runtime") });
-    const config = JSON.parse(fs.readFileSync(outputConfig, "utf8"));
-
-    assert.equal(config.default_agent, "reviewer");
-    assert.deepEqual(config.permission, { bash: "allow" });
-    assert.equal(config.agent.reviewer.prompt, "{file:./AGENTS.md}");
-    assert.equal("mcp" in config, false);
-  } finally {
-    process.env.HOME = oldHome;
-    if (oldXdgConfigHome === undefined) {
-      delete process.env.XDG_CONFIG_HOME;
-    } else {
-      process.env.XDG_CONFIG_HOME = oldXdgConfigHome;
-    }
-  }
+  assert.doesNotMatch(auditPrompt, /^You are running a Singular Code Review post-processing phase\./u);
+  assert.match(auditPrompt, /Audit the queued pull request review comments/u);
+  assert.doesNotMatch(synthesisPrompt, /^You are running a Singular Code Review post-processing phase\./u);
+  assert.match(synthesisPrompt, /Write the final GitHub pull request review body/u);
 });

@@ -5,7 +5,7 @@
   "description": "Production runner for Singular Code Review GitHub App reviews.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "bash scripts/build.sh",
     "test": "npm run build && node --test test/*.test.js"
   },
   "bin": {

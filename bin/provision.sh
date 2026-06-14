@@ -37,14 +37,15 @@ install_opencode_runtime_config() {
   local state_home="${XDG_STATE_HOME:-$home_dir/.local/state}"
   local config_dir="$config_home/opencode"
   local config_file="$config_dir/opencode.json"
-  local prompt_file="$config_dir/AGENTS.md"
+  local agents_dir="$config_dir/agents"
   local skills_dir="$config_dir/skills"
   local template_file="/usr/local/share/singular-code-review/opencode.json"
-  local template_prompt_file="/usr/local/share/singular-code-review/AGENTS.md"
+  local template_agents_dir="/usr/local/share/singular-code-review/agents"
   local template_skills_dir="/usr/local/share/singular-code-review/skills"
 
   mkdir -p \
     "$config_dir" \
+    "$agents_dir" \
     "$skills_dir" \
     "$data_home/opencode" \
     "$cache_home/opencode" \
@@ -54,8 +55,8 @@ install_opencode_runtime_config() {
     template_file="$REPO_ROOT/opencode/opencode.json"
   fi
 
-  if [[ ! -f "$template_prompt_file" && -f "$REPO_ROOT/opencode/AGENTS.md" ]]; then
-    template_prompt_file="$REPO_ROOT/opencode/AGENTS.md"
+  if [[ ! -d "$template_agents_dir" && -d "$REPO_ROOT/opencode/agents" ]]; then
+    template_agents_dir="$REPO_ROOT/opencode/agents"
   fi
 
   if [[ ! -d "$template_skills_dir" && -d "$REPO_ROOT/opencode/skills" ]]; then
@@ -70,9 +71,9 @@ install_opencode_runtime_config() {
     log "no OpenCode config template found; wrote empty config"
   fi
 
-  if [[ -f "$template_prompt_file" ]]; then
-    cp "$template_prompt_file" "$prompt_file"
-    log "installed OpenCode prompt template"
+  if [[ -d "$template_agents_dir" ]]; then
+    cp -R "$template_agents_dir"/. "$agents_dir"/
+    log "installed OpenCode agents"
   fi
 
   if [[ -d "$template_skills_dir" ]]; then

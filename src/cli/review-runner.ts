@@ -2,11 +2,15 @@
 import { createGitHubClient, createDryRunGitHubClient } from "../clients/github.js";
 import { createCliOpenCodeClient } from "../clients/opencode.js";
 import { loadRunnerConfig } from "../config/env.js";
-import { ArtifactStore } from "../system/artifacts.js";
-import { createLogger } from "../system/logger.js";
-import { runReview } from "../runner/runner.js";
-import { runCliMain } from "../shared/cli-main.js";
+import { ArtifactStore } from "../lib/artifacts.js";
+import { createLogger } from "../lib/logger.js";
+import { runReviewWorkflow } from "../review/workflow.js";
+import { runCliMain } from "../lib/cli-main.js";
 
+/**
+ * Composition root for the production review command. All long-lived runtime
+ * dependencies are constructed here and injected into the workflow.
+ */
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const config = loadRunnerConfig(env, argv);
   const logger = createLogger();
@@ -15,7 +19,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const github = config.dryRun ? createDryRunGitHubClient(liveGitHub, artifacts) : liveGitHub;
   const opencode = createCliOpenCodeClient({ logger });
 
-  const result = await runReview({
+  const result = await runReviewWorkflow({
     config,
     artifacts,
     github,

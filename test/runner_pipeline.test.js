@@ -6,9 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { buildArtifactPaths } from "../dist/config/paths.js";
+import { ArtifactStore } from "../dist/lib/artifacts.js";
 import { addInlineComment, loadQueue, saveQueue } from "../dist/review/queue.js";
-import { runReview } from "../dist/runner/runner.js";
-import { ArtifactStore } from "../dist/system/artifacts.js";
+import { REVIEW_WORKFLOW_PHASES, runReviewWorkflow } from "../dist/review/workflow.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = path.join(repoRoot, "test", "fixtures", "sample.patch");
@@ -135,7 +135,7 @@ test("runner executes review, audit, synthesis, validation, and submission in or
     },
   };
 
-  const result = await runReview({
+  const result = await runReviewWorkflow({
     config,
     artifacts,
     github: github.client,
@@ -144,13 +144,26 @@ test("runner executes review, audit, synthesis, validation, and submission in or
   });
 
   assert.equal(result.status, "submitted");
+  assert.deepEqual(REVIEW_WORKFLOW_PHASES, ["gathering", "review", "audit", "synthesis"]);
   assert.equal(calls.length, 3);
+  assert.equal(calls[0].agent, "reviewer");
+  assert.equal(calls[1].agent, "auditor");
+  assert.equal(calls[2].agent, "auditor");
   assert.match(calls[0].files[0], /^\/tmp\/\.singular-code-review\/runner-pipeline-/u);
   assert.match(calls[0].files[0], /\/review_context\.json$/u);
   assert.match(calls[0].files[1], /^\/tmp\/\.singular-code-review\/runner-pipeline-/u);
   assert.match(calls[0].files[1], /\/pr\.diff$/u);
   assert.match(calls[0].prompt, /\/tmp\/\.singular-code-review\/runner-pipeline-.+\/review_context\.json/u);
   assert.match(calls[0].prompt, /\/tmp\/\.singular-code-review\/runner-pipeline-.+\/pr\.diff/u);
+  assert.match(calls[1].files[2], /\/review_auditor_context\.json$/u);
+  assert.match(calls[2].files[2], /\/review_auditor_context\.json$/u);
+  assert.doesNotMatch(calls[1].prompt, /review_context\.json/u);
+  assert.match(calls[1].prompt, /review_auditor_context\.json/u);
+  assert.match(calls[2].prompt, /review_auditor_context\.json/u);
+  const auditorContext = JSON.parse(fs.readFileSync(config.artifacts.auditorContextFile, "utf8"));
+  assert.deepEqual(auditorContext.diff.files, ["src/app.js", "src/new.js"]);
+  assert.equal(Object.hasOwn(auditorContext, "valid_comment_ranges"), false);
+  assert.equal(Object.hasOwn(auditorContext, "review_comments"), false);
   assert.deepEqual(github.submitted.reviews, [
     {
       body: "> reviewer · minimax-m3\n\nRequest changes: keep the queued finding.",
@@ -189,7 +202,7 @@ test("runner skips audit when the first pass queues no actions", async () => {
     },
   };
 
-  const result = await runReview({
+  const result = await runReviewWorkflow({
     config,
     artifacts,
     github: github.client,
@@ -199,6 +212,8 @@ test("runner skips audit when the first pass queues no actions", async () => {
 
   assert.equal(result.status, "dry-run");
   assert.equal(calls.length, 2);
+  assert.match(calls[0], /Review this pull request/u);
+  assert.match(calls[1], /Write the final GitHub pull request review body/u);
   assert.equal(github.submitted.reviews[0].body, "> reviewer · minimax-m3\n\nLGTM. The change is narrow and safe.");
   assert.deepEqual(github.submitted.reviews[0].comments, []);
 });

@@ -10,6 +10,10 @@ function realPath(value: string): string {
   }
 }
 
+/**
+ * Detects direct CLI execution, including symlinked bin entries installed into
+ * the container PATH.
+ */
 export function isMainModule(metaUrl: string, argv = process.argv): boolean {
   const entrypoint = argv[1];
   if (!entrypoint) {
@@ -19,6 +23,10 @@ export function isMainModule(metaUrl: string, argv = process.argv): boolean {
   return realPath(fileURLToPath(metaUrl)) === realPath(entrypoint);
 }
 
+/**
+ * Standardizes CLI error reporting while keeping each command importable from
+ * tests without executing immediately.
+ */
 export function runCliMain(metaUrl: string, name: string, main: () => Promise<void>): void {
   if (!isMainModule(metaUrl)) {
     return;

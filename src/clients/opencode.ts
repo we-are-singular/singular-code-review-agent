@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { type Logger } from "../system/logger.js";
+import { type Logger } from "../lib/logger.js";
 
 export type OpenCodeCapabilities = {
   run: boolean;
@@ -18,7 +18,6 @@ export type OpenCodeRunOptions = {
   sessionFile?: string;
   reuseSession?: boolean;
   agent?: string;
-  config?: string;
   files?: string[];
   prompt: string;
 };
@@ -29,6 +28,10 @@ export type OpenCodeRunResult = {
   args: string[];
 };
 
+/**
+ * Narrow runner-owned OpenCode boundary. Keeping this interface small lets the
+ * workflow stay stable if the CLI is later replaced by an SDK-backed client.
+ */
 export type OpenCodeClient = {
   run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult>;
 };
@@ -49,6 +52,10 @@ function writeTextFile(file: string, value: string): void {
   writeFileSync(file, `${value}\n`, { mode: 0o600 });
 }
 
+/**
+ * Detects the installed OpenCode CLI feature set once per runtime directory so
+ * the runner can work across minor CLI option differences.
+ */
 export function detectOpenCodeCapabilities(cacheFile?: string): OpenCodeCapabilities {
   if (cacheFile && existsSync(cacheFile)) {
     try {
@@ -78,6 +85,10 @@ export function detectOpenCodeCapabilities(cacheFile?: string): OpenCodeCapabili
   return capabilities;
 }
 
+/**
+ * Searches loosely structured JSON events for a session id without binding the
+ * runner to one exact OpenCode event schema.
+ */
 export function findSessionId(value: unknown, depth = 0): string {
   if (!value || depth > 6 || typeof value !== "object") {
     return "";
@@ -109,6 +120,10 @@ export function findSessionId(value: unknown, depth = 0): string {
   return "";
 }
 
+/**
+ * Extracts rendered assistant text from known JSON event shapes while ignoring
+ * tool/status events.
+ */
 export function textFromJsonEvent(value: unknown): string {
   if (!value || typeof value !== "object") {
     return "";
@@ -132,6 +147,10 @@ export function textFromJsonEvent(value: unknown): string {
   return "";
 }
 
+/**
+ * Builds CLI arguments from detected capabilities. Unsupported optional flags
+ * are omitted rather than causing a runtime failure on older OpenCode images.
+ */
 export function buildOpenCodeArgs(options: OpenCodeRunOptions, capabilities: OpenCodeCapabilities): string[] {
   if (!capabilities.run) {
     throw new Error("opencode run is required");
@@ -160,6 +179,10 @@ export function buildOpenCodeArgs(options: OpenCodeRunOptions, capabilities: Ope
   return args;
 }
 
+/**
+ * Runs OpenCode as a child process, streams human-readable output live, and
+ * stores both rendered text and raw JSONL artifacts when JSON output is enabled.
+ */
 export function createCliOpenCodeClient(options: { logger?: Logger } = {}): OpenCodeClient {
   return {
     async run(runOptions) {
@@ -172,11 +195,6 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
 
       const capabilities = detectOpenCodeCapabilities(runOptions.capabilitiesFile);
       const args = buildOpenCodeArgs(runOptions, capabilities);
-      const env = { ...process.env };
-      if (runOptions.config) {
-        env.OPENCODE_CONFIG = runOptions.config;
-      }
-
       ensureParentDir(runOptions.outputFile);
       if (runOptions.jsonOutputFile) {
         ensureParentDir(runOptions.jsonOutputFile);
@@ -192,7 +210,7 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
 
       const child = spawn("opencode", args, {
         cwd: runOptions.workspace,
-        env,
+        env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -225,6 +243,8 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
               process.stdout.write(text);
             }
           } catch {
+            // Preserve non-JSON output rather than losing diagnostics when the
+            // CLI falls back to text or prints warnings on stdout.
             rendered += `${line}\n`;
             artifactOutput += `${line}\n`;
             process.stdout.write(`${line}\n`);
@@ -255,6 +275,7 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
             process.stdout.write(text);
           }
         } catch {
+          // Flush a final partial/non-JSON line after process close.
           rendered += `${stdoutBuffer}\n`;
           artifactOutput += `${stdoutBuffer}\n`;
           process.stdout.write(`${stdoutBuffer}\n`);

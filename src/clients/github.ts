@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { type ArtifactStore } from "../system/artifacts.js";
+import { type ArtifactStore } from "../lib/artifacts.js";
 import {
   type IssueComment,
   type ReviewComment,
@@ -43,6 +43,10 @@ export type ReviewThreadsResult = {
   threads: ReviewThread[];
 };
 
+/**
+ * Runner-owned GitHub facade. Live and dry-run clients share this contract so
+ * workflow code never branches around GitHub writes.
+ */
 export type GitHubClient = {
   getPullRequest(prNumber: number): Promise<PullRequestSummary>;
   getPullRequestDiff(prNumber: number): Promise<string>;
@@ -107,6 +111,10 @@ type GraphQLReviewThreadsResponse = {
   } | null;
 };
 
+/**
+ * Normalizes GraphQL review-thread nodes into the REST-like shape used by queue
+ * validation and action-item discovery.
+ */
 function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
   const comments: ReviewThreadComment[] = (node.comments?.nodes || []).map((comment) => ({
     id: comment.databaseId || null,
@@ -143,6 +151,10 @@ function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
   };
 }
 
+/**
+ * Creates the live Octokit-backed client used for all runner-owned GitHub API
+ * reads and writes.
+ */
 export function createGitHubClient(options: { token: string; repository: string }): GitHubClient {
   const { owner, repo } = splitRepository(options.repository);
   const octokit = new Octokit({
@@ -262,6 +274,8 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           })) as GraphQLReviewThreadsResponse;
           const connection = response.repository?.pullRequest?.reviewThreads;
           if (!connection || !Array.isArray(connection.nodes)) {
+            // Review threads are a quality improvement, not a hard dependency.
+            // Validation falls back to flat REST comments when this data is absent.
             return { available: false, threads: [] };
           }
 
@@ -276,6 +290,8 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           }
         }
       } catch {
+        // GraphQL thread access can fail for permissions or schema availability.
+        // Treat that as unavailable context rather than failing the whole review.
         return { available: false, threads: [] };
       }
     },
@@ -321,6 +337,10 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   };
 }
 
+/**
+ * Wraps a live read client while replacing all writes with artifact output.
+ * This keeps dry runs close to production without posting to GitHub.
+ */
 export function createDryRunGitHubClient(delegate: GitHubClient, artifacts: ArtifactStore): GitHubClient {
   return {
     getPullRequest: (prNumber) => delegate.getPullRequest(prNumber),

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { createGitHubClient } from "../clients/github.js";
+import { runCliMain } from "../lib/cli-main.js";
+import { getErrorMessage } from "../lib/errors.js";
 import { REVIEW_BOT_LOGIN } from "../review/types.js";
-import { runCliMain } from "../shared/cli-main.js";
-import { getErrorMessage } from "../shared/errors.js";
 
 function output(name: string, value: string, env: NodeJS.ProcessEnv): void {
   if (env.GITHUB_OUTPUT) {
@@ -28,6 +28,11 @@ function required(value: string | undefined, name: string): string {
   return value;
 }
 
+/**
+ * Uses an `eyes` reaction as an idempotency marker for mention-triggered runs.
+ * Reaction failures are non-fatal so transient permission gaps do not block a
+ * legitimate review request.
+ */
 export async function acknowledgeReviewRequest(options: {
   github: Pick<ReturnType<typeof createGitHubClient>, "listIssueCommentReactions" | "createIssueCommentReaction">;
   botLogin: string;
@@ -44,6 +49,8 @@ export async function acknowledgeReviewRequest(options: {
   }
 
   if (reactions.some((reaction) => reaction.content === "eyes" && reaction.user?.login === options.botLogin)) {
+    // Another in-flight or completed workflow already acknowledged this exact
+    // trigger comment.
     return { shouldReview: false, message: `trigger comment already acknowledged by ${options.botLogin}; skipping review` };
   }
 

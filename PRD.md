@@ -64,6 +64,10 @@ Prompt language should describe the desired review behavior positively:
 
 The synthesis prompt should define an output contract: it produces the review body. The runner owns the model banner.
 
+OpenCode agent files under `opencode/agents/` are durable role instructions,
+similar to a system prompt. Prompt files under `src/prompts/` are phase-specific
+task instructions passed to `opencode run`.
+
 ## Non-Goals
 
 - Build a hosted SaaS runner.
@@ -103,10 +107,6 @@ src/
     review-guard.ts
     review-ack.ts
 
-  runner/
-    runner.ts
-    review.ts
-
   clients/
     github.ts
     opencode.ts
@@ -117,41 +117,41 @@ src/
     diff.ts
     body.ts
     types.ts
+    workflow.ts
 
   prompts/
-    review-pass.md
-    queue-audit.md
+    review.md
+    audit.md
     synthesis.md
     prompts.ts
 
   config/
     env.ts
     paths.ts
-    opencode-config.ts
 
-  system/
+  lib/
     artifacts.ts
     logger.ts
-
-  shared/
     errors.ts
+    json.ts
+    cli-main.ts
 ```
 
 This layout is intentionally shallow. Prefer a single file per domain until the file becomes genuinely hard to navigate. Split only when the split creates a clearer ownership boundary, not because a type, client, and helper could theoretically live in separate files.
 
 Expected first implementation size:
 
-- `runner/runner.ts` owns the pipeline flow and high-level step functions.
-- `runner/review.ts` owns the review execution service and durable result shape.
+- `review/workflow.ts` owns the named gathering, review, audit, and synthesis phases plus the durable result shape.
 - `config/env.ts` owns runner config loading and defaults.
 - `clients/github.ts` owns the Octokit-backed GitHub facade.
 - `clients/opencode.ts` owns OpenCode execution and the narrow CLI-backed client contract.
 - `review/context.ts`, `review/queue.ts`, `review/diff.ts`, and `review/body.ts` own the durable review contracts.
-- `prompts/prompts.ts` loads Markdown prompt assets and interpolates dynamic values.
-- `system/artifacts.ts` and `system/logger.ts` cover runtime infrastructure.
+- `prompts/prompts.ts` loads Markdown phase prompt assets and interpolates dynamic values.
+- `opencode/agents/reviewer.md` and `opencode/agents/auditor.md` own durable OpenCode agent instructions.
+- `lib/artifacts.ts` and `lib/logger.ts` cover runtime infrastructure.
 - `bin/provision.sh` owns repository setup such as package-manager detection and dependency installation.
 
-If a file is still readable at 250-350 lines and has one clear responsibility, keep it together. Avoid creating folders like `clients/github/` or `runner/steps/` until there are enough implementations to justify them.
+If a file is still readable at 250-350 lines and has one clear responsibility, keep it together. Avoid creating folders like `clients/github/` or `review/steps/` until there are enough implementations to justify them.
 
 ### Module Responsibilities
 
@@ -163,19 +163,13 @@ If a file is still readable at 250-350 lines and has one clear responsibility, k
 - convert expected failures to process exit codes;
 - contain no GitHub payload construction, OpenCode parsing, queue validation, or prompt business logic.
 
-`runner/runner.ts`
+`review/workflow.ts`
 
 - owns the pipeline order;
 - creates the typed run state;
-- invokes named local step functions in order;
+- invokes named gathering, review, audit, and synthesis phase functions in order;
 - centralizes unexpected error handling and final logging;
 - contains no GitHub API details, prompt text, or payload shaping logic.
-
-`runner/review.ts`
-
-- owns the durable review service shape;
-- exposes `runReview(config, deps)` or an equivalent single entrypoint;
-- keeps expected outcomes explicit, such as skipped, dry-run, submitted, or failed.
 
 `config/env.ts` and `config/*`
 
@@ -219,6 +213,7 @@ Provisioning is intentionally not a TypeScript `dependency-installer.ts`. If a s
 `review/context.ts`
 
 - builds `review_context.json`;
+- builds compact `review_auditor_context.json` for audit and synthesis;
 - computes valid diff comment ranges;
 - includes previous bot comments and unresolved bot threads;
 - owns fallback behavior when GraphQL thread state is unavailable.
@@ -250,11 +245,17 @@ Provisioning is intentionally not a TypeScript `dependency-installer.ts`. If a s
 
 `prompts/prompts.ts`
 
-- stores review, audit, and synthesis prompts as versioned Markdown assets;
+- stores the review, audit, and synthesis phase prompts as versioned Markdown assets;
 - loads prompt files and interpolates dynamic values;
 - avoids hardcoding long prompts inside shell strings or runner step functions.
 
-`system/artifacts.ts`
+`opencode/agents/*`
+
+- stores durable OpenCode agent instructions separately from per-run phase prompts;
+- keeps the reviewer agent focused on pull-request investigation and queueing;
+- keeps the auditor agent focused on queue audit and final body synthesis without repository investigation.
+
+`lib/artifacts.ts`
 
 - owns runtime artifact paths and writes;
 - makes dry-run and CI debugging consistent;
@@ -266,14 +267,15 @@ Create dependencies once at the composition root:
 
 ```ts
 const config = loadRunnerConfig(process.env, process.argv)
-const logger = createLogger(config)
-const artifacts = createArtifactStore(config.runtimeDir)
+const logger = createLogger()
+const artifacts = new ArtifactStore(config.artifacts)
+const liveGitHub = createGitHubClient({ token: config.githubToken, repository: config.repository })
 const github = config.dryRun
-  ? createDryRunGitHubClient({ artifacts, logger })
-  : createGitHubClient({ token: config.githubToken, repository: config.repository, logger })
-const opencode = createOpenCodeClient({ config, artifacts, logger })
+  ? createDryRunGitHubClient(liveGitHub, artifacts)
+  : liveGitHub
+const opencode = createCliOpenCodeClient({ logger })
 
-await runReview({ config, logger, artifacts, github, opencode })
+await runReviewWorkflow({ config, artifacts, github, opencode, logger })
 ```
 
 This keeps dependency wiring visible and makes tests straightforward: unit tests inject fake clients, while integration tests can use fake `opencode` executables or a dry-run Octokit transport.
@@ -392,6 +394,7 @@ Important artifacts:
 
 ```text
 review_context.json
+review_auditor_context.json
 pr.diff
 review_queue.json
 review_validated.json
@@ -560,5 +563,5 @@ Regression tests:
 - Guard and ack are typed CLI commands backed by the GitHub client.
 - `review_comments` remains a standalone CLI for agent ergonomics and writes the canonical queue file.
 - OpenCode stays CLI-backed behind `OpenCodeClient`; SDK/local-server support remains an optional future spike.
-- Runtime artifacts include context, diff, queue, validated queue, payload, OpenCode logs, raw JSONL logs when available, capabilities, and session ids.
+- Runtime artifacts include full review context, compact auditor context, diff, queue, validated queue, payload, OpenCode logs, raw JSONL logs when available, capabilities, and session ids.
 - Dry-run supports current PR review flow with live GitHub reads and dry write artifacts; merged or historical PR support is out of scope until there is a concrete need.

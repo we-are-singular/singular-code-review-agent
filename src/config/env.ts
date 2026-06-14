@@ -1,4 +1,4 @@
-import { type ArtifactPaths } from "../system/artifacts.js";
+import { type ArtifactPaths } from "../lib/artifacts.js";
 import { REVIEW_BOT_LOGIN, REVIEW_COMMAND } from "../review/types.js";
 import { buildArtifactPaths, resolveWorkspace } from "./paths.js";
 
@@ -82,6 +82,10 @@ function optionalPositiveInt(value: string | undefined): number | null {
   return parsePositiveInt(value, "TRIGGER_COMMENT_ID");
 }
 
+/**
+ * Loads the runner configuration at the CLI boundary from GitHub Actions env
+ * vars plus local dry-run overrides.
+ */
 export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): RunnerConfig {
   const args = parseCliArgs(argv);
   const workspace = args.workspace || resolveWorkspace(env);

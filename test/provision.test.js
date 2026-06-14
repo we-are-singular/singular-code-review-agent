@@ -88,7 +88,8 @@ test("provision installs OpenCode config and skills into XDG config home", () =>
 
   assert.equal(fs.existsSync(path.join(result.home, ".config", "opencode", "opencode.json")), false);
   assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "opencode.json")), true);
-  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "AGENTS.md")), true);
+  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "agents", "reviewer.md")), true);
+  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "agents", "auditor.md")), true);
   assert.equal(
     fs.existsSync(path.join(result.xdgConfigHome, "opencode", "skills", "singular-code-review", "SKILL.md")),
     true,

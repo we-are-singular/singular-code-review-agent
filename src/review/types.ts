@@ -204,6 +204,60 @@ export type ReviewContext = {
   action_items: ReviewActionItem[];
 };
 
+export type AuditorContext = {
+  generated_at: string;
+  run: ReviewContext["run"];
+  pr: {
+    number: number | null;
+    title: string | null;
+    body: string | null;
+    author: string | null;
+    base_ref: string | null;
+    head_ref: string | null;
+    base_sha: string | null;
+    head_sha: string | null;
+    url: string | null;
+    is_draft: boolean | null;
+    review_decision: string | null;
+    head_repository: string | null;
+  };
+  diff: {
+    file: string;
+    files: string[];
+  };
+  review_threads_available: boolean;
+  previous_bot_findings: Array<{
+    id: number;
+    path: string | null;
+    line: number | null;
+    start_line: number | null;
+    side: string | null;
+    start_side: string | null;
+    body: string;
+    html_url: string | null;
+    user_login: string | null;
+    created_at: string | null;
+  }>;
+  unresolved_bot_threads: Array<{
+    id: string | null;
+    is_outdated: boolean;
+    path: string | null;
+    line: number | null;
+    start_line: number | null;
+    side: string | null;
+    start_side: string | null;
+    top_level_comment_id: number | null;
+    top_level_author: string | null;
+    top_level_body: string;
+    top_level_html_url: string | null;
+    latest_author: string | null;
+    latest_comment_id: number | null;
+    latest_body: string;
+    latest_html_url: string | null;
+  }>;
+  action_items: ReviewActionItem[];
+};
+
 export type ReviewPayloadComment = {
   path: string;
   line: number;

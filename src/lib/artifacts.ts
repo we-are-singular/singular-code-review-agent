@@ -1,11 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeJsonFile } from "../shared/json.js";
+import { writeJsonFile } from "./json.js";
 
 export type ArtifactPaths = {
   runtimeDir: string;
   queueFile: string;
   contextFile: string;
+  auditorContextFile: string;
   diffFile: string;
   validatedFile: string;
   payloadFile: string;
@@ -14,10 +15,13 @@ export type ArtifactPaths = {
   synthesisOutputFile: string;
   opencodeCapabilitiesFile: string;
   reviewSessionFile: string;
-  postprocessSessionFile: string;
-  noMcpConfigFile: string;
+  auditorSessionFile: string;
 };
 
+/**
+ * Small file writer for runtime artifacts. It owns parent-directory creation so
+ * workflow code can write debug artifacts without path setup noise.
+ */
 export class ArtifactStore {
   readonly paths: ArtifactPaths;
 

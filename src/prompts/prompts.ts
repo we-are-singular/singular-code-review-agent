@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type PromptName = "review-pass" | "queue-audit" | "synthesis";
+export type PromptName = "review" | "audit" | "synthesis";
 
 const PROMPT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -14,30 +14,42 @@ function interpolate(template: string, values: Record<string, string>): string {
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/gu, (_match, key: string) => values[key] || "");
 }
 
-export function buildReviewPassPrompt(values: { contextFile: string; diffFile: string }): string {
-  return interpolate(loadPrompt("review-pass"), values);
+/**
+ * Builds the exploratory review prompt. It receives only artifact paths because
+ * OpenCode gets the larger context/diff content as file attachments.
+ */
+export function buildReviewPrompt(values: { contextFile: string; diffFile: string }): string {
+  return interpolate(loadPrompt("review"), values);
 }
 
-export function buildQueueAuditPrompt(values: {
+/**
+ * Builds the queue audit phase prompt. Durable auditor scope lives in the
+ * OpenCode `auditor` agent instructions.
+ */
+export function buildAuditPrompt(values: {
   workspace: string;
   queueFile: string;
   validatedFile: string;
-  contextFile: string;
+  auditorContextFile: string;
   reviewerOutputFile: string;
 }): string {
   const queuePromptPath = values.queueFile.startsWith(`${values.workspace}/`)
     ? relative(values.workspace, values.queueFile)
     : values.queueFile;
-  return interpolate(loadPrompt("queue-audit"), {
+  return interpolate(loadPrompt("audit"), {
     ...values,
     queuePromptPath,
   });
 }
 
+/**
+ * Builds the final-body synthesis phase prompt. Durable auditor scope lives in
+ * the OpenCode `auditor` agent instructions.
+ */
 export function buildSynthesisPrompt(values: {
   reviewerOutputFile: string;
   validatedFile: string;
-  contextFile: string;
+  auditorContextFile: string;
 }): string {
   return interpolate(loadPrompt("synthesis"), values);
 }

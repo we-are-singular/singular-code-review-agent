@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { readJsonFile } from "../shared/json.js";
+import { readJsonFile } from "../lib/json.js";
 import { type GitHubClient } from "../clients/github.js";
 import { parseUnifiedDiff, validCommentRangesFromDiff } from "./diff.js";
 import {
   REVIEW_BOT_LOGIN,
   REVIEW_COMMAND,
+  type AuditorContext,
   type IssueComment,
   type ReviewActionItem,
   type ReviewComment,
@@ -24,6 +25,49 @@ type BuildReviewContextOptions = {
   actor?: string | null;
   botLogin?: string;
 };
+
+/**
+ * Creates a structurally valid context for local commands that may run before
+ * the runner has fetched live PR context.
+ */
+export function createEmptyReviewContext(overrides: Partial<ReviewContext> = {}): ReviewContext {
+  const base: ReviewContext = {
+    generated_at: new Date().toISOString(),
+    run: {
+      event_name: null,
+      reason: "manual",
+      actor: null,
+      trigger_comment: null,
+      command: REVIEW_COMMAND,
+      bot_login: REVIEW_BOT_LOGIN,
+    },
+    pr: {},
+    diff: { file: "", files: [] },
+    valid_comment_ranges: {},
+    issue_comments: [],
+    review_comments: [],
+    review_threads_available: false,
+    review_threads: [],
+    unresolved_review_threads: [],
+    unresolved_bot_threads: [],
+    reviews: [],
+    previous_bot_findings: [],
+    action_items: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    run: {
+      ...base.run,
+      ...overrides.run,
+    },
+    diff: {
+      ...base.diff,
+      ...overrides.diff,
+    },
+  };
+}
 
 function readEventPayload(eventPath?: string | null): Record<string, unknown> {
   if (!eventPath || !existsSync(eventPath)) {
@@ -45,6 +89,14 @@ function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+/**
+ * Reads GitHub Actions event metadata into the narrow trigger shape consumed by
+ * prompts and review tools.
+ */
 export function readEventContext(options: {
   eventName?: string | null;
   eventPath?: string | null;
@@ -91,6 +143,10 @@ function containsMention(body: unknown, botLogin: string, command: string): bool
   return needles.some((needle) => text.includes(needle));
 }
 
+/**
+ * Converts mentions and existing review-thread activity into explicit work the
+ * reviewer should answer before or during the review.
+ */
 export function buildActionItems(options: {
   trigger: ReviewTrigger;
   issueComments: IssueComment[];
@@ -125,6 +181,9 @@ export function buildActionItems(options: {
   }
 
   if (options.botLogin && options.reviewThreadsAvailable) {
+    // GraphQL review-thread state is authoritative when available because it
+    // exposes resolution status and thread grouping. The REST fallback below
+    // only sees flat review comments.
     for (const thread of options.reviewThreads || []) {
       if (thread.is_resolved || thread.top_level_author !== options.botLogin || thread.latest_author === options.botLogin) {
         continue;
@@ -185,6 +244,93 @@ export function buildActionItems(options: {
   return actionItems;
 }
 
+function compactPullRequest(value: unknown): AuditorContext["pr"] {
+  const record = asRecord(value);
+  const user = asRecord(record.user);
+  const author = asRecord(record.author);
+  const base = asRecord(record.base);
+  const head = asRecord(record.head);
+  const headRepo = asRecord(head.repo);
+
+  return {
+    number: numberValue(record.number),
+    title: stringValue(record.title),
+    body: stringValue(record.body),
+    author: stringValue(author.login) || stringValue(user.login),
+    base_ref: stringValue(record.baseRefName) || stringValue(base.ref),
+    head_ref: stringValue(record.headRefName) || stringValue(head.ref),
+    base_sha: stringValue(record.baseRefOid) || stringValue(base.sha),
+    head_sha: stringValue(record.headRefOid) || stringValue(head.sha),
+    url: stringValue(record.html_url) || stringValue(record.url),
+    is_draft: booleanValue(record.isDraft) ?? booleanValue(record.draft),
+    review_decision: stringValue(record.reviewDecision),
+    head_repository: stringValue(headRepo.full_name),
+  };
+}
+
+function compactReviewComment(comment: ReviewComment): AuditorContext["previous_bot_findings"][number] {
+  return {
+    id: comment.id,
+    path: comment.path || null,
+    line: comment.line || null,
+    start_line: comment.start_line || comment.startLine || null,
+    side: comment.side || null,
+    start_side: comment.start_side || comment.startSide || null,
+    body: comment.body || "",
+    html_url: comment.html_url || null,
+    user_login: comment.user?.login || null,
+    created_at: comment.created_at || null,
+  };
+}
+
+function compactReviewThread(thread: ReviewThread): AuditorContext["unresolved_bot_threads"][number] {
+  const topLevel = thread.comments[0] || null;
+  const latest = thread.comments[thread.comments.length - 1] || null;
+
+  return {
+    id: thread.id,
+    is_outdated: thread.is_outdated,
+    path: thread.path || topLevel?.path || null,
+    line: thread.line || topLevel?.line || null,
+    start_line: thread.start_line || topLevel?.start_line || null,
+    side: thread.side || topLevel?.side || null,
+    start_side: thread.start_side || topLevel?.start_side || null,
+    top_level_comment_id: thread.top_level_comment_id,
+    top_level_author: thread.top_level_author,
+    top_level_body: topLevel?.body || "",
+    top_level_html_url: topLevel?.html_url || null,
+    latest_author: thread.latest_author,
+    latest_comment_id: thread.latest_comment_id,
+    latest_body: latest?.body || "",
+    latest_html_url: latest?.html_url || null,
+  };
+}
+
+/**
+ * Builds the compact context attached to audit and synthesis model runs. The
+ * deterministic validator keeps the full context in-process; the auditor only
+ * needs PR metadata, trigger/action state, changed file names, and bot history.
+ */
+export function buildAuditorContext(context: ReviewContext): AuditorContext {
+  return {
+    generated_at: context.generated_at,
+    run: context.run,
+    pr: compactPullRequest(context.pr),
+    diff: {
+      file: context.diff.file,
+      files: Array.isArray(context.diff.files) ? context.diff.files : [],
+    },
+    review_threads_available: context.review_threads_available,
+    previous_bot_findings: (context.previous_bot_findings || []).map(compactReviewComment),
+    unresolved_bot_threads: (context.unresolved_bot_threads || []).map(compactReviewThread),
+    action_items: context.action_items || [],
+  };
+}
+
+/**
+ * Builds the canonical `review_context.json` artifact used by the reviewer,
+ * deterministic validation, and local troubleshooting.
+ */
 export async function buildReviewContext(options: BuildReviewContextOptions): Promise<ReviewContext> {
   const botLogin = options.botLogin || REVIEW_BOT_LOGIN;
   const command = REVIEW_COMMAND;
@@ -198,6 +344,8 @@ export async function buildReviewContext(options: BuildReviewContextOptions): Pr
   mkdirSync(dirname(options.diffFile), { recursive: true });
   writeFileSync(options.diffFile, diffText, { mode: 0o600 });
 
+  // Fetch independent GitHub surfaces in parallel so the gathering phase is
+  // bounded by the slowest API call rather than their sum.
   const [pr, issueComments, reviewComments, reviews, reviewThreadsResult] = await Promise.all([
     options.github.getPullRequest(options.prNumber),
     options.github.listIssueComments(options.prNumber),

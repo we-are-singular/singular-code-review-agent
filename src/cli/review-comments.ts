@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { buildArtifactPaths, resolveWorkspace } from "../config/paths.js";
-import { runCliMain } from "../shared/cli-main.js";
-import { readJsonFile, writeJsonFile } from "../shared/json.js";
+import { runCliMain } from "../lib/cli-main.js";
+import { readJsonFile, writeJsonFile } from "../lib/json.js";
+import { createEmptyReviewContext } from "../review/context.js";
 import {
   addInlineComment,
   addReply,
@@ -128,29 +129,7 @@ function validateInlineTarget(input: ReviewInlineCommentInput, options: ParsedAr
     return;
   }
 
-  const context = readJsonFile<ReviewContext>(contextFile, {
-    generated_at: new Date().toISOString(),
-    run: {
-      event_name: null,
-      reason: "manual",
-      actor: null,
-      trigger_comment: null,
-      command: "@singular-code-review",
-      bot_login: "singular-code-review[bot]",
-    },
-    pr: {},
-    diff: { file: "", files: [] },
-    valid_comment_ranges: {},
-    issue_comments: [],
-    review_comments: [],
-    review_threads_available: false,
-    review_threads: [],
-    unresolved_review_threads: [],
-    unresolved_bot_threads: [],
-    reviews: [],
-    previous_bot_findings: [],
-    action_items: [],
-  });
+  const context = readJsonFile<ReviewContext>(contextFile, createEmptyReviewContext());
   const result = validateInlineComment(input, context);
   if (!result.ok) {
     throw new Error(`invalid inline comment target: ${result.reason}`);
@@ -228,29 +207,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 
   if (command === "validate") {
-    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), {
-      generated_at: new Date().toISOString(),
-      run: {
-        event_name: null,
-        reason: "manual",
-        actor: null,
-        trigger_comment: null,
-        command: "@singular-code-review",
-        bot_login: "singular-code-review[bot]",
-      },
-      pr: {},
-      diff: { file: "", files: [] },
-      valid_comment_ranges: {},
-      issue_comments: [],
-      review_comments: [],
-      review_threads_available: false,
-      review_threads: [],
-      unresolved_review_threads: [],
-      unresolved_bot_threads: [],
-      reviews: [],
-      previous_bot_findings: [],
-      action_items: [],
-    });
+    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), createEmptyReviewContext());
     const validated = validateQueue(loadQueue(queueFile), context);
     const output = stringOption(options, "output");
     if (output) {
@@ -262,29 +219,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 
   if (command === "status") {
-    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), {
-      generated_at: new Date().toISOString(),
-      run: {
-        event_name: null,
-        reason: "manual",
-        actor: null,
-        trigger_comment: null,
-        command: "@singular-code-review",
-        bot_login: "singular-code-review[bot]",
-      },
-      pr: {},
-      diff: { file: "", files: [] },
-      valid_comment_ranges: {},
-      issue_comments: [],
-      review_comments: [],
-      review_threads_available: false,
-      review_threads: [],
-      unresolved_review_threads: [],
-      unresolved_bot_threads: [],
-      reviews: [],
-      previous_bot_findings: [],
-      action_items: [],
-    });
+    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), createEmptyReviewContext());
     const queue = loadQueue(queueFile);
     const validated = validateQueue(queue, context);
     printJson({
@@ -301,29 +236,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 
   if (command === "payload-comments") {
-    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), {
-      generated_at: new Date().toISOString(),
-      run: {
-        event_name: null,
-        reason: "manual",
-        actor: null,
-        trigger_comment: null,
-        command: "@singular-code-review",
-        bot_login: "singular-code-review[bot]",
-      },
-      pr: {},
-      diff: { file: "", files: [] },
-      valid_comment_ranges: {},
-      issue_comments: [],
-      review_comments: [],
-      review_threads_available: false,
-      review_threads: [],
-      unresolved_review_threads: [],
-      unresolved_bot_threads: [],
-      reviews: [],
-      previous_bot_findings: [],
-      action_items: [],
-    });
+    const context = readJsonFile<ReviewContext>(contextFileFromOptions(options, env), createEmptyReviewContext());
     printJson(
       validateQueue(loadQueue(queueFile), context).inlineComments.map((comment) => ({
         path: comment.path,

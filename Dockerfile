@@ -50,6 +50,7 @@ RUN set -eux; \
     node -e 'const min = process.argv[1].split(".").map(Number); const got = process.argv[2].split(".").map(Number); const ok = got[0] > min[0] || (got[0] === min[0] && (got[1] > min[1] || (got[1] === min[1] && got[2] >= min[2]))); if (!ok) { console.error(`npm ${got.join(".")} is below required ${min.join(".")}`); process.exit(1); }' "${NPM_MIN_VERSION}" "$(npm --version)"
 
 RUN mkdir -p /root/.config/opencode/skills \
+    /root/.config/opencode/agents \
     /root/.local/share/opencode \
     /root/.cache/opencode \
     /root/.local/state/opencode \
@@ -74,8 +75,8 @@ RUN npm ci \
 
 COPY opencode/opencode.json /root/.config/opencode/opencode.json
 COPY opencode/opencode.json /usr/local/share/singular-code-review/opencode.json
-COPY opencode/AGENTS.md /root/.config/opencode/AGENTS.md
-COPY opencode/AGENTS.md /usr/local/share/singular-code-review/AGENTS.md
+COPY opencode/agents/ /root/.config/opencode/agents/
+COPY opencode/agents/ /usr/local/share/singular-code-review/agents/
 COPY opencode/skills/ /root/.config/opencode/skills/
 COPY opencode/skills/ /usr/local/share/singular-code-review/skills/
 COPY bin/review_dry_run /usr/local/bin/review_dry_run

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { createDryRunGitHubClient } from "../dist/clients/github.js";
 import { buildArtifactPaths } from "../dist/config/paths.js";
-import { ArtifactStore } from "../dist/system/artifacts.js";
+import { ArtifactStore } from "../dist/lib/artifacts.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dryRun = path.join(repoRoot, "bin", "review_dry_run");

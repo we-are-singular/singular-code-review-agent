@@ -18,7 +18,7 @@
       "description": "Reviews pull requests and queues structured GitHub review feedback.",
       "mode": "primary",
       "model": "{env:OPENCODE_MODEL}",
-      "prompt": "{file:./AGENTS.md}",
+      "prompt": "{file:./agents/reviewer.md}",
       "permission": {
         "external_directory": {
           "/tmp/.singular-code-review/**": "allow"
@@ -29,6 +29,23 @@
         },
         "bash": "allow",
         "webfetch": "allow"
+      }
+    },
+    "auditor": {
+      "description": "Audits queued review findings and synthesizes the final review body.",
+      "mode": "primary",
+      "model": "{env:OPENCODE_MODEL}",
+      "prompt": "{file:./agents/auditor.md}",
+      "permission": {
+        "external_directory": {
+          "/tmp/.singular-code-review/**": "allow"
+        },
+        "edit": {
+          "*": "deny",
+          "/tmp/.singular-code-review/**": "allow"
+        },
+        "bash": "deny",
+        "webfetch": "deny"
       }
     }
   },

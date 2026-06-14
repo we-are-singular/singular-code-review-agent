@@ -3,6 +3,10 @@ import {
   type ValidCommentRanges,
 } from "./types.js";
 
+/**
+ * Normalizes unified-diff paths into repository-relative paths. `/dev/null`
+ * marks file creation/deletion metadata rather than a commentable file path.
+ */
 export function normalizeDiffPath(rawPath: string): string | null {
   if (!rawPath || rawPath === "/dev/null") {
     return null;
@@ -15,6 +19,10 @@ export function normalizeDiffPath(rawPath: string): string | null {
   return rawPath;
 }
 
+/**
+ * Parses the subset of unified diff syntax needed for GitHub review anchors:
+ * changed LEFT/RIGHT lines plus surrounding hunk context lines.
+ */
 export function parseUnifiedDiff(diffText: string): ParsedDiff {
   const files = new Map<
     string,
@@ -76,6 +84,8 @@ export function parseUnifiedDiff(diffText: string): ParsedDiff {
     if (line.startsWith("@@ ")) {
       const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?/u.exec(line);
       inHunk = Boolean(match);
+      // Line counters track the source line numbers GitHub expects, not the
+      // line numbers inside the diff artifact.
       oldLine = match ? Number(match[1]) - 1 : 0;
       newLine = match ? Number(match[3]) - 1 : 0;
       continue;
@@ -120,6 +130,10 @@ export function parseUnifiedDiff(diffText: string): ParsedDiff {
   };
 }
 
+/**
+ * Produces the validation lookup used by review tools before they accept inline
+ * comments and by the runner before it submits GitHub review payloads.
+ */
 export function validCommentRangesFromDiff(diffText: string): ValidCommentRanges {
   const parsed = parseUnifiedDiff(diffText);
 

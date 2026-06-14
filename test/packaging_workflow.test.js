@@ -19,15 +19,17 @@ test("Dockerfile builds and packages the TypeScript runner surface", () => {
   assert.match(dockerfile, /\/usr\/local\/lib\/singular-code-review/);
   assert.match(dockerfile, /review_runner/);
   assert.match(dockerfile, /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-runner\.js \/usr\/local\/bin\/review_runner/);
+  assert.match(dockerfile, /COPY opencode\/agents\/ \/usr\/local\/share\/singular-code-review\/agents\//);
   assert.match(dockerfile, /COPY opencode\/skills\/ \/usr\/local\/share\/singular-code-review\/skills\//);
   assert.match(dockerfile, /provision\.sh/);
+  assert.doesNotMatch(dockerfile, /COPY opencode\/AGENTS\.md/);
   assert.doesNotMatch(dockerfile, /COPY bin\/review_runner/);
   assert.doesNotMatch(dockerfile, /review_orchestrator/);
   assert.doesNotMatch(dockerfile, /opencode_step/);
   assert.doesNotMatch(dockerfile, /lib\/review-tools/);
 });
 
-test("OpenCode config allows edits inside the runtime directory", () => {
+test("OpenCode config defines reviewer and auditor agents with scoped permissions", () => {
   const config = JSON.parse(fs.readFileSync(path.join(repoRoot, "opencode", "opencode.json"), "utf8"));
 
   assert.deepEqual(config.permission.edit, {
@@ -37,8 +39,18 @@ test("OpenCode config allows edits inside the runtime directory", () => {
   assert.deepEqual(config.permission.external_directory, {
     "/tmp/.singular-code-review/**": "allow",
   });
+  assert.equal(config.default_agent, "reviewer");
+  assert.equal(config.agent.reviewer.prompt, "{file:./agents/reviewer.md}");
+  assert.equal(config.agent.auditor.prompt, "{file:./agents/auditor.md}");
   assert.deepEqual(config.agent.reviewer.permission.external_directory, config.permission.external_directory);
   assert.deepEqual(config.agent.reviewer.permission.edit, config.permission.edit);
+  assert.deepEqual(config.agent.auditor.permission.external_directory, config.permission.external_directory);
+  assert.deepEqual(config.agent.auditor.permission.edit, config.permission.edit);
+  assert.equal(config.agent.reviewer.permission.bash, "allow");
+  assert.equal(config.agent.auditor.permission.bash, "deny");
+  assert.equal(config.agent.auditor.permission.webfetch, "deny");
+  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "reviewer.md")), true);
+  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "auditor.md")), true);
 });
 
 test("example trigger workflow does not run reviews on every push", () => {

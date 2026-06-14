@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { readJsonFile, writeJsonFile } from "../shared/json.js";
+import { readJsonFile, writeJsonFile } from "../lib/json.js";
 import {
   type DroppedQueueItem,
   type ReviewContext,
@@ -13,6 +13,9 @@ import {
   type ValidatedReviewQueue,
 } from "./types.js";
 
+/**
+ * Creates the canonical queue shape shared by the agent-facing CLI and runner.
+ */
 export function createEmptyQueue(): ReviewQueue {
   return {
     version: 1,
@@ -28,6 +31,8 @@ export function loadQueue(file: string): ReviewQueue {
   const value = readJsonFile<unknown>(file, createEmptyQueue());
 
   if (Array.isArray(value)) {
+    // Older queue artifacts were bare arrays of inline comments. Keeping this
+    // tolerant read path lets old dry-run artifacts remain inspectable.
     return {
       ...createEmptyQueue(),
       inlineComments: value as ReviewInlineCommentInput[],
@@ -84,6 +89,10 @@ function normalizeSide(value: unknown, name: string): ReviewSide {
   return side;
 }
 
+/**
+ * Normalizes agent-provided inline comment input into the GitHub review comment
+ * contract before any diff-aware validation happens.
+ */
 export function normalizeInlineComment(input: ReviewInlineCommentInput): ReviewInlineComment {
   validateRepoPath(input.path);
   const line = positiveInteger(input.line, "line");
@@ -124,6 +133,10 @@ export function addInlineComment(file: string, input: ReviewInlineCommentInput):
   return comment;
 }
 
+/**
+ * Stores a GitHub suggestion as an ordinary inline comment body containing a
+ * fenced suggestion block, which keeps payload creation simple later.
+ */
 export function addSuggestion(
   file: string,
   input: Omit<ReviewInlineCommentInput, "body"> & { message: string; replacement: string },
@@ -254,6 +267,10 @@ function commentFromThread(thread: ReviewThread): ReviewInlineComment | null {
   return comment;
 }
 
+/**
+ * Builds exact-match keys for already-posted bot findings so validation can
+ * suppress duplicates without guessing about semantically similar comments.
+ */
 function existingBotFindingMatches(context: ReviewContext) {
   const botLogin = context.run?.bot_login;
   const matches = {
@@ -266,6 +283,8 @@ function existingBotFindingMatches(context: ReviewContext) {
   }
 
   if (context.review_threads_available) {
+    // Prefer unresolved thread state when available. A resolved previous bot
+    // finding should not suppress a fresh finding on the same changed line.
     for (const thread of context.unresolved_bot_threads || []) {
       const comment = commentFromThread(thread);
       if (!comment) {
@@ -276,6 +295,8 @@ function existingBotFindingMatches(context: ReviewContext) {
     return matches;
   }
 
+  // REST fallback has no reliable thread resolution state, so it is intentionally
+  // narrower: only exact body/location matches to previous top-level bot comments.
   for (const comment of context.review_comments || []) {
     if (comment.user?.login !== botLogin || comment.in_reply_to_id) {
       continue;
@@ -301,6 +322,10 @@ function existingBotFindingMatches(context: ReviewContext) {
   return matches;
 }
 
+/**
+ * Validates one inline comment against the current PR diff. RIGHT comments must
+ * target added lines; LEFT comments must target deleted lines.
+ */
 export function validateInlineComment(comment: ReviewInlineCommentInput, context: ReviewContext) {
   try {
     const normalized = normalizeInlineComment(comment);
@@ -317,11 +342,15 @@ export function validateInlineComment(comment: ReviewInlineCommentInput, context
     if (normalized.start_line !== undefined) {
       const startSide = normalized.start_side || normalized.side;
       if (startSide === normalized.side) {
+        // Same-side multi-line comments must cover a continuous range present
+        // in the hunk so GitHub can anchor the whole comment.
         const rangeLines = normalized.side === "LEFT" ? ranges.left_lines : ranges.right_lines;
         if (!hasEveryLine(rangeLines, normalized.start_line, normalized.line)) {
           return { ok: false as const, reason: `multi-line range is not fully present on the ${normalized.side} side of the diff` };
         }
       } else {
+        // Cross-side ranges are rare but valid for deletion/addition pairs; only
+        // the starting side needs to exist because the final line was checked above.
         const startLines = startSide === "LEFT" ? ranges.left_lines : ranges.right_lines;
         if (!hasLine(startLines, normalized.start_line)) {
           return { ok: false as const, reason: `start line is not present on the ${startSide} side of the diff` };
@@ -335,6 +364,9 @@ export function validateInlineComment(comment: ReviewInlineCommentInput, context
   }
 }
 
+/**
+ * Validates that a queued reply targets a top-level review comment on this PR.
+ */
 export function validateReply(reply: ReviewReplyInput, context: ReviewContext) {
   try {
     const normalized = normalizeReply(reply);
@@ -354,6 +386,11 @@ export function validateReply(reply: ReviewReplyInput, context: ReviewContext) {
   }
 }
 
+/**
+ * Applies all deterministic queue rules before GitHub submission. This function
+ * may drop exact duplicates and invalid targets, but it intentionally keeps
+ * distinct same-line findings for the audit phase and reviewer judgement.
+ */
 export function validateQueue(queue: ReviewQueue, context: ReviewContext): ValidatedReviewQueue {
   const inlineComments: ReviewInlineComment[] = [];
   const replies: ReviewReply[] = [];
@@ -372,6 +409,8 @@ export function validateQueue(queue: ReviewQueue, context: ReviewContext): Valid
     const locationKey = commentLocationKey(result.comment);
     const bodyKey = `${locationKey}\0${normalizeComparableBody(result.comment.body)}`;
     if (existingBotMatches.unresolvedBodyKeys.has(bodyKey)) {
+      // Thread-state duplicates are stronger than REST duplicates because they
+      // only include unresolved bot threads.
       dropped.push({ kind: "inline", item: original, reason: "matching unresolved bot thread already exists" });
       continue;
     }
@@ -425,6 +464,10 @@ export function validateQueue(queue: ReviewQueue, context: ReviewContext): Valid
   };
 }
 
+/**
+ * Mirrors dropped validation results into the queue artifact so later phases and
+ * dry-run users can understand what changed without re-running validation.
+ */
 export function persistValidation(queueFile: string, validated: ValidatedReviewQueue): void {
   const queue = loadQueue(queueFile);
   queue.dropped = validated.dropped;

@@ -44,8 +44,9 @@ workflow file and the runtime secrets required by that workflow.
 - Local review tools that let the agent stage inline comments, multiline
   comments, suggestions, replies, and the synthesized overall conclusion before
   submission.
-- A review-only OpenCode prompt and vendored reviewer skills that keep the
-  agent focused on actionable code review feedback.
+- Static OpenCode reviewer/auditor agent instruction files, centralized review prompts,
+  and vendored reviewer skills that keep the agent focused on actionable code
+  review feedback.
 - No-network test coverage for the review contracts, OpenCode client, guard/ack
   decisions, runner pipeline, workflow, and image packaging.
 
@@ -58,26 +59,26 @@ Provisioning installs the committed OpenCode config and target-repository
 dependencies. The runner then:
 
 1. fetches normalized pull-request context with `review_context`;
-2. starts OpenCode with the bundled configuration and review-only prompt;
+2. starts OpenCode with the bundled `reviewer` agent and review phase prompt;
 3. lets the agent queue findings and replies through `review_comments`;
 4. validates queued comments against the current diff;
-5. runs a no-MCP OpenCode audit pass that edits the queue file to remove
+5. runs the OpenCode `auditor` agent in an audit phase that edits the queue file to remove
    duplicates, merge overlapping comments, and keep distinct same-line findings;
 6. validates the audited queue so only valid RIGHT-side additions and LEFT-side deletions are
    submitted;
-7. runs a no-MCP OpenCode pass to synthesize the final review body from the
+7. runs the OpenCode `auditor` agent in a synthesis phase to create the final review body from the
    reviewer output and validated queue;
 8. posts a single GitHub review whose body uses the synthesized conclusion and
    any queued inline comments, plus any queued replies.
 
 OpenCode invocations are routed through `src/clients/opencode.ts`, which keeps
 rendered output and raw JSON event streams as runtime artifacts when supported
-and reuses the same post-processing OpenCode session for queue audit and final
+and reuses the same auditor OpenCode session for queue audit and final
 synthesis.
 
 The image keeps credentials out of the build. Runtime secrets are provided by
 the consuming repository, while reviewer settings such as the command trigger,
-GitHub App client ID, image, and OpenCode agent are owned by this repository.
+GitHub App client ID, image, and OpenCode agents are owned by this repository.
 Consuming repositories can optionally set the `OPENCODE_MODEL` repository
 variable to try a different model without changing workflow YAML.
 
@@ -148,6 +149,8 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
 - `review_context` collects pull-request metadata, mentions, previous bot
   comments, review thread state when available, valid diff lines, and action
   items.
+- `review_auditor_context.json` is a compact runtime artifact derived from the
+  full context for audit and synthesis prompts.
 - `review_comments` is the staging interface used by OpenCode and the
   runner for comments, suggestions, multiline findings, replies, listing, and
   status checks.
@@ -155,11 +158,19 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
   helpers for trigger authorization and idempotent request acknowledgment.
 - `bin/review_dry_run` checks out a real GitHub pull request into a disposable
   workspace and runs the normal runner with GitHub writes blocked.
-- `src/` contains the review runner, GitHub and OpenCode clients, prompt assets,
-  queue/diff/body contracts, config loading, and runtime artifact helpers.
-- `opencode/AGENTS.md` is the image-global review prompt.
+- `src/review/workflow.ts` owns the named gathering, review, audit, and
+  synthesis phases.
+- `src/review/` contains queue, diff, context, body, and shared review
+  contracts.
+- `src/prompts/` contains versioned Markdown prompt assets plus the prompt
+  loader/interpolator.
+- `src/lib/` contains shared runtime helpers for artifacts, logging, JSON,
+  CLI entrypoints, and errors.
 - `opencode/opencode.json` configures OpenCode and reads secrets through
   environment placeholders.
+- `opencode/agents/reviewer.md` contains durable reviewer-agent instructions.
+- `opencode/agents/auditor.md` contains durable audit/synthesis-agent
+  instructions.
 - `opencode/skills/` contains vendored reviewer skills used inside the image.
 - `.github/workflows/publish-image.yml` builds and publishes the image to GHCR.
 - `.github/workflows/review.yml` is the reusable workflow consumed by target
@@ -185,7 +196,7 @@ consuming repositories that run the workflow.
 
 The reusable workflow exposes only the pull request/comment identifiers as
 inputs. It owns the GitHub App client ID, command trigger, container image,
-OpenCode model, and OpenCode agent.
+OpenCode model, and OpenCode agents.
 
 The runner receives these required runtime environment variables from the
 reusable workflow:
@@ -198,8 +209,8 @@ reusable workflow:
 
 Optional runtime environment variables:
 
-- `OPENCODE_MODEL`: model id used by the bundled `reviewer` agent; defaults to
-  `opencode-go/minimax-m2.7`.
+- `OPENCODE_MODEL`: model id used by the bundled `reviewer` and `auditor`
+  agents; defaults to `opencode-go/minimax-m2.7`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `DRY_RUN=true`: local development override that prints the final review
   payload instead of submitting it.
@@ -213,10 +224,15 @@ inside the reviewer sandbox.
 
 ## Reviewer behavior
 
-The bundled prompt in `opencode/AGENTS.md` is copied into the image as the
-image-global OpenCode instructions. Target repositories can still provide their
-own `AGENTS.md` files for project-specific context, but the image prompt remains
-authoritative for review-only behavior.
+The bundled `opencode/agents/reviewer.md` and `opencode/agents/auditor.md`
+files are copied into the image as static OpenCode agent instructions. Target
+repositories can still provide their own `AGENTS.md` files for project-specific
+context, but the bundled agent instructions remain authoritative for the
+reviewer and auditor workflow.
+
+In this repository, OpenCode agent files are the durable role instructions,
+while files under `src/prompts/` are phase prompts passed to a specific
+`opencode run` invocation.
 
 Review text should be passed with stdin or files rather than shell-quoted inline
 arguments, for example:
@@ -278,7 +294,8 @@ checks out the PR head, sets `DRY_RUN=true`, and puts a read-only `gh` wrapper i
 front of OpenCode investigation. The runner prints the final review payload to
 stdout and keeps artifacts under `/tmp/.singular-code-review/`, including
 `review_payload.json`, `review_validated.json`,
-`review_context.json`, `pr.diff`, and the OpenCode output logs.
+`review_context.json`, `review_auditor_context.json`, `pr.diff`, and the
+OpenCode output logs.
 
 Use `--runtime-dir <path>` or `SINGULAR_CODE_REVIEW_RUNTIME_DIR=<path>` when
 running dry-runs inside a disposable container so artifacts are written to a

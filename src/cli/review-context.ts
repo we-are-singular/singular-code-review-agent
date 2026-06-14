@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { createGitHubClient } from "../clients/github.js";
 import { buildArtifactPaths, resolveWorkspace } from "../config/paths.js";
-import { buildReviewContext } from "../review/context.js";
+import { runCliMain } from "../lib/cli-main.js";
+import { readJsonFile, writeJsonFile } from "../lib/json.js";
+import { buildReviewContext, createEmptyReviewContext } from "../review/context.js";
 import { type ReviewContext } from "../review/types.js";
-import { runCliMain } from "../shared/cli-main.js";
-import { readJsonFile, writeJsonFile } from "../shared/json.js";
 
 type ParsedArgs = Record<string, string | boolean | undefined>;
 
@@ -69,29 +69,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 
   printJson(
-    readJsonFile<ReviewContext>(output, {
-      generated_at: new Date().toISOString(),
-      run: {
-        event_name: null,
-        reason: "manual",
-        actor: null,
-        trigger_comment: null,
-        command: "@singular-code-review",
-        bot_login: "singular-code-review[bot]",
-      },
-      pr: {},
-      diff: { file: "", files: [] },
-      valid_comment_ranges: {},
-      issue_comments: [],
-      review_comments: [],
-      review_threads_available: false,
-      review_threads: [],
-      unresolved_review_threads: [],
-      unresolved_bot_threads: [],
-      reviews: [],
-      previous_bot_findings: [],
-      action_items: [],
-    }),
+    readJsonFile<ReviewContext>(output, createEmptyReviewContext()),
   );
 }
 

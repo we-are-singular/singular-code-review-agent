@@ -6,7 +6,7 @@ Use these attached files:
 
 - `{{queueFile}}` as the queue to modify
 - `{{validatedFile}}` for current validation and dropped reasons
-- `{{contextFile}}` for previous bot comments and unresolved review threads
+- `{{auditorContextFile}}` for trigger context, previous bot comments, and unresolved bot threads
 - `{{reviewerOutputFile}}` for the findings already discovered
 
 Tighten the queue in place:
@@ -17,5 +17,6 @@ Tighten the queue in place:
 - remove comments already covered by unresolved bot threads or previous bot comments
 - fix obvious shell-escaping damage or truncated wording
 - preserve valid replies
+- tighten wording only when the underlying finding is unchanged
 
 Do not add new findings unless they are already present in the first reviewer output. Keep `review_queue.json` valid JSON with the existing schema. When finished, write a brief audit summary to stdout.
