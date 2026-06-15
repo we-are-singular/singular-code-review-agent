@@ -82,7 +82,7 @@ reconstruct the delta safely, or is unsure, the runner performs the full review.
 exercise the reviewer/auditor/synthesis path.
 
 The reusable workflow runs the review runner with two bounded attempts. Each
-attempt is capped at six minutes so a transient OpenCode hang can be retried
+attempt is capped at fifteen minutes so a transient OpenCode hang can be retried
 without leaving a PR review job stuck indefinitely.
 
 OpenCode invocations are routed through `src/clients/opencode.ts`, which keeps

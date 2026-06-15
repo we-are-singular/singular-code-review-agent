@@ -100,11 +100,11 @@ jobs:
 
       - name: Run Singular Code Review
         if: steps.review-request.outputs.should_review == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 32
         run: |
           for attempt in 1 2; do
             echo "review_runner attempt ${attempt}/2"
-            if timeout 6m /usr/local/bin/review_runner; then
+            if timeout 15m /usr/local/bin/review_runner; then
               exit 0
             fi
 
