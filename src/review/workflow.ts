@@ -1,21 +1,22 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import { type GitHubClient } from "../clients/github.js";
 import { type OpenCodeClient, type OpenCodeRunResult } from "../clients/opencode.js";
 import { type RunnerConfig } from "../config/env.js";
 import { type ArtifactPaths, type ArtifactStore } from "../lib/artifacts.js";
 import { type Logger } from "../lib/logger.js";
-import { buildAuditPrompt, buildReviewPrompt, buildSynthesisPrompt } from "../prompts/prompts.js";
+import { buildAuditPrompt, buildGatePrompt, buildReviewPrompt, buildSynthesisPrompt } from "../prompts/prompts.js";
 import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "./body.js";
 import { buildAuditorContext, buildReviewContext, buildReviewerContext } from "./context.js";
+import { parseGateDecision, prepareGate } from "./gate.js";
 import { clearQueue, loadQueue, persistValidation, setConclusion, validateQueue } from "./queue.js";
-import { type ReviewContext, type ValidatedReviewQueue } from "./types.js";
+import { type GateContext, type GateDecision, type ReviewContext, type ValidatedReviewQueue } from "./types.js";
 
 /**
  * Stable phase names for logs, tests, and future workflow documentation.
  * These names describe the product flow, not implementation details.
  */
-export const REVIEW_WORKFLOW_PHASES = ["gathering", "review", "audit", "synthesis"] as const;
+export const REVIEW_WORKFLOW_PHASES = ["gathering", "gate", "review", "audit", "synthesis"] as const;
 
 export type ReviewWorkflowPhase = (typeof REVIEW_WORKFLOW_PHASES)[number];
 
@@ -33,6 +34,10 @@ export type ReviewWorkflowResult =
       reason: string;
     }
   | {
+      status: "answered" | "no-review";
+      reason: string;
+    }
+  | {
       status: "dry-run" | "submitted";
       inlineComments: number;
       replies: number;
@@ -41,6 +46,8 @@ export type ReviewWorkflowResult =
     };
 
 type OpenCodeReviewPaths = {
+  gateContextPath: string;
+  gateDeltaPath: string;
   reviewContextPath: string;
   auditorContextPath: string;
   diffPath: string;
@@ -82,6 +89,8 @@ function pathForOpenCode(workspace: string, file: string): string {
 
 function buildOpenCodeReviewPaths(config: RunnerConfig, paths: ArtifactPaths): OpenCodeReviewPaths {
   return {
+    gateContextPath: pathForOpenCode(config.workspace, paths.gateContextFile),
+    gateDeltaPath: pathForOpenCode(config.workspace, paths.gateDeltaFile),
     reviewContextPath: pathForOpenCode(config.workspace, paths.reviewerContextFile),
     auditorContextPath: pathForOpenCode(config.workspace, paths.auditorContextFile),
     diffPath: pathForOpenCode(config.workspace, paths.diffFile),
@@ -100,6 +109,10 @@ function createReviewWorkflowState(deps: ReviewWorkflowDependencies): ReviewWork
   };
 }
 
+function clearStaleGateResult(paths: ArtifactPaths): void {
+  rmSync(paths.gateResultFile, { force: true });
+}
+
 /**
  * Exposes artifact paths to the agent-facing CLI tools invoked by OpenCode.
  * This is the process-level bridge between the runner and `review_comments`.
@@ -107,6 +120,8 @@ function createReviewWorkflowState(deps: ReviewWorkflowDependencies): ReviewWork
 function exposeReviewArtifactsToTools(config: RunnerConfig, paths: ArtifactPaths): void {
   process.env.REVIEW_QUEUE_FILE = paths.queueFile;
   process.env.REVIEW_VALIDATION_CONTEXT_FILE = paths.contextFile;
+  process.env.GATE_MODEL_CONTEXT_FILE = paths.gateContextFile;
+  process.env.GATE_DELTA_FILE = paths.gateDeltaFile;
   process.env.REVIEW_MODEL_CONTEXT_FILE = paths.reviewerContextFile;
   process.env.AUDIT_MODEL_CONTEXT_FILE = paths.auditorContextFile;
   process.env.REVIEW_DIFF_FILE = paths.diffFile;
@@ -168,12 +183,116 @@ async function runReviewPhase(state: ReviewWorkflowState): Promise<OpenCodeRunRe
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.reviewSessionFile,
     agent: "reviewer",
+    model: config.model,
     files: [opencodePaths.reviewContextPath, opencodePaths.diffPath],
     prompt: buildReviewPrompt({
       contextFile: opencodePaths.reviewContextPath,
       diffFile: opencodePaths.diffPath,
     }),
   });
+}
+
+function gateContextForPrompt(context: GateContext, gateDeltaPath: string): GateContext {
+  return {
+    ...context,
+    delta: {
+      ...context.delta,
+      file: gateDeltaPath,
+    },
+  };
+}
+
+async function postGateAnswer(
+  state: ReviewWorkflowState,
+  decision: Extract<GateDecision, { decision: "answer" | "no-review" }>,
+): Promise<ReviewWorkflowResult> {
+  await state.github.createIssueComment(state.config.prNumber, decision.answer);
+  const status = decision.decision === "answer" ? "answered" : "no-review";
+  state.artifacts.writeJson(state.paths.gateResultFile, {
+    generated_at: new Date().toISOString(),
+    decision: decision.decision,
+    status,
+    answer: decision.answer,
+  });
+  state.logger.info(`gate: posted ${status} comment`);
+  return {
+    status,
+    reason: decision.answer,
+  };
+}
+
+/**
+ * Runs the cheap routing gate for synchronize/comment triggers. Any invalid or
+ * uncertain outcome deliberately falls through to the normal full review.
+ */
+async function runGatePhase(
+  state: ReviewWorkflowState,
+  context: ReviewContext,
+  diffText: string,
+): Promise<ReviewWorkflowResult | null> {
+  const { config, opencode, artifacts, paths, opencodePaths, logger } = state;
+  const prepared = prepareGate({
+    context,
+    workspace: config.workspace,
+    diffText,
+    botLogin: config.botLogin,
+  });
+
+  if (prepared.action === "run-review") {
+    logPhase(logger, "gate", "skipped; running full review", { reason: prepared.reason });
+    return null;
+  }
+
+  const gateContext = gateContextForPrompt(prepared.context, opencodePaths.gateDeltaPath);
+  artifacts.writeText(paths.gateDeltaFile, prepared.deltaText);
+  artifacts.writeJson(paths.gateContextFile, gateContext);
+
+  if (prepared.action === "post") {
+    logPhase(logger, "gate", "resolved without OpenCode", { decision: prepared.decision.decision });
+    return postGateAnswer(state, prepared.decision);
+  }
+
+  logPhase(logger, "gate", "running OpenCode", {
+    model: config.gateModel,
+    delta_mode: gateContext.delta.mode,
+  });
+
+  let gateRun: OpenCodeRunResult;
+  try {
+    gateRun = await opencode.run({
+      workspace: config.workspace,
+      outputFile: paths.gateOutputFile,
+      jsonOutputFile: `${paths.gateOutputFile}.jsonl`,
+      capabilitiesFile: paths.opencodeCapabilitiesFile,
+      sessionFile: paths.gateSessionFile,
+      agent: "gate",
+      model: config.gateModel,
+      files: [opencodePaths.gateContextPath, opencodePaths.gateDeltaPath],
+      prompt: buildGatePrompt({
+        contextFile: opencodePaths.gateContextPath,
+        deltaFile: opencodePaths.gateDeltaPath,
+      }),
+    });
+  } catch (error) {
+    logger.warn("gate: OpenCode failed; running full review", { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+
+  let decision: GateDecision;
+  try {
+    decision = parseGateDecision(gateRun.text);
+  } catch (error) {
+    logger.warn("gate: invalid output; running full review", { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+
+  if (decision.decision === "review") {
+    logPhase(logger, "gate", "requested full review", { reason: decision.reason });
+    return null;
+  }
+
+  logPhase(logger, "gate", "resolved without full review", { decision: decision.decision });
+  return postGateAnswer(state, decision);
 }
 
 /**
@@ -218,6 +337,7 @@ async function runAuditPhase(
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.auditorSessionFile,
     agent: "auditor",
+    model: config.model,
     files: [
       opencodePaths.queuePath,
       opencodePaths.validatedPath,
@@ -252,6 +372,7 @@ async function runSynthesisPhase(state: ReviewWorkflowState, reviewPass: OpenCod
     sessionFile: paths.auditorSessionFile,
     reuseSession: true,
     agent: "auditor",
+    model: config.model,
     files: [opencodePaths.reviewOutputPath, opencodePaths.validatedPath, opencodePaths.auditorContextPath],
     prompt: buildSynthesisPrompt({
       reviewerOutputFile: opencodePaths.reviewOutputPath,
@@ -316,10 +437,21 @@ export async function runReviewWorkflow(deps: ReviewWorkflowDependencies): Promi
   const state = createReviewWorkflowState(deps);
   const { config, paths, logger } = state;
 
+  clearStaleGateResult(paths);
   exposeReviewArtifactsToTools(config, paths);
 
   const context = await runGatheringPhase(state);
-  if (!readFileSync(paths.diffFile, "utf8").trim()) {
+  const diffText = readFileSync(paths.diffFile, "utf8");
+  if (config.dryRun) {
+    logPhase(logger, "gate", "skipped for dry run; running full review");
+  } else {
+    const gateResult = await runGatePhase(state, context, diffText);
+    if (gateResult) {
+      return gateResult;
+    }
+  }
+
+  if (!diffText.trim()) {
     // Empty diffs are valid PR states, but there is nothing safe to attach
     // line-level feedback to.
     logPhase(logger, "gathering", "PR diff is empty; skipping review");

@@ -131,6 +131,19 @@ export type ReviewComment = {
   user?: GitHubUser | null;
 };
 
+export type PullRequestReview = {
+  id?: number | null;
+  body?: string | null;
+  state?: string | null;
+  submitted_at?: string | null;
+  submittedAt?: string | null;
+  html_url?: string | null;
+  url?: string | null;
+  commit_id?: string | null;
+  commitId?: string | null;
+  user?: GitHubUser | null;
+};
+
 export type ReviewThreadComment = {
   id: number | null;
   node_id: string | null;
@@ -183,7 +196,7 @@ export type ReviewActionItem =
 
 export type ReviewTrigger = {
   event_name: string | null;
-  reason: "manual" | "mention" | "ready_for_review" | "opened" | "workflow_dispatch";
+  reason: "manual" | "mention" | "ready_for_review" | "opened" | "synchronize" | "workflow_dispatch";
   actor: string | null;
   trigger_comment: {
     id: number;
@@ -212,7 +225,7 @@ export type ReviewContext = {
   review_threads: ReviewThread[];
   unresolved_review_threads: ReviewThread[];
   unresolved_bot_threads: ReviewThread[];
-  reviews: unknown[];
+  reviews: PullRequestReview[];
   previous_bot_findings: ReviewComment[];
   action_items: ReviewActionItem[];
 };
@@ -292,8 +305,55 @@ export type ReviewerContext = Omit<AuditorContext, "diff"> & {
     state: string | null;
     body: string;
     submitted_at: string | null;
+    commit_id: string | null;
     html_url: string | null;
   }>;
+};
+
+export type GateDecision =
+  | {
+      decision: "review";
+      reason: string;
+    }
+  | {
+      decision: "no-review";
+      answer: string;
+    }
+  | {
+      decision: "answer";
+      answer: string;
+    };
+
+export type GateDeltaMode =
+  | "none"
+  | "no_previous_review"
+  | "same_head"
+  | "ancestor_diff"
+  | "rebase_compare"
+  | "unavailable";
+
+export type GateContext = Pick<
+  ReviewerContext,
+  "generated_at" | "run" | "pr" | "issue_comments" | "previous_bot_findings" | "unresolved_bot_threads" | "action_items"
+> & {
+  diff: {
+    files: string[];
+    ignored: string[];
+    current_hash: string | null;
+  };
+  recent_bot_reviews: ReviewerContext["recent_reviews"];
+  last_bot_review: ReviewerContext["recent_reviews"][number] | null;
+  delta: {
+    mode: GateDeltaMode;
+    file: string | null;
+    summary: string;
+    last_reviewed_commit: string | null;
+    current_head: string | null;
+    changed_files: string[];
+    old_patch_id: string | null;
+    current_patch_id: string | null;
+    patch_ids_match: boolean | null;
+  };
 };
 
 export type ReviewPayloadComment = {

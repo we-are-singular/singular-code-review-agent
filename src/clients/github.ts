@@ -2,6 +2,7 @@ import { Octokit } from "@octokit/rest";
 import { type ArtifactStore } from "../lib/artifacts.js";
 import {
   type IssueComment,
+  type PullRequestReview,
   type ReviewComment,
   type ReviewPayload,
   type ReviewThread,
@@ -53,10 +54,11 @@ export type GitHubClient = {
   getIssueComment(commentId: number): Promise<IssueComment>;
   listIssueComments(prNumber: number): Promise<IssueComment[]>;
   listReviewComments(prNumber: number): Promise<ReviewComment[]>;
-  listReviews(prNumber: number): Promise<unknown[]>;
+  listReviews(prNumber: number): Promise<PullRequestReview[]>;
   listReviewThreads(prNumber: number): Promise<ReviewThreadsResult>;
   listIssueCommentReactions(commentId: number): Promise<Reaction[]>;
   createIssueCommentReaction(commentId: number, content: "eyes"): Promise<void>;
+  createIssueComment(prNumber: number, body: string): Promise<void>;
   submitReview(prNumber: number, payload: ReviewPayload): Promise<void>;
   submitReply(prNumber: number, commentId: number, body: string): Promise<void>;
 };
@@ -217,7 +219,7 @@ export function createGitHubClient(options: { token: string; repository: string 
         repo,
         pull_number: prNumber,
         per_page: 100,
-      })) as unknown[];
+      })) as PullRequestReview[];
     },
 
     async listReviewThreads(prNumber) {
@@ -314,6 +316,15 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       });
     },
 
+    async createIssueComment(prNumber, body) {
+      await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+        owner,
+        repo,
+        issue_number: prNumber,
+        body,
+      });
+    },
+
     async submitReview(prNumber, payload) {
       await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
         owner,
@@ -353,6 +364,9 @@ export function createDryRunGitHubClient(delegate: GitHubClient, artifacts: Arti
     listIssueCommentReactions: (commentId) => delegate.listIssueCommentReactions(commentId),
     async createIssueCommentReaction(commentId, content) {
       artifacts.writeJson(artifacts.child(`dry-run-reaction-${commentId}.json`), { content });
+    },
+    async createIssueComment(prNumber, body) {
+      artifacts.writeJson(artifacts.child(`dry-run-issue-comment-${prNumber}.json`), { body });
     },
     async submitReview(_prNumber, payload) {
       artifacts.writeJson(artifacts.paths.payloadFile, payload);

@@ -6,6 +6,9 @@ export type ArtifactPaths = {
   runtimeDir: string;
   queueFile: string;
   contextFile: string;
+  gateContextFile: string;
+  gateDeltaFile: string;
+  gateResultFile: string;
   reviewerContextFile: string;
   auditorContextFile: string;
   diffFile: string;
@@ -14,10 +17,12 @@ export type ArtifactPaths = {
   transcriptFile: string;
   commentsFile: string;
   statsFile: string;
+  gateOutputFile: string;
   reviewOutputFile: string;
   auditOutputFile: string;
   synthesisOutputFile: string;
   opencodeCapabilitiesFile: string;
+  gateSessionFile: string;
   reviewSessionFile: string;
   auditorSessionFile: string;
 };

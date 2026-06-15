@@ -31,6 +31,22 @@
         "webfetch": "allow"
       }
     },
+    "gate": {
+      "description": "Routes review triggers before the full review pipeline runs.",
+      "mode": "primary",
+      "model": "{env:OPENCODE_GATE_MODEL}",
+      "prompt": "{file:./agents/gate.md}",
+      "permission": {
+        "external_directory": {
+          "/tmp/.singular-code-review/**": "allow"
+        },
+        "edit": {
+          "*": "deny"
+        },
+        "bash": "deny",
+        "webfetch": "deny"
+      }
+    },
     "auditor": {
       "description": "Audits queued review findings and synthesizes the final review body.",
       "mode": "primary",

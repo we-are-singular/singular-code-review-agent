@@ -44,15 +44,21 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   });
   assert.equal(config.default_agent, "reviewer");
   assert.equal(config.agent.reviewer.prompt, "{file:./agents/reviewer.md}");
+  assert.equal(config.agent.gate.model, "{env:OPENCODE_GATE_MODEL}");
+  assert.equal(config.agent.gate.prompt, "{file:./agents/gate.md}");
   assert.equal(config.agent.auditor.prompt, "{file:./agents/auditor.md}");
   assert.deepEqual(config.agent.reviewer.permission.external_directory, config.permission.external_directory);
   assert.deepEqual(config.agent.reviewer.permission.edit, config.permission.edit);
+  assert.deepEqual(config.agent.gate.permission.external_directory, config.permission.external_directory);
   assert.deepEqual(config.agent.auditor.permission.external_directory, config.permission.external_directory);
   assert.deepEqual(config.agent.auditor.permission.edit, config.permission.edit);
   assert.equal(config.agent.reviewer.permission.bash, "allow");
+  assert.equal(config.agent.gate.permission.bash, "deny");
+  assert.equal(config.agent.gate.permission.webfetch, "deny");
   assert.equal(config.agent.auditor.permission.bash, "deny");
   assert.equal(config.agent.auditor.permission.webfetch, "deny");
   assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "reviewer.md")), true);
+  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "gate.md")), true);
   assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "auditor.md")), true);
 
   const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8");
@@ -60,11 +66,10 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   assert.match(auditorAgent, /denials usually mean the sandbox worked/u);
 });
 
-test("example trigger workflow does not run reviews on every push", () => {
+test("example trigger workflow runs gate-capable reviews on new pull request heads", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, "examples", "singular-code-review.yml"), "utf8");
 
-  assert.match(workflow, /pull_request:\s*\n\s*types: \[opened, ready_for_review\]/);
-  assert.doesNotMatch(workflow, /\bsynchronize\b/);
+  assert.match(workflow, /pull_request:\s*\n\s*types: \[opened, ready_for_review, synchronize\]/);
   assert.doesNotMatch(workflow, /\breopened\b/);
   assert.match(workflow, /issue_comment:\s*\n\s*types: \[created\]/);
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
@@ -83,9 +88,10 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/);
   assert.match(workflow, /name: Provision review workspace/);
   assert.match(workflow, /\/usr\/local\/bin\/provision\.sh/);
+  assert.match(workflow, /OPENCODE_GATE_MODEL: \$\{\{ vars\.OPENCODE_GATE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/);
   assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/);
-  assert.match(workflow, /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 22\s+run: \|\s+for attempt in 1 2; do/);
-  assert.match(workflow, /timeout 10m \/usr\/local\/bin\/review_runner/);
+  assert.match(workflow, /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 15\s+run: \|\s+for attempt in 1 2; do/);
+  assert.match(workflow, /timeout 6m \/usr\/local\/bin\/review_runner/);
   assert.match(workflow, /review_runner attempt \$\{attempt\}\/2/);
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/);
   assert.match(workflow, /Extract review outputs and telemetry/);

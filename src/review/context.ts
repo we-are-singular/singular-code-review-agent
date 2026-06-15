@@ -129,6 +129,8 @@ export function readEventContext(options: {
     reason = "ready_for_review";
   } else if (eventName === "pull_request" && action === "opened") {
     reason = "opened";
+  } else if (eventName === "pull_request" && action === "synchronize") {
+    reason = "synchronize";
   } else if (eventName === "workflow_dispatch") {
     reason = "workflow_dispatch";
   }
@@ -374,6 +376,7 @@ function compactReview(value: unknown): ReviewerContext["recent_reviews"][number
     state: stringValue(record.state),
     body: stringValue(record.body) || "",
     submitted_at: stringValue(record.submitted_at) || stringValue(record.submittedAt),
+    commit_id: stringValue(record.commit_id) || stringValue(record.commitId),
     html_url: stringValue(record.html_url) || stringValue(record.url),
   };
 }

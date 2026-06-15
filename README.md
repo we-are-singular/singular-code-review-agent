@@ -44,9 +44,9 @@ workflow file and the runtime secrets required by that workflow.
 - Local review tools that let the agent stage inline comments, multiline
   comments, suggestions, replies, and the synthesized overall conclusion before
   submission.
-- Static OpenCode reviewer/auditor agent instruction files, centralized review prompts,
-  and vendored reviewer skills that keep the agent focused on actionable code
-  review feedback.
+- Static OpenCode gate/reviewer/auditor agent instruction files, centralized
+  review prompts, and vendored reviewer skills that keep the agent focused on
+  actionable code review feedback.
 - No-network test coverage for the review contracts, OpenCode client, guard/ack
   decisions, runner pipeline, workflow, and image packaging.
 
@@ -59,20 +59,30 @@ Provisioning installs the committed OpenCode config and target-repository
 dependencies. The runner then:
 
 1. fetches normalized pull-request context with `review_context`;
-2. starts OpenCode with the bundled `reviewer` agent and review phase prompt;
-3. lets the agent queue findings and replies through `review_comments`;
-4. validates queued comments against the current diff;
-5. runs the OpenCode `auditor` agent in an audit phase that edits the queue file to remove
+2. for non-dry-run `synchronize` and mention triggers, runs the cheap `gate`
+   agent to decide whether to answer, skip full re-review, or continue to full
+   review;
+3. starts OpenCode with the bundled `reviewer` agent and review phase prompt;
+4. lets the agent queue findings and replies through `review_comments`;
+5. validates queued comments against the current diff;
+6. runs the OpenCode `auditor` agent in an audit phase that edits the queue file to remove
    duplicates, merge overlapping comments, and keep distinct same-line findings;
-6. validates the audited queue so only valid RIGHT-side additions and LEFT-side deletions are
+7. validates the audited queue so only valid RIGHT-side additions and LEFT-side deletions are
    submitted;
-7. runs the OpenCode `auditor` agent in a synthesis phase to create the final review body from the
+8. runs the OpenCode `auditor` agent in a synthesis phase to create the final review body from the
    reviewer output and validated queue;
-8. posts a single GitHub review whose body uses the synthesized conclusion and
+9. posts a single GitHub review whose body uses the synthesized conclusion and
    any queued inline comments, plus any queued replies.
 
+The gate never submits a GitHub review. It either posts a fresh pull-request
+issue comment for direct answers or low-risk deltas, or it falls through to the
+normal full review pipeline. If the gate fails, emits invalid JSON, cannot
+reconstruct the delta safely, or is unsure, the runner performs the full review.
+`DRY_RUN=true` bypasses the gate so local dry runs and eval captures always
+exercise the reviewer/auditor/synthesis path.
+
 The reusable workflow runs the review runner with two bounded attempts. Each
-attempt is capped at ten minutes so a transient OpenCode hang can be retried
+attempt is capped at six minutes so a transient OpenCode hang can be retried
 without leaving a PR review job stuck indefinitely.
 
 OpenCode invocations are routed through `src/clients/opencode.ts`, which keeps
@@ -84,7 +94,9 @@ The image keeps credentials out of the build. Runtime secrets are provided by
 the consuming repository, while reviewer settings such as the command trigger,
 GitHub App client ID, image, and OpenCode agents are owned by this repository.
 Consuming repositories can optionally set the `OPENCODE_MODEL` repository
-variable to try a different model without changing workflow YAML.
+variable to try a different review model without changing workflow YAML. They
+can also set `OPENCODE_GATE_MODEL` for the cheaper gate model; if omitted, the
+gate defaults to `opencode-go/deepseek-v4-flash`.
 Dependency installation is disabled by default; consuming workflows can opt in
 with the reusable workflow input `npm_install: true`.
 
@@ -98,8 +110,9 @@ with the reusable workflow input `npm_install: true`.
    - `OPENCODE_API_KEY`: OpenCode Go API key used by the reviewer.
    - `CONTEXT7_API_KEY`: optional Context7 API key.
 3. Optionally set the repository variable `OPENCODE_MODEL` to use a different
-   model. If omitted, the reusable workflow defaults to
-   `opencode-go/minimax-m2.7`.
+   review model. If omitted, the reusable workflow defaults to
+   `opencode-go/minimax-m2.7`. Optionally set `OPENCODE_GATE_MODEL` to use a
+   different gate model.
 4. Copy `examples/singular-code-review.yml` into the target repository as
    `.github/workflows/singular-code-review.yml`.
 5. Open a non-draft same-repository pull request, mark a same-repository draft
@@ -152,8 +165,9 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
 - `bin/provision.sh` prepares OpenCode config, trusts the checkout directory,
   and installs target-repository dependencies.
 - `review_runner` runs the TypeScript review pipeline.
-- `review_extract` writes the post-run transcript, final comments JSON, and
-  OpenCode telemetry stats used by GitHub summaries and eval capture.
+- `review_extract` writes the post-run transcript, final comments JSON, gate
+  issue-comment outcomes, and OpenCode telemetry stats used by GitHub summaries
+  and eval capture.
 - `review_context` prints the compact review model context by default. The full
   `review_validation_context.json` artifact remains available for validation and local
   troubleshooting with `review_context --full`.
@@ -161,6 +175,8 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
   strips raw GitHub REST payload fields and compresses commentable line arrays
   into compact `"line"` and `"start-end"` ranges so the model sees only
   review-relevant context.
+- `gate_model_context.json`, `gate_delta.diff`, and `gate_result.json` are gate
+  artifacts used by live synchronize or mention triggers.
 - `audit_model_context.json` is a compact runtime artifact derived from the
   full context for audit and synthesis prompts.
 - `review_comments` is the staging interface used by OpenCode and the
@@ -170,9 +186,9 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
   helpers for trigger authorization and idempotent request acknowledgment.
 - `bin/review_dry_run` checks out a real GitHub pull request into a disposable
   workspace and runs the normal runner with GitHub writes blocked.
-- `src/review/workflow.ts` owns the named gathering, review, audit, and
+- `src/review/workflow.ts` owns the named gathering, gate, review, audit, and
   synthesis phases.
-- `src/review/` contains queue, diff, context, body, and shared review
+- `src/review/` contains gate routing, queue, diff, context, body, and shared review
   contracts.
 - `src/prompts/` contains versioned Markdown prompt assets plus the prompt
   loader/interpolator.
@@ -180,6 +196,7 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
   CLI entrypoints, and errors.
 - `opencode/opencode.json` configures OpenCode and reads secrets through
   environment placeholders.
+- `opencode/agents/gate.md` contains durable gate-agent instructions.
 - `opencode/agents/reviewer.md` contains durable reviewer-agent instructions.
 - `opencode/agents/auditor.md` contains durable audit/synthesis-agent
   instructions.
@@ -226,8 +243,8 @@ Optional runtime environment variables:
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
   during provisioning. The reusable workflow sets this from `npm_install`.
-- `DRY_RUN=true`: local development override that prints the final review
-  payload instead of submitting it.
+- `DRY_RUN=true`: local development override that bypasses the gate and prints
+  the final review payload instead of submitting it.
 
 Dependency installation is skipped by default. When explicitly enabled,
 `bin/provision.sh` chooses `pnpm`, `yarn`, or `npm` based on the lockfile
@@ -303,13 +320,14 @@ OPENCODE_API_KEY=... bin/review_dry_run owner/repo 123
 ```
 
 The command clones the target repository into `/tmp/singular-code-review-dry-run`,
-checks out the PR head, sets `DRY_RUN=true`, and puts a read-only `gh` wrapper in
-front of OpenCode investigation. The runner prints the final review payload to
-stdout and keeps artifacts under `/tmp/.singular-code-review/`, including
-`review_payload.json`, `review_validated.json`,
-`review_validation_context.json`, `review_model_context.json`, `audit_model_context.json`,
-`review_transcript.md`, `review_comments.json`, `review_stats.json`, `pr.diff`,
-and the OpenCode output logs.
+checks out the PR head, sets `DRY_RUN=true`, bypasses the gate, and puts a
+read-only `gh` wrapper in front of OpenCode investigation. The runner prints the
+final review payload to stdout and keeps artifacts under
+`/tmp/.singular-code-review/`, including `review_payload.json`,
+`review_validated.json`, `review_validation_context.json`,
+`review_model_context.json`, `audit_model_context.json`, `review_transcript.md`,
+`review_comments.json`, `review_stats.json`, `pr.diff`, and the OpenCode output
+logs.
 
 For Docker/eval captures, keep the live runtime under
 `/tmp/.singular-code-review/` and pass `--out-dir <path>` to copy the three

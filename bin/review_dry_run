@@ -11,9 +11,9 @@ usage:
   review_dry_run --repo <owner/repo> --pr <pr-number> [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
 
 Runs the Singular Code Review runner against a real GitHub pull request, but
-sets DRY_RUN=true and installs a read-only gh wrapper for OpenCode
-investigation. The final review payload is printed by the runner and kept under
-the runtime directory. By default artifacts are stored under
+sets DRY_RUN=true, bypasses the gate, and installs a read-only gh wrapper for
+OpenCode investigation. The final review payload is printed by the runner and
+kept under the runtime directory. By default artifacts are stored under
 /tmp/.singular-code-review; pass --runtime-dir or SINGULAR_CODE_REVIEW_RUNTIME_DIR
 to override the live runtime location. Pass --out-dir to copy the extracted
 review_transcript.md, review_comments.json, and review_stats.json to a mounted

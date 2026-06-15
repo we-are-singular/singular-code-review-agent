@@ -15,7 +15,7 @@ export type PhaseUsageStats = {
 };
 
 export type ExtractedPhaseStats = {
-  name: "review" | "audit" | "synthesis";
+  name: "gate" | "review" | "audit" | "synthesis";
   outputFile: string;
   jsonOutputFile: string;
   sessionFile: string;
@@ -68,11 +68,20 @@ export type ReviewStatsExport = {
 
 export type ReviewCommentsExport = {
   generatedAt: string;
+  gate: GateResultExport | null;
   review: unknown;
+  issueComments: unknown[];
   inlineComments: unknown[];
   replies: unknown[];
   dropped: unknown[];
   validationStats: unknown;
+};
+
+export type GateResultExport = {
+  generatedAt: string | null;
+  decision: "answer" | "no-review";
+  status: "answered" | "no-review";
+  answer: string;
 };
 
 export type ReviewExtraction = {
@@ -90,6 +99,10 @@ export type WrittenReviewExtraction = {
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
 }
 
 function readTextFile(file: string): string {
@@ -353,6 +366,10 @@ function phaseStats(
   };
 }
 
+function phaseHasActivity(phase: ExtractedPhaseStats): boolean {
+  return Boolean(phase.sessionId) || phase.outputBytes > 0 || phase.jsonEvents > 0 || phase.textEvents > 0;
+}
+
 function sumNullable(values: Array<number | null>): number | null {
   const numbers = values.filter((value): value is number => typeof value === "number");
   return numbers.length ? numbers.reduce((sum, value) => sum + value, 0) : null;
@@ -525,17 +542,57 @@ export function extractOpenCodeSqliteStats(env: NodeJS.ProcessEnv = process.env)
 }
 
 function reviewCommentsExport(paths: ArtifactPaths, generatedAt: string): ReviewCommentsExport {
+  const gate = gateResultExport(paths);
+  if (gate) {
+    return {
+      generatedAt,
+      gate,
+      review: {},
+      issueComments: [
+        {
+          source: "gate",
+          decision: gate.decision,
+          body: gate.answer,
+        },
+      ],
+      inlineComments: [],
+      replies: [],
+      dropped: [],
+      validationStats: null,
+    };
+  }
+
   const payload = readJsonFile<unknown>(paths.payloadFile, {});
   const validated = asRecord(readJsonFile<unknown>(paths.validatedFile, {}));
   const payloadRecord = asRecord(payload);
 
   return {
     generatedAt,
+    gate: null,
     review: payload,
+    issueComments: [],
     inlineComments: Array.isArray(payloadRecord.comments) ? payloadRecord.comments : [],
     replies: Array.isArray(validated.replies) ? validated.replies : [],
     dropped: Array.isArray(validated.dropped) ? validated.dropped : [],
     validationStats: validated.stats || null,
+  };
+}
+
+function gateResultExport(paths: ArtifactPaths): GateResultExport | null {
+  const result = asRecord(readJsonFile<unknown>(paths.gateResultFile, {}));
+  const decision = result.decision;
+  const status = result.status;
+  const answer = stringValue(result.answer);
+
+  if ((decision !== "answer" && decision !== "no-review") || (status !== "answered" && status !== "no-review") || !answer) {
+    return null;
+  }
+
+  return {
+    generatedAt: stringValue(result.generated_at),
+    decision,
+    status,
+    answer,
   };
 }
 
@@ -552,6 +609,14 @@ function renderCommentList(items: unknown[], emptyText: string): string {
       return `${heading}\n\n${String(record.body || "").trim() || JSON.stringify(item, null, 2)}`;
     })
     .join("\n\n");
+}
+
+function renderGateResult(gate: GateResultExport | null): string {
+  if (!gate) {
+    return "_No gate-only outcome was recorded._";
+  }
+
+  return `Decision: ${gate.decision}\nStatus: ${gate.status}\n\n${gate.answer}`;
 }
 
 function reviewBody(comments: ReviewCommentsExport): string {
@@ -579,6 +644,14 @@ function renderTranscript(options: {
 
 ${body}
 
+## Gate Decision
+
+${renderGateResult(options.comments.gate)}
+
+## Issue Comments
+
+${renderCommentList(options.comments.issueComments, "_No issue comments would be posted._")}
+
 ## Inline Comments
 
 ${renderCommentList(options.comments.inlineComments, "_No inline comments would be posted._")}
@@ -586,6 +659,12 @@ ${renderCommentList(options.comments.inlineComments, "_No inline comments would 
 ## Replies
 
 ${renderCommentList(options.comments.replies, "_No replies would be posted._")}
+
+## Gate Output
+
+\`\`\`text
+${readTextFile(options.paths.gateOutputFile).trim()}
+\`\`\`
 
 ## Reviewer Output
 
@@ -615,10 +694,16 @@ function statsExport(options: {
   paths: ArtifactPaths;
   env: NodeJS.ProcessEnv;
 }): ReviewStatsExport {
-  const phases = [
+  const gatePhase = phaseStats("gate", options.paths.gateOutputFile, options.paths.gateSessionFile);
+  const gateResult = gateResultExport(options.paths);
+  const reviewPhases = [
     phaseStats("review", options.paths.reviewOutputFile, options.paths.reviewSessionFile),
     phaseStats("audit", options.paths.auditOutputFile, options.paths.auditorSessionFile),
     phaseStats("synthesis", options.paths.synthesisOutputFile, options.paths.auditorSessionFile),
+  ];
+  const phases = [
+    ...(phaseHasActivity(gatePhase) ? [gatePhase] : []),
+    ...(gateResult ? [] : reviewPhases),
   ];
 
   return {
@@ -697,6 +782,18 @@ function formatNullable(value: number | null, suffix = ""): string {
   return typeof value === "number" ? `${value}${suffix}` : "n/a";
 }
 
+function tableCell(value: string): string {
+  return value.replace(/\|/gu, "\\|").replace(/\r?\n/gu, "<br>");
+}
+
+function truncateSummary(value: string, maxLength = 320): string {
+  const compact = value.trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength - 1).trimEnd()}...`;
+}
+
 function formatDurationSeconds(value: number | null): string {
   return typeof value === "number" ? `${(value / 1000).toFixed(1)} s` : "n/a";
 }
@@ -705,19 +802,41 @@ function formatCostUsd(value: number | null): string {
   return typeof value === "number" ? `$${value.toFixed(4)}` : "n/a";
 }
 
-function phaseSummaryRows(phases: ExtractedPhaseStats[]): string {
-  return phases
+function renderPhaseSummary(phases: ExtractedPhaseStats[]): string {
+  if (phases.length === 0) {
+    return "_No OpenCode phase telemetry was recorded._";
+  }
+
+  const rows = phases
     .map(
       (phase) =>
         `| ${phase.name} | ${phase.sessionId || "n/a"} | ${formatDurationSeconds(phase.durationMs)} | ${formatNullable(phase.turns)} | ${formatNullable(phase.usage.inputTokens)} | ${formatNullable(phase.usage.outputTokens)} | ${formatNullable(phase.usage.totalTokens)} | ${formatCostUsd(phase.usage.costUsd)} | ${phase.jsonEvents}/${phase.textEvents} |`,
     )
     .join("\n");
+
+  return `| Phase | Session | Duration | Turns | Input | Output | Total | Cost | Events JSON/Text |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+${rows}`;
+}
+
+function gateSummaryRows(gate: GateResultExport | null): string {
+  if (!gate) {
+    return "";
+  }
+
+  const outcome = gate.status === "answered" ? "Answered user question; full review not run" : "No full re-review needed";
+  return [
+    `| Gate outcome | ${tableCell(outcome)} |`,
+    `| Gate decision | ${tableCell(gate.decision)} |`,
+    `| Gate comment | ${tableCell(truncateSummary(gate.answer))} |`,
+  ].join("\n");
 }
 
 export function renderGitHubStepSummary(extraction: ReviewExtraction): string {
   const stats = extraction.stats;
   const comments = extraction.comments;
   const sqliteDatabases = stats.opencodeSqlite.databases.length;
+  const gateRows = gateSummaryRows(comments.gate);
 
   return `# Singular Code Review Telemetry
 
@@ -726,7 +845,7 @@ export function renderGitHubStepSummary(extraction: ReviewExtraction): string {
 | Model | ${stats.model || "unknown"} |
 | Repository | ${stats.repository || "unknown"} |
 | Pull request | ${stats.prNumber || "unknown"} |
-| Duration | ${formatDurationSeconds(stats.totals.durationMs)} |
+${gateRows ? `${gateRows}\n` : ""}| Duration | ${formatDurationSeconds(stats.totals.durationMs)} |
 | Turns | ${formatNullable(stats.totals.turns)} |
 | Input tokens | ${formatNullable(stats.totals.inputTokens)} |
 | Output tokens | ${formatNullable(stats.totals.outputTokens)} |
@@ -735,15 +854,14 @@ export function renderGitHubStepSummary(extraction: ReviewExtraction): string {
 | OpenCode JSON events | ${stats.totals.jsonEvents} |
 | OpenCode text events | ${stats.totals.textEvents} |
 | SQLite databases inspected | ${sqliteDatabases} |
+| Issue comments | ${comments.issueComments.length} |
 | Inline comments | ${comments.inlineComments.length} |
 | Replies | ${comments.replies.length} |
 | Dropped comments | ${comments.dropped.length} |
 
 ## Phase Telemetry
 
-| Phase | Session | Duration | Turns | Input | Output | Total | Cost | Events JSON/Text |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-${phaseSummaryRows(stats.phases)}
+${renderPhaseSummary(stats.phases)}
 `;
 }
 

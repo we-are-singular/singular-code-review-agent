@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type PromptName = "review" | "audit" | "synthesis";
+export type PromptName = "gate" | "review" | "audit" | "synthesis";
 
 const PROMPT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -12,6 +12,14 @@ function loadPrompt(name: PromptName): string {
 
 function interpolate(template: string, values: Record<string, string>): string {
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/gu, (_match, key: string) => values[key] || "");
+}
+
+/**
+ * Builds the cheap routing prompt that decides whether a trigger should answer,
+ * skip re-review, or escalate into the full review pipeline.
+ */
+export function buildGatePrompt(values: { contextFile: string; deltaFile: string }): string {
+  return interpolate(loadPrompt("gate"), values);
 }
 
 /**

@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { buildArtifactPaths } from "../dist/config/paths.js";
-import { extractReviewArtifacts, writeReviewExtraction } from "../dist/review/extract.js";
+import { extractReviewArtifacts, renderGitHubStepSummary, writeReviewExtraction } from "../dist/review/extract.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -102,6 +102,7 @@ test("extractor builds transcript, final comments JSON, and stats from runtime a
   assert.equal(stats.totals.outputTokens, 40);
   assert.equal(stats.totals.totalTokens, 140);
   assert.equal(stats.totals.costUsd, 0.001);
+  assert.equal(stats.phases[0].name, "review");
   assert.equal(stats.phases[0].sessionId, "review-session");
 });
 
@@ -172,6 +173,48 @@ test("extractor reads OpenCode step usage, turns, and numeric timestamps", () =>
   assert.equal(extraction.stats.totals.totalTokens, 37);
   assert.equal(extraction.stats.totals.costUsd, 0.30000000000000004);
   assert.equal(extraction.stats.phases[0].textEvents, 1);
+});
+
+test("extractor includes gate-only comments in exports and GitHub summary", () => {
+  const { home, paths } = createRuntime();
+  writeJson(paths.gateResultFile, {
+    generated_at: "2026-06-15T00:00:00.000Z",
+    decision: "no-review",
+    status: "no-review",
+    answer: "No full re-review needed: the latest push only updates docs.",
+  });
+
+  const extraction = extractReviewArtifacts({
+    paths,
+    generatedAt: "2026-06-15T00:00:00.000Z",
+    env: {
+      HOME: home,
+      OPENCODE_MODEL: "opencode-go/minimax-m3",
+      GITHUB_REPOSITORY: "owner/repo",
+      PR_NUMBER: "42",
+    },
+  });
+  const summary = renderGitHubStepSummary(extraction);
+
+  assert.deepEqual(extraction.comments.gate, {
+    generatedAt: "2026-06-15T00:00:00.000Z",
+    decision: "no-review",
+    status: "no-review",
+    answer: "No full re-review needed: the latest push only updates docs.",
+  });
+  assert.deepEqual(extraction.comments.issueComments, [
+    {
+      source: "gate",
+      decision: "no-review",
+      body: "No full re-review needed: the latest push only updates docs.",
+    },
+  ]);
+  assert.match(extraction.transcript, /Gate Decision/u);
+  assert.match(extraction.transcript, /Issue Comments/u);
+  assert.match(summary, /Gate outcome/u);
+  assert.match(summary, /No full re-review needed/u);
+  assert.match(summary, /\| Issue comments \| 1 \|/u);
+  assert.doesNotMatch(summary, /\| review \|/u);
 });
 
 test("review_extract CLI writes outputs and appends GitHub step summary", () => {

@@ -50,6 +50,9 @@ test("dry-run GitHub client writes payload and replies to artifacts instead of d
     async createIssueCommentReaction() {
       delegateWrites.push("reaction");
     },
+    async createIssueComment() {
+      delegateWrites.push("issue-comment");
+    },
     async submitReview() {
       delegateWrites.push("review");
     },
@@ -62,6 +65,7 @@ test("dry-run GitHub client writes payload and replies to artifacts instead of d
   await client.submitReview(42, { body: "Dry run body", event: "COMMENT", comments: [] });
   await client.submitReply(42, 123, "Dry run reply");
   await client.createIssueCommentReaction(99, "eyes");
+  await client.createIssueComment(42, "Dry run issue comment");
 
   assert.deepEqual(delegateWrites, []);
   assert.deepEqual(JSON.parse(fs.readFileSync(artifacts.paths.payloadFile, "utf8")), {
@@ -74,6 +78,9 @@ test("dry-run GitHub client writes payload and replies to artifacts instead of d
   });
   assert.deepEqual(JSON.parse(fs.readFileSync(artifacts.child("dry-run-reaction-99.json"), "utf8")), {
     content: "eyes",
+  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(artifacts.child("dry-run-issue-comment-42.json"), "utf8")), {
+    body: "Dry run issue comment",
   });
 });
 

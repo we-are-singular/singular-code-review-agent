@@ -18,6 +18,7 @@ export type OpenCodeRunOptions = {
   sessionFile?: string;
   reuseSession?: boolean;
   agent?: string;
+  model?: string;
   files?: string[];
   prompt: string;
 };
@@ -208,9 +209,12 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
 
       options.logger?.debug("running opencode", { args: args.slice(0, -1), workspace: runOptions.workspace });
 
+      const childEnv = runOptions.model
+        ? { ...process.env, OPENCODE_MODEL: runOptions.model, OPENCODE_GATE_MODEL: runOptions.model }
+        : process.env;
       const child = spawn("opencode", args, {
         cwd: runOptions.workspace,
-        env: process.env,
+        env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
 

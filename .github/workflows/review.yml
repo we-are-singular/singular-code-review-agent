@@ -48,6 +48,7 @@ jobs:
       COMMENT_ID: ${{ inputs.trigger_comment_id }}
       TRIGGER_COMMENT_ID: ${{ inputs.trigger_comment_id }}
       OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}
+      OPENCODE_GATE_MODEL: ${{ vars.OPENCODE_GATE_MODEL || 'opencode-go/deepseek-v4-flash' }}
       SINGULAR_CODE_REVIEW_INSTALL_DEPS: ${{ inputs.npm_install }}
     steps:
       - name: Run review guard

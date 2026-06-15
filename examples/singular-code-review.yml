@@ -2,7 +2,7 @@ name: Singular Code Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
   workflow_dispatch:

@@ -9,6 +9,7 @@ export type RunnerConfig = {
   workspace: string;
   dryRun: boolean;
   model: string;
+  gateModel: string;
   command: string;
   botLogin: string;
   artifacts: ArtifactPaths;
@@ -98,6 +99,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
     workspace,
     dryRun: args.dryRun || env.DRY_RUN === "true",
     model: env.OPENCODE_MODEL || "opencode-go/minimax-m2.7",
+    gateModel: env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash",
     command: REVIEW_COMMAND,
     botLogin: env.BOT_LOGIN || REVIEW_BOT_LOGIN,
     artifacts,
