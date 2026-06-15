@@ -88,11 +88,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
 
+      - name: Provision review workspace
+        if: steps.review-request.outputs.should_review == 'true'
+        run: /usr/local/bin/provision.sh
+
       - name: Run Singular Code Review
         if: steps.review-request.outputs.should_review == 'true'
-        run: |
-          /usr/local/bin/provision.sh
-          /usr/local/bin/review_runner
+        timeout-minutes: 10
+        run: /usr/local/bin/review_runner
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

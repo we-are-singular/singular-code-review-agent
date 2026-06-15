@@ -57,6 +57,7 @@ function createRuntime() {
     [
       JSON.stringify({
         type: "text",
+        timestamp: 1781518616000,
         sessionID: "review-session",
         text: "Queued one finding.\n",
         usage: {
@@ -212,10 +213,13 @@ test("review_extract CLI writes outputs and appends GitHub step summary", () => 
   assert.match(summary, /Singular Code Review Telemetry/u);
   assert.match(summary, /Input tokens/u);
   assert.match(summary, /Phase Telemetry/u);
+  assert.match(summary, /\| Duration \| 0\.0 s \|/u);
+  assert.match(summary, /\| review \| review-session \| 0\.0 s \|/u);
   assert.doesNotMatch(summary, /Extracted Files/u);
   assert.doesNotMatch(summary, /Final Review Body/u);
   assert.doesNotMatch(summary, /Runtime dir/u);
   assert.doesNotMatch(summary, /review_transcript\.md/u);
+  assert.doesNotMatch(summary, /\d+ ms/u);
   assert.doesNotMatch(summary, /Useful summary/u);
   assert.equal(fs.existsSync(paths.statsFile), false);
 });

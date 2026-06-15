@@ -697,6 +697,10 @@ function formatNullable(value: number | null, suffix = ""): string {
   return typeof value === "number" ? `${value}${suffix}` : "n/a";
 }
 
+function formatDurationSeconds(value: number | null): string {
+  return typeof value === "number" ? `${(value / 1000).toFixed(1)} s` : "n/a";
+}
+
 function formatCostUsd(value: number | null): string {
   return typeof value === "number" ? `$${value.toFixed(4)}` : "n/a";
 }
@@ -705,7 +709,7 @@ function phaseSummaryRows(phases: ExtractedPhaseStats[]): string {
   return phases
     .map(
       (phase) =>
-        `| ${phase.name} | ${phase.sessionId || "n/a"} | ${formatNullable(phase.durationMs, " ms")} | ${formatNullable(phase.turns)} | ${formatNullable(phase.usage.inputTokens)} | ${formatNullable(phase.usage.outputTokens)} | ${formatNullable(phase.usage.totalTokens)} | ${formatCostUsd(phase.usage.costUsd)} | ${phase.jsonEvents}/${phase.textEvents} |`,
+        `| ${phase.name} | ${phase.sessionId || "n/a"} | ${formatDurationSeconds(phase.durationMs)} | ${formatNullable(phase.turns)} | ${formatNullable(phase.usage.inputTokens)} | ${formatNullable(phase.usage.outputTokens)} | ${formatNullable(phase.usage.totalTokens)} | ${formatCostUsd(phase.usage.costUsd)} | ${phase.jsonEvents}/${phase.textEvents} |`,
     )
     .join("\n");
 }
@@ -722,7 +726,7 @@ export function renderGitHubStepSummary(extraction: ReviewExtraction): string {
 | Model | ${stats.model || "unknown"} |
 | Repository | ${stats.repository || "unknown"} |
 | Pull request | ${stats.prNumber || "unknown"} |
-| Duration | ${formatNullable(stats.totals.durationMs, " ms")} |
+| Duration | ${formatDurationSeconds(stats.totals.durationMs)} |
 | Turns | ${formatNullable(stats.totals.turns)} |
 | Input tokens | ${formatNullable(stats.totals.inputTokens)} |
 | Output tokens | ${formatNullable(stats.totals.outputTokens)} |

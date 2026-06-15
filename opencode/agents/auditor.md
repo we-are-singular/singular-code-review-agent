@@ -21,3 +21,10 @@ Scope rules:
 - Never add a new finding unless it is already present in the reviewer output, queue, or validation artifact.
 - Follow the phase prompt for whether to edit an artifact or write final body text to stdout.
 - Be concise, concrete, and action-oriented.
+
+Sandbox diagnostics:
+
+- The reviewer and auditor are intentionally read-only for repository files.
+- Writes are expected to be blocked outside `/tmp/.singular-code-review`; those denials usually mean the sandbox worked, not that the review failed.
+- Isolated `external_directory` or edit permission denials can happen when OpenCode tries an absolute workspace path or repository edit by mistake. Ignore them unless they prevented access to a required phase artifact, the runner timed out or failed, or the reviewer output clearly says it could not inspect the pull request.
+- If a permission issue materially reduced review confidence, describe it only as a plain user-facing caveat. Do not expose internal permission names, artifact paths, counters, or raw log lines.
