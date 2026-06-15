@@ -3,8 +3,8 @@ import { createGitHubClient } from "../clients/github.js";
 import { buildArtifactPaths, resolveWorkspace } from "../config/paths.js";
 import { runCliMain } from "../lib/cli-main.js";
 import { readJsonFile, writeJsonFile } from "../lib/json.js";
-import { buildReviewContext, createEmptyReviewContext } from "../review/context.js";
-import { type ReviewContext } from "../review/types.js";
+import { buildReviewerContext, buildReviewContext, createEmptyReviewContext } from "../review/context.js";
+import { type ReviewContext, type ReviewerContext } from "../review/types.js";
 
 type ParsedArgs = Record<string, string | boolean | undefined>;
 
@@ -45,7 +45,12 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const options = parseArgs(argv);
   const workspace = resolveWorkspace(env);
   const defaults = buildArtifactPaths(env, workspace);
-  const output = typeof options.output === "string" ? options.output : defaults.contextFile;
+  const output =
+    typeof options.output === "string"
+      ? options.output
+      : options.full
+        ? defaults.contextFile
+        : defaults.reviewerContextFile;
 
   if (options.refresh) {
     const repository = required((options.repo as string | undefined) || env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY");
@@ -63,14 +68,19 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       actor: env.GITHUB_ACTOR || null,
       botLogin: env.BOT_LOGIN,
     });
-    writeJsonFile(output, context);
-    printJson(context);
+    writeJsonFile(defaults.contextFile, context);
+    writeJsonFile(defaults.reviewerContextFile, buildReviewerContext(context));
+    const rendered = options.full ? context : buildReviewerContext(context);
+    if (typeof options.output === "string") {
+      writeJsonFile(output, rendered);
+    }
+    printJson(rendered);
     return;
   }
 
-  printJson(
-    readJsonFile<ReviewContext>(output, createEmptyReviewContext()),
-  );
+  printJson(options.full
+    ? readJsonFile<ReviewContext>(output, createEmptyReviewContext())
+    : readJsonFile<ReviewerContext>(output, buildReviewerContext(createEmptyReviewContext())));
 }
 
 runCliMain(import.meta.url, "review_context", () => main());

@@ -84,6 +84,16 @@ install_opencode_runtime_config() {
 
 install_dependencies() {
   local workspace="$1"
+  local install_deps="${SINGULAR_CODE_REVIEW_INSTALL_DEPS:-false}"
+
+  case "${install_deps,,}" in
+    true|1|yes|on)
+      ;;
+    *)
+      log "dependency install disabled; skipping package manager install"
+      return
+      ;;
+  esac
 
   if [[ ! -f "$workspace/package.json" ]]; then
     log "no package.json found; skipping dependency install"

@@ -71,14 +71,29 @@ test("provision runs npm ci with install scripts allowed", () => {
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n");
 
-  assert.deepEqual(runProvision(workspace).npmArgs, ["ci", "--dangerously-allow-all-scripts"]);
+  assert.deepEqual(runProvision(workspace, { SINGULAR_CODE_REVIEW_INSTALL_DEPS: "true" }).npmArgs, [
+    "ci",
+    "--dangerously-allow-all-scripts",
+  ]);
 });
 
 test("provision runs npm install with install scripts allowed", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"));
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
 
-  assert.deepEqual(runProvision(workspace).npmArgs, ["install", "--no-package-lock", "--dangerously-allow-all-scripts"]);
+  assert.deepEqual(runProvision(workspace, { SINGULAR_CODE_REVIEW_INSTALL_DEPS: "true" }).npmArgs, [
+    "install",
+    "--no-package-lock",
+    "--dangerously-allow-all-scripts",
+  ]);
+});
+
+test("provision skips dependency install by default", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"));
+  fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
+  fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n");
+
+  assert.equal(runProvision(workspace).npmArgs, null);
 });
 
 test("provision installs OpenCode config and skills into XDG config home", () => {

@@ -6,6 +6,7 @@ export type ArtifactPaths = {
   runtimeDir: string;
   queueFile: string;
   contextFile: string;
+  reviewerContextFile: string;
   auditorContextFile: string;
   diffFile: string;
   validatedFile: string;

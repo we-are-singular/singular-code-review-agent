@@ -1,6 +1,8 @@
-Review this pull request using the normalized context at {{contextFile}} and diff at {{diffFile}}.
+Review this pull request using the compact reviewer context at {{contextFile}} and filtered diff at {{diffFile}}.
 
 Start by running `review_context` if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation.
+
+The attached diff intentionally omits high-noise `package-lock.json` hunks. If dependency lockfile changes are materially relevant, inspect them directly with read-only git commands.
 
 When a top-level `@singular-code-review` trigger comment asks a direct question or gives instructions, begin your terminal output with a concise answer addressed to the commenter, then continue with the review.
 
@@ -8,7 +10,7 @@ Check `unresolved_bot_threads` and `previous_bot_findings` before adding inline 
 
 The review queue is the canonical home for actionable findings: run `review_comments add` for inline findings, `review_comments add --start-line` for multiline findings, `review_comments suggest` for code suggestions, and `review_comments reply` for existing review discussions. Use `--side RIGHT` for added lines and `--side LEFT` for deleted lines; RIGHT is the default. The `review_comments` command is installed on PATH; if you need to verify it, run `command -v review_comments`.
 
-Only queue comments on changed source lines: RIGHT-side added lines or LEFT-side deleted lines. Before queuing, verify the target source line against `valid_comment_ranges` in the context JSON. Do not use `rg -n`, editor output, or line numbers from `pr.diff` itself as source line numbers; those are artifact line numbers, not file line numbers. If `review_comments add` rejects a target, correct the path/line/side before mentioning the finding as queued.
+Only queue comments on changed source lines: RIGHT-side added lines or LEFT-side deleted lines. Use the context `commentable_ranges` as guidance, but rely on `review_comments add` as the final validation gate. Do not use `rg -n`, editor output, or line numbers from `pr.diff` itself as source line numbers; those are artifact line numbers, not file line numbers. If `review_comments add` rejects a target, correct the path/line/side before mentioning the finding as queued.
 
 Use terminal output for the high-level review summary, important risk themes, praise, direct answers, and verdict. If an observation is actionable enough to be a finding, queue it before relying on it in the summary.
 

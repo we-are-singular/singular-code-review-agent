@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { main as reviewCommentsMain } from "../dist/cli/review-comments.js";
 import { applyReviewBanner, buildReviewPayload } from "../dist/review/body.js";
-import { parseUnifiedDiff, validCommentRangesFromDiff } from "../dist/review/diff.js";
+import { filterReviewDiff, parseUnifiedDiff, validCommentRangesFromDiff } from "../dist/review/diff.js";
 import {
   addInlineComment,
   addReply,
@@ -119,6 +119,33 @@ test("diff ranges support right-side context and left-side deletions", () => {
   assert.deepEqual(app?.deletedLines, [3]);
   assert.deepEqual(app?.rightLines, [1, 2, 3, 4, 5, 6]);
   assert.deepEqual(app?.leftLines, [1, 2, 3, 4]);
+});
+
+test("review diff filtering excludes package-lock hunks", () => {
+  const diffText = `diff --git a/package-lock.json b/package-lock.json
+index 111..222 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,3 +1,3 @@
+ {
+-  "lockfileVersion": 2
++  "lockfileVersion": 3
+ }
+diff --git a/src/app.js b/src/app.js
+index 333..444 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -1,2 +1,2 @@
+-old
++new
+`;
+
+  const filtered = filterReviewDiff(diffText);
+
+  assert.deepEqual(filtered.ignoredFiles, ["package-lock.json"]);
+  assert.doesNotMatch(filtered.text, /lockfileVersion/u);
+  assert.match(filtered.text, /src\/app\.js/u);
+  assert.deepEqual(parseUnifiedDiff(filtered.text).files.map((file) => file.path), ["src/app.js"]);
 });
 
 test("review_comments rejects invalid targets before mutating the queue", async () => {

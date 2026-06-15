@@ -2,17 +2,21 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { readJsonFile } from "../lib/json.js";
 import { type GitHubClient } from "../clients/github.js";
-import { parseUnifiedDiff, validCommentRangesFromDiff } from "./diff.js";
+import { filterReviewDiff, parseUnifiedDiff, validCommentRangesFromDiff } from "./diff.js";
 import {
   REVIEW_BOT_LOGIN,
   REVIEW_COMMAND,
   type AuditorContext,
+  type CompactCommentRanges,
   type IssueComment,
+  type LineRange,
   type ReviewActionItem,
   type ReviewComment,
   type ReviewContext,
+  type ReviewerContext,
   type ReviewThread,
   type ReviewTrigger,
+  type ValidCommentRanges,
 } from "./types.js";
 
 type BuildReviewContextOptions = {
@@ -42,7 +46,7 @@ export function createEmptyReviewContext(overrides: Partial<ReviewContext> = {})
       bot_login: REVIEW_BOT_LOGIN,
     },
     pr: {},
-    diff: { file: "", files: [] },
+    diff: { file: "", files: [], ignored_files: [] },
     valid_comment_ranges: {},
     issue_comments: [],
     review_comments: [],
@@ -306,6 +310,60 @@ function compactReviewThread(thread: ReviewThread): AuditorContext["unresolved_b
   };
 }
 
+function numberRanges(lines: number[] | undefined): LineRange[] {
+  const sorted = Array.from(new Set(lines || [])).sort((a, b) => a - b);
+  const ranges: LineRange[] = [];
+
+  for (const line of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && line === last.end + 1) {
+      last.end = line;
+    } else {
+      ranges.push({ start: line, end: line });
+    }
+  }
+
+  return ranges;
+}
+
+function compactCommentRanges(ranges: ValidCommentRanges): CompactCommentRanges {
+  return Object.fromEntries(
+    Object.entries(ranges).map(([file, value]) => [
+      file,
+      {
+        added_lines: numberRanges(value.added_lines),
+        deleted_lines: numberRanges(value.deleted_lines),
+        right_lines: numberRanges(value.right_lines),
+        left_lines: numberRanges(value.left_lines),
+      },
+    ]),
+  );
+}
+
+function compactIssueComment(comment: IssueComment): ReviewerContext["issue_comments"][number] {
+  return {
+    id: comment.id,
+    user_login: comment.user?.login || null,
+    body: comment.body || "",
+    html_url: comment.html_url || null,
+    author_association: comment.author_association || null,
+  };
+}
+
+function compactReview(value: unknown): ReviewerContext["recent_reviews"][number] {
+  const record = asRecord(value);
+  const user = asRecord(record.user);
+
+  return {
+    id: numberValue(record.id),
+    user_login: stringValue(user.login),
+    state: stringValue(record.state),
+    body: stringValue(record.body) || "",
+    submitted_at: stringValue(record.submitted_at) || stringValue(record.submittedAt),
+    html_url: stringValue(record.html_url) || stringValue(record.url),
+  };
+}
+
 /**
  * Builds the compact context attached to audit and synthesis model runs. The
  * deterministic validator keeps the full context in-process; the auditor only
@@ -319,6 +377,7 @@ export function buildAuditorContext(context: ReviewContext): AuditorContext {
     diff: {
       file: context.diff.file,
       files: Array.isArray(context.diff.files) ? context.diff.files : [],
+      ignored_files: Array.isArray(context.diff.ignored_files) ? context.diff.ignored_files : [],
     },
     review_threads_available: context.review_threads_available,
     previous_bot_findings: (context.previous_bot_findings || []).map(compactReviewComment),
@@ -328,8 +387,29 @@ export function buildAuditorContext(context: ReviewContext): AuditorContext {
 }
 
 /**
- * Builds the canonical `review_context.json` artifact used by the reviewer,
- * deterministic validation, and local troubleshooting.
+ * Builds the compact context attached to the reviewer model. Full REST payloads
+ * and exact validation arrays stay in `review_context.json` for tools; the LLM
+ * gets only author-facing PR metadata, relevant discussion state, changed file
+ * names, and compressed line ranges.
+ */
+export function buildReviewerContext(context: ReviewContext): ReviewerContext {
+  const auditorContext = buildAuditorContext(context);
+
+  return {
+    ...auditorContext,
+    diff: {
+      ...auditorContext.diff,
+      commentable_ranges: compactCommentRanges(context.valid_comment_ranges || {}),
+    },
+    issue_comments: (context.issue_comments || []).map(compactIssueComment),
+    recent_reviews: (context.reviews || []).map(compactReview),
+  };
+}
+
+/**
+ * Builds the full `review_context.json` artifact used by deterministic
+ * validation and local troubleshooting. The reviewer model receives the
+ * serialized `buildReviewerContext` projection instead.
  */
 export async function buildReviewContext(options: BuildReviewContextOptions): Promise<ReviewContext> {
   const botLogin = options.botLogin || REVIEW_BOT_LOGIN;
@@ -340,7 +420,9 @@ export async function buildReviewContext(options: BuildReviewContextOptions): Pr
     actor: options.actor,
   });
 
-  const diffText = await options.github.getPullRequestDiff(options.prNumber);
+  const rawDiffText = await options.github.getPullRequestDiff(options.prNumber);
+  const filteredDiff = filterReviewDiff(rawDiffText);
+  const diffText = filteredDiff.text;
   mkdirSync(dirname(options.diffFile), { recursive: true });
   writeFileSync(options.diffFile, diffText, { mode: 0o600 });
 
@@ -367,6 +449,7 @@ export async function buildReviewContext(options: BuildReviewContextOptions): Pr
     pr,
     diff: {
       file: options.diffFile,
+      ignored_files: filteredDiff.ignoredFiles,
       files: parseUnifiedDiff(diffText).files.map((file) => file.path),
     },
     valid_comment_ranges: validCommentRangesFromDiff(diffText),

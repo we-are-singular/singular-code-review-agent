@@ -7,7 +7,7 @@ import { type ArtifactPaths, type ArtifactStore } from "../lib/artifacts.js";
 import { type Logger } from "../lib/logger.js";
 import { buildAuditPrompt, buildReviewPrompt, buildSynthesisPrompt } from "../prompts/prompts.js";
 import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "./body.js";
-import { buildAuditorContext, buildReviewContext } from "./context.js";
+import { buildAuditorContext, buildReviewContext, buildReviewerContext } from "./context.js";
 import { clearQueue, loadQueue, persistValidation, setConclusion, validateQueue } from "./queue.js";
 import { type ReviewContext, type ValidatedReviewQueue } from "./types.js";
 
@@ -82,7 +82,7 @@ function pathForOpenCode(workspace: string, file: string): string {
 
 function buildOpenCodeReviewPaths(config: RunnerConfig, paths: ArtifactPaths): OpenCodeReviewPaths {
   return {
-    reviewContextPath: pathForOpenCode(config.workspace, paths.contextFile),
+    reviewContextPath: pathForOpenCode(config.workspace, paths.reviewerContextFile),
     auditorContextPath: pathForOpenCode(config.workspace, paths.auditorContextFile),
     diffPath: pathForOpenCode(config.workspace, paths.diffFile),
     queuePath: pathForOpenCode(config.workspace, paths.queueFile),
@@ -107,6 +107,7 @@ function createReviewWorkflowState(deps: ReviewWorkflowDependencies): ReviewWork
 function exposeReviewArtifactsToTools(config: RunnerConfig, paths: ArtifactPaths): void {
   process.env.REVIEW_QUEUE_FILE = paths.queueFile;
   process.env.REVIEW_CONTEXT_FILE = paths.contextFile;
+  process.env.REVIEWER_CONTEXT_FILE = paths.reviewerContextFile;
   process.env.REVIEW_DIFF_FILE = paths.diffFile;
   process.env.OPENCODE_MODEL = config.model;
 }
@@ -144,6 +145,7 @@ async function runGatheringPhase(state: ReviewWorkflowState): Promise<ReviewCont
   });
 
   artifacts.writeJson(paths.contextFile, context);
+  artifacts.writeJson(paths.reviewerContextFile, buildReviewerContext(context));
   artifacts.writeJson(paths.auditorContextFile, buildAuditorContext(context));
   return context;
 }

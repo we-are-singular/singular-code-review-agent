@@ -78,9 +78,12 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review.yml"), "utf8");
 
   assert.match(workflow, /run: \/usr\/local\/bin\/review_guard/);
+  assert.match(workflow, /npm_install:\s*\n\s+description: Install repository dependencies before review\./);
+  assert.match(workflow, /type: boolean\s*\n\s+default: false/);
   assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/);
   assert.match(workflow, /name: Provision review workspace/);
   assert.match(workflow, /\/usr\/local\/bin\/provision\.sh/);
+  assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/);
   assert.match(workflow, /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 10\s+run: \/usr\/local\/bin\/review_runner/);
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/);
   assert.match(workflow, /Extract review outputs and telemetry/);

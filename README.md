@@ -81,6 +81,8 @@ the consuming repository, while reviewer settings such as the command trigger,
 GitHub App client ID, image, and OpenCode agents are owned by this repository.
 Consuming repositories can optionally set the `OPENCODE_MODEL` repository
 variable to try a different model without changing workflow YAML.
+Dependency installation is disabled by default; consuming workflows can opt in
+with the reusable workflow input `npm_install: true`.
 
 ## Install on a repository
 
@@ -120,12 +122,12 @@ and the final batched review submission.
 
 ## Security model
 
-The reviewer checks out pull-request code and may run dependency installation,
-so it must treat fork pull requests as untrusted code. The example trigger
-workflow avoids calling the reusable workflow for fork `pull_request` events,
-and the reusable workflow has its own preflight guard that blocks fork pull
-requests before creating the GitHub App token, checking out code, installing
-dependencies, or starting OpenCode.
+The reviewer checks out pull-request code and can optionally run dependency
+installation, so it must treat fork pull requests as untrusted code. The example
+trigger workflow avoids calling the reusable workflow for fork `pull_request`
+events, and the reusable workflow has its own preflight guard that blocks fork
+pull requests before creating the GitHub App token, checking out code,
+installing dependencies, or starting OpenCode.
 
 Mention-triggered reviews are restricted to human `OWNER`, `MEMBER`, or
 `COLLABORATOR` comments and are still denied when the pull request head is a
@@ -148,9 +150,12 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
 - `review_runner` runs the TypeScript review pipeline.
 - `review_extract` writes the post-run transcript, final comments JSON, and
   OpenCode telemetry stats used by GitHub summaries and eval capture.
-- `review_context` collects pull-request metadata, mentions, previous bot
-  comments, review thread state when available, valid diff lines, and action
-  items.
+- `review_context` prints the compact reviewer context by default. The full
+  `review_context.json` artifact remains available for validation and local
+  troubleshooting with `review_context --full`.
+- `reviewer_context.json` is the compact context attached to the reviewer. It
+  strips raw GitHub REST payload fields and compresses commentable line arrays
+  into ranges so the model sees only review-relevant context.
 - `review_auditor_context.json` is a compact runtime artifact derived from the
   full context for audit and synthesis prompts.
 - `review_comments` is the staging interface used by OpenCode and the
@@ -196,9 +201,9 @@ consuming repositories that run the workflow.
 
 ## Runtime Inputs
 
-The reusable workflow exposes only the pull request/comment identifiers as
-inputs. It owns the GitHub App client ID, command trigger, container image,
-OpenCode model, and OpenCode agents.
+The reusable workflow exposes the pull request/comment identifiers and the
+dependency-install opt-in as inputs. It owns the GitHub App client ID, command
+trigger, container image, OpenCode model, and OpenCode agents.
 
 The runner receives these required runtime environment variables from the
 reusable workflow:
@@ -214,15 +219,16 @@ Optional runtime environment variables:
 - `OPENCODE_MODEL`: model id used by the bundled `reviewer` and `auditor`
   agents; defaults to `opencode-go/minimax-m2.7`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
+- `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
+  during provisioning. The reusable workflow sets this from `npm_install`.
 - `DRY_RUN=true`: local development override that prints the final review
   payload instead of submitting it.
 
-Dependency installation is automatic during `bin/provision.sh` when the
-checked-out pull-request workspace contains `package.json`. Provisioning chooses
-`pnpm`, `yarn`, or `npm` based on the lockfile present in the workspace. For
-npm workspaces, provisioning passes `--dangerously-allow-all-scripts` so
-required install-time builds such as native modules and generated clients run
-inside the reviewer sandbox.
+Dependency installation is skipped by default. When explicitly enabled,
+`bin/provision.sh` chooses `pnpm`, `yarn`, or `npm` based on the lockfile
+present in the workspace. For npm workspaces, provisioning passes
+`--dangerously-allow-all-scripts` so required install-time builds such as native
+modules and generated clients run inside the reviewer sandbox.
 
 ## Reviewer behavior
 

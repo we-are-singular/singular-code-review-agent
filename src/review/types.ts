@@ -89,6 +89,21 @@ export type ValidCommentRanges = Record<
   }
 >;
 
+export type LineRange = {
+  start: number;
+  end: number;
+};
+
+export type CompactCommentRanges = Record<
+  string,
+  {
+    added_lines: LineRange[];
+    deleted_lines: LineRange[];
+    right_lines: LineRange[];
+    left_lines: LineRange[];
+  }
+>;
+
 export type GitHubUser = {
   login?: string | null;
   type?: string | null;
@@ -191,6 +206,7 @@ export type ReviewContext = {
   diff: {
     file: string;
     files: string[];
+    ignored_files: string[];
   };
   valid_comment_ranges: ValidCommentRanges;
   issue_comments: IssueComment[];
@@ -224,6 +240,7 @@ export type AuditorContext = {
   diff: {
     file: string;
     files: string[];
+    ignored_files: string[];
   };
   review_threads_available: boolean;
   previous_bot_findings: Array<{
@@ -256,6 +273,27 @@ export type AuditorContext = {
     latest_html_url: string | null;
   }>;
   action_items: ReviewActionItem[];
+};
+
+export type ReviewerContext = Omit<AuditorContext, "diff"> & {
+  diff: AuditorContext["diff"] & {
+    commentable_ranges: CompactCommentRanges;
+  };
+  issue_comments: Array<{
+    id: number;
+    user_login: string | null;
+    body: string;
+    html_url: string | null;
+    author_association: string | null;
+  }>;
+  recent_reviews: Array<{
+    id: number | null;
+    user_login: string | null;
+    state: string | null;
+    body: string;
+    submitted_at: string | null;
+    html_url: string | null;
+  }>;
 };
 
 export type ReviewPayloadComment = {

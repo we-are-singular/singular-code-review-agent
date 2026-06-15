@@ -49,6 +49,7 @@ export function buildArtifactPaths(env: NodeJS.ProcessEnv, workspace: string, ru
     runtimeDir: resolvedRuntimeDir,
     queueFile: env.REVIEW_QUEUE_FILE || join(resolvedRuntimeDir, "review_queue.json"),
     contextFile: env.REVIEW_CONTEXT_FILE || join(resolvedRuntimeDir, "review_context.json"),
+    reviewerContextFile: env.REVIEWER_CONTEXT_FILE || join(resolvedRuntimeDir, "reviewer_context.json"),
     auditorContextFile: env.REVIEW_AUDITOR_CONTEXT_FILE || join(resolvedRuntimeDir, "review_auditor_context.json"),
     diffFile: env.REVIEW_DIFF_FILE || join(resolvedRuntimeDir, "pr.diff"),
     validatedFile: env.REVIEW_VALIDATED_FILE || join(resolvedRuntimeDir, "review_validated.json"),

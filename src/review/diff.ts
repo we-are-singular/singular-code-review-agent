@@ -19,6 +19,63 @@ export function normalizeDiffPath(rawPath: string): string | null {
   return rawPath;
 }
 
+export function isPackageLockPath(filePath: string | null): boolean {
+  return Boolean(filePath && /(?:^|\/)package-lock\.json$/u.test(filePath));
+}
+
+function pathsFromDiffBlock(lines: string[]): string[] {
+  const paths = new Set<string>();
+
+  for (const line of lines) {
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+      const filePath = normalizeDiffPath(line.slice(4).trim());
+      if (filePath) {
+        paths.add(filePath);
+      }
+    }
+  }
+
+  return Array.from(paths);
+}
+
+/**
+ * Removes high-noise generated lockfile hunks from the diff shown to models.
+ * The checked-out repository still contains the file, so reviewers can inspect
+ * it with git when dependency changes are materially relevant.
+ */
+export function filterReviewDiff(diffText: string): { text: string; ignoredFiles: string[] } {
+  const lines = diffText.split(/\r?\n/u);
+  const blocks: string[][] = [];
+  let current: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ") && current.length > 0) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length > 0) {
+    blocks.push(current);
+  }
+
+  const ignoredFiles = new Set<string>();
+  const kept = blocks.filter((block) => {
+    const paths = pathsFromDiffBlock(block);
+    const ignored = paths.filter(isPackageLockPath);
+    for (const file of ignored) {
+      ignoredFiles.add(file);
+    }
+    return paths.length === 0 || ignored.length === 0;
+  });
+
+  const text = kept.map((block) => block.join("\n")).join("\n");
+  return {
+    text: /\r?\n$/u.test(diffText) && text ? `${text}\n` : text,
+    ignoredFiles: Array.from(ignoredFiles).sort(),
+  };
+}
+
 /**
  * Parses the subset of unified diff syntax needed for GitHub review anchors:
  * changed LEFT/RIGHT lines plus surrounding hunk context lines.
