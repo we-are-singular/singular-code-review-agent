@@ -146,6 +146,8 @@ repositories that accept arbitrary fork PRs, keep this workflow on the normal
 - `bin/provision.sh` prepares OpenCode config, trusts the checkout directory,
   and installs target-repository dependencies.
 - `review_runner` runs the TypeScript review pipeline.
+- `review_extract` writes the post-run transcript, final comments JSON, and
+  OpenCode telemetry stats used by GitHub summaries and eval capture.
 - `review_context` collects pull-request metadata, mentions, previous bot
   comments, review thread state when available, valid diff lines, and action
   items.
@@ -294,9 +296,13 @@ checks out the PR head, sets `DRY_RUN=true`, and puts a read-only `gh` wrapper i
 front of OpenCode investigation. The runner prints the final review payload to
 stdout and keeps artifacts under `/tmp/.singular-code-review/`, including
 `review_payload.json`, `review_validated.json`,
-`review_context.json`, `review_auditor_context.json`, `pr.diff`, and the
-OpenCode output logs.
+`review_context.json`, `review_auditor_context.json`,
+`review_transcript.md`, `review_comments.json`, `review_stats.json`, `pr.diff`,
+and the OpenCode output logs.
 
-Use `--runtime-dir <path>` or `SINGULAR_CODE_REVIEW_RUNTIME_DIR=<path>` when
-running dry-runs inside a disposable container so artifacts are written to a
-mounted or otherwise persistent directory.
+For Docker/eval captures, keep the live runtime under
+`/tmp/.singular-code-review/` and pass `--out-dir <path>` to copy the three
+portable extractor outputs (`review_transcript.md`, `review_comments.json`, and
+`review_stats.json`) into a mounted or persistent directory. Use
+`--runtime-dir <path>` only when the alternate path is also allowed by the
+OpenCode sandbox configuration.

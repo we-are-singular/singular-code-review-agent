@@ -19,6 +19,7 @@ RUN apt-get update \
       jq \
       python3 \
       ripgrep \
+      sqlite3 \
       xz-utils \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -69,6 +70,7 @@ RUN npm ci \
     && chmod +x /usr/local/lib/singular-code-review/dist/cli/review-ack.js \
       /usr/local/lib/singular-code-review/dist/cli/review-comments.js \
       /usr/local/lib/singular-code-review/dist/cli/review-context.js \
+      /usr/local/lib/singular-code-review/dist/cli/review-extract.js \
       /usr/local/lib/singular-code-review/dist/cli/review-guard.js \
       /usr/local/lib/singular-code-review/dist/cli/review-runner.js \
     && rm -rf /tmp/singular-code-review-build
@@ -84,6 +86,7 @@ COPY bin/provision.sh /usr/local/bin/provision.sh
 
 RUN ln -sf /usr/local/lib/singular-code-review/dist/cli/review-comments.js /usr/local/bin/review_comments \
     && ln -sf /usr/local/lib/singular-code-review/dist/cli/review-context.js /usr/local/bin/review_context \
+    && ln -sf /usr/local/lib/singular-code-review/dist/cli/review-extract.js /usr/local/bin/review_extract \
     && ln -sf /usr/local/lib/singular-code-review/dist/cli/review-runner.js /usr/local/bin/review_runner \
     && ln -sf /usr/local/lib/singular-code-review/dist/cli/review-ack.js /usr/local/bin/review_ack \
     && ln -sf /usr/local/lib/singular-code-review/dist/cli/review-guard.js /usr/local/bin/review_guard

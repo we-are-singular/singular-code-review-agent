@@ -10,6 +10,9 @@ export type ArtifactPaths = {
   diffFile: string;
   validatedFile: string;
   payloadFile: string;
+  transcriptFile: string;
+  commentsFile: string;
+  statsFile: string;
   reviewOutputFile: string;
   auditOutputFile: string;
   synthesisOutputFile: string;

@@ -7,15 +7,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 usage() {
   cat >&2 <<'EOF'
 usage:
-  review_dry_run <owner/repo> <pr-number> [--workspace <path>] [--runtime-dir <path>]
-  review_dry_run --repo <owner/repo> --pr <pr-number> [--workspace <path>] [--runtime-dir <path>]
+  review_dry_run <owner/repo> <pr-number> [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
+  review_dry_run --repo <owner/repo> --pr <pr-number> [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
 
 Runs the Singular Code Review runner against a real GitHub pull request, but
 sets DRY_RUN=true and installs a read-only gh wrapper for OpenCode
 investigation. The final review payload is printed by the runner and kept under
 the runtime directory. By default artifacts are stored under
 /tmp/.singular-code-review; pass --runtime-dir or SINGULAR_CODE_REVIEW_RUNTIME_DIR
-to keep them somewhere mounted or persistent.
+to override the live runtime location. Pass --out-dir to copy the extracted
+review_transcript.md, review_comments.json, and review_stats.json to a mounted
+or persistent directory after the run.
 EOF
 }
 
@@ -51,6 +53,7 @@ parse_args() {
   pr_number=""
   workspace=""
   runtime_dir=""
+  output_dir=""
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -72,6 +75,11 @@ parse_args() {
       --runtime-dir)
         [[ "$#" -ge 2 ]] || die "--runtime-dir requires a value"
         runtime_dir="$2"
+        shift 2
+        ;;
+      --out-dir)
+        [[ "$#" -ge 2 ]] || die "--out-dir requires a value"
+        output_dir="$2"
         shift 2
         ;;
       -h|--help)
@@ -105,6 +113,8 @@ prepare_workspace() {
   local pr_number="$2"
   local workspace="$3"
   local real_gh="$4"
+  local github_token="$5"
+  local dry_run_home="$6"
 
   if [[ -e "$workspace" ]]; then
     if [[ ! -d "$workspace" ]]; then
@@ -117,11 +127,17 @@ prepare_workspace() {
 
   mkdir -p "$(dirname "$workspace")"
   log "cloning ${repo} into ${workspace}"
-  "$real_gh" repo clone "$repo" "$workspace" -- --filter=blob:none
+  HOME="$dry_run_home" GH_TOKEN="$github_token" "$real_gh" repo clone "$repo" "$workspace" -- --filter=blob:none
 
   log "checking out pull request #${pr_number}"
-  git -C "$workspace" fetch origin "pull/${pr_number}/head:refs/remotes/singular-code-review/pr-${pr_number}"
-  git -C "$workspace" checkout --detach "refs/remotes/singular-code-review/pr-${pr_number}"
+  HOME="$dry_run_home" git \
+    -c "url.https://x-access-token:${github_token}@github.com/.insteadOf=https://github.com/" \
+    -C "$workspace" \
+    fetch origin "pull/${pr_number}/head:refs/remotes/singular-code-review/pr-${pr_number}"
+  HOME="$dry_run_home" git \
+    -c "url.https://x-access-token:${github_token}@github.com/.insteadOf=https://github.com/" \
+    -C "$workspace" \
+    checkout --detach "refs/remotes/singular-code-review/pr-${pr_number}"
 }
 
 install_read_only_gh_wrapper() {
@@ -253,10 +269,51 @@ report_artifacts() {
   artifact_line "review payload" "${runtime_dir}/review_payload.json"
   artifact_line "validated queue" "${runtime_dir}/review_validated.json"
   artifact_line "review context" "${runtime_dir}/review_context.json"
+  artifact_line "review transcript" "${runtime_dir}/review_transcript.md"
+  artifact_line "review comments" "${runtime_dir}/review_comments.json"
+  artifact_line "review stats" "${runtime_dir}/review_stats.json"
   artifact_line "PR diff" "${runtime_dir}/pr.diff"
   artifact_line "reviewer output" "${runtime_dir}/opencode_review.log"
   artifact_line "audit output" "${runtime_dir}/opencode_audit.log"
   artifact_line "synthesis output" "${runtime_dir}/opencode_synthesis.log"
+}
+
+run_extractor() {
+  local runtime_dir="$1"
+  local wrapper_dir="$2"
+  local dry_run_home="$3"
+  local dry_run_config_home="$4"
+  local dry_run_data_home="$5"
+  local dry_run_cache_home="$6"
+  local dry_run_state_home="$7"
+
+  log "extracting review outputs and telemetry"
+  PATH="${wrapper_dir}:${PATH}" \
+    HOME="$dry_run_home" \
+    XDG_CONFIG_HOME="$dry_run_config_home" \
+    XDG_DATA_HOME="$dry_run_data_home" \
+    XDG_CACHE_HOME="$dry_run_cache_home" \
+    XDG_STATE_HOME="$dry_run_state_home" \
+    WORKSPACE="$workspace" \
+    GITHUB_REPOSITORY="$repo" \
+    PR_NUMBER="$pr_number" \
+    OPENCODE_MODEL="${OPENCODE_MODEL:-opencode-go/minimax-m2.7}" \
+    SINGULAR_CODE_REVIEW_RUNTIME_DIR="$runtime_dir" \
+    review_extract --runtime-dir "$runtime_dir" >/dev/null
+}
+
+export_extracted_outputs() {
+  local runtime_dir="$1"
+  local output_dir="$2"
+
+  [[ -n "$output_dir" ]] || return 0
+  mkdir -p "$output_dir"
+  cp -f \
+    "${runtime_dir}/review_transcript.md" \
+    "${runtime_dir}/review_comments.json" \
+    "${runtime_dir}/review_stats.json" \
+    "$output_dir"
+  log "copied extracted outputs to ${output_dir}"
 }
 
 install_node_commands() {
@@ -268,6 +325,7 @@ install_node_commands() {
     "review_ack:review-ack.js"
     "review_comments:review-comments.js"
     "review_context:review-context.js"
+    "review_extract:review-extract.js"
     "review_guard:review-guard.js"
     "review_runner:review-runner.js"
   )
@@ -306,8 +364,6 @@ main() {
     workspace="${TMPDIR:-/tmp}/singular-code-review-dry-run/${slug}-pr-${pr_number}-$(date +%Y%m%d%H%M%S)"
   fi
 
-  prepare_workspace "$repo" "$pr_number" "$workspace" "$real_gh"
-
   if [[ -z "$runtime_dir" ]]; then
     runtime_dir="${SINGULAR_CODE_REVIEW_RUNTIME_DIR:-}"
   fi
@@ -333,6 +389,9 @@ main() {
     "$dry_run_data_home" \
     "$dry_run_cache_home" \
     "$dry_run_state_home"
+
+  prepare_workspace "$repo" "$pr_number" "$workspace" "$real_gh" "$github_token" "$dry_run_home"
+
   install_read_only_gh_wrapper "$wrapper_dir"
   install_node_commands "$wrapper_dir"
 
@@ -385,6 +444,31 @@ main() {
     log "provision step failed with status $provision_status; review runner was not started"
   fi
   set -e
+
+  set +e
+  run_extractor \
+    "$runtime_dir" \
+    "$wrapper_dir" \
+    "$dry_run_home" \
+    "$dry_run_config_home" \
+    "$dry_run_data_home" \
+    "$dry_run_cache_home" \
+    "$dry_run_state_home"
+  local extract_status=$?
+  if [[ "$extract_status" -eq 0 ]]; then
+    export_extracted_outputs "$runtime_dir" "$output_dir"
+    extract_status=$?
+  fi
+  set -e
+
+  if [[ "$extract_status" -eq 0 ]]; then
+    log "review extraction finished"
+  else
+    log "review extraction failed with status $extract_status"
+    if [[ "$status" -eq 0 ]]; then
+      status="$extract_status"
+    fi
+  fi
 
   report_artifacts "$runtime_dir"
 

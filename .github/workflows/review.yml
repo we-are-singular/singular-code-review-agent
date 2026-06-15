@@ -101,3 +101,11 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
           TRIGGER_COMMENT_ID: ${{ inputs.trigger_comment_id }}
+
+      - name: Extract review outputs and telemetry
+        if: always() && steps.review-request.outputs.should_review == 'true'
+        run: /usr/local/bin/review_extract --github-summary
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/minimax-m2.7' }}

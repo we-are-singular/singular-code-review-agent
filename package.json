@@ -6,10 +6,12 @@
   "type": "module",
   "scripts": {
     "build": "bash scripts/build.sh",
-    "test": "npm run build && node --test test/*.test.js"
+    "test": "npm run build && node --test test/*.test.js",
+    "eval": "node eval/run.mjs"
   },
   "bin": {
     "review_runner": "dist/cli/review-runner.js",
+    "review_extract": "dist/cli/review-extract.js",
     "review_comments": "dist/cli/review-comments.js",
     "review_context": "dist/cli/review-context.js",
     "review_guard": "dist/cli/review-guard.js",

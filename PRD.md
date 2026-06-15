@@ -399,6 +399,9 @@ pr.diff
 review_queue.json
 review_validated.json
 review_payload.json
+review_transcript.md
+review_comments.json
+review_stats.json
 opencode_review.log
 opencode_audit.log
 opencode_synthesis.log
@@ -481,7 +484,7 @@ Unit tests:
 
 Integration tests:
 
-- local fixture PR diff and comments;
+- local sample PR diff and comments;
 - dry-run against a real GitHub PR without posting;
 - container smoke test for dependency install and runner startup;
 - OpenCode fake executable/server to verify pipeline order.
@@ -501,7 +504,7 @@ Regression tests:
 
 - Delete or quarantine tests that only lock in the current Bash/inline-JS implementation.
 - Keep the current workflow behavior running while the new runner is built.
-- Preserve useful fixtures and sample PR data, but do not spend time making every old test pass during the rewrite.
+- Preserve useful sample PR data, but do not spend time making every old test pass during the rewrite.
 - Keep only minimal smoke checks needed to avoid breaking the image while refactoring.
 - Move dependency installation and runtime setup toward `bin/provision.sh` instead of a TypeScript process wrapper.
 
@@ -541,7 +544,7 @@ Regression tests:
 
 - Add focused unit tests for stable domain contracts: queue validation, diff ranges, body banner, payload generation, guard decisions, and config defaults.
 - Add integration tests for the final runner pipeline with fake GitHub/OpenCode clients.
-- Add one dry-run test against a fixture or real PR path that proves no GitHub writes occur.
+- Add one dry-run test against a sample or real PR path that proves no GitHub writes occur.
 - Avoid recreating the old broad test suite around implementation details.
 
 ## Acceptance Criteria

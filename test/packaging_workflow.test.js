@@ -14,11 +14,14 @@ test("Dockerfile builds and packages the TypeScript runner surface", () => {
   assert.match(dockerfile, /\bbuild-essential\b/);
   assert.match(dockerfile, /\bpython3\b/);
   assert.match(dockerfile, /\bripgrep\b/);
+  assert.match(dockerfile, /\bsqlite3\b/);
   assert.match(dockerfile, /npm ci/);
   assert.match(dockerfile, /npm run build/);
   assert.match(dockerfile, /\/usr\/local\/lib\/singular-code-review/);
   assert.match(dockerfile, /review_runner/);
+  assert.match(dockerfile, /review_extract/);
   assert.match(dockerfile, /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-runner\.js \/usr\/local\/bin\/review_runner/);
+  assert.match(dockerfile, /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-extract\.js \/usr\/local\/bin\/review_extract/);
   assert.match(dockerfile, /COPY opencode\/agents\/ \/usr\/local\/share\/singular-code-review\/agents\//);
   assert.match(dockerfile, /COPY opencode\/skills\/ \/usr\/local\/share\/singular-code-review\/skills\//);
   assert.match(dockerfile, /provision\.sh/);
@@ -74,6 +77,8 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/);
   assert.match(workflow, /\/usr\/local\/bin\/provision\.sh/);
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/);
+  assert.match(workflow, /Extract review outputs and telemetry/);
+  assert.match(workflow, /\/usr\/local\/bin\/review_extract --github-summary/);
   assert.doesNotMatch(workflow, /review_guard\.sh/);
   assert.doesNotMatch(workflow, /review_ack\.sh/);
   assert.doesNotMatch(workflow, /review_orchestrator/);

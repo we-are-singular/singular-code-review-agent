@@ -11,6 +11,7 @@ Use these attached files:
 
 Tighten the queue in place:
 
+- edit the exact `{{queueFile}}` path; do not derive, normalize, or rewrite artifact paths from the workspace path
 - remove exact duplicate comments
 - merge overlapping same-line comments when they are the same issue
 - keep multiple same-line comments only when they are genuinely distinct actionable issues

@@ -176,6 +176,7 @@ fi
   assert.match(provisionEnv.pathHead, /^\/tmp\/\.singular-code-review\/owner-repo-pr-42-/u);
   const wrapperDir = provisionEnv.pathHead;
   const runtimeDir = path.dirname(wrapperDir);
+  const stats = JSON.parse(fs.readFileSync(path.join(runtimeDir, "review_stats.json"), "utf8"));
 
   assert.deepEqual(provisionEnv, {
     dryRun: "true",
@@ -194,6 +195,11 @@ fi
   assert.equal(runnerEnv.xdgConfigHome, path.join(runtimeDir, "xdg", "config"));
   assert.equal(runnerEnv.realGh, path.join(mockbin, "gh"));
   assert.equal(runnerEnv.pathHead, wrapperDir);
+  assert.equal(fs.existsSync(path.join(runtimeDir, "review_transcript.md")), true);
+  assert.equal(fs.existsSync(path.join(runtimeDir, "review_comments.json")), true);
+  assert.equal(stats.repository, "owner/repo");
+  assert.equal(stats.prNumber, 42);
+  assert.equal(stats.model, "opencode-go/minimax-m2.7");
 });
 
 test("review_dry_run keeps explicit runtime dir artifacts and reports provision failure", () => {
@@ -201,6 +207,7 @@ test("review_dry_run keeps explicit runtime dir artifacts and reports provision 
   const mockbin = path.join(dir, "mockbin");
   const workspace = path.join(dir, "workspace");
   const runtimeDir = path.join(dir, "runtime");
+  const outputDir = path.join(dir, "outputs");
   const runnerMarker = path.join(dir, "runner-ran");
   fs.mkdirSync(mockbin);
 
@@ -249,22 +256,31 @@ touch "${runnerMarker}"
 `,
   );
 
-  const result = spawnSync("bash", [dryRun, "owner/repo", "42", "--workspace", workspace, "--runtime-dir", runtimeDir], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      PATH: `${mockbin}:${process.env.PATH}`,
-      REVIEW_PROVISION: provision,
-      REVIEW_RUNNER: runner,
-      OPENCODE_API_KEY: "test-opencode-key",
+  const result = spawnSync(
+    "bash",
+    [dryRun, "owner/repo", "42", "--workspace", workspace, "--runtime-dir", runtimeDir, "--out-dir", outputDir],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${mockbin}:${process.env.PATH}`,
+        REVIEW_PROVISION: provision,
+        REVIEW_RUNNER: runner,
+        OPENCODE_API_KEY: "test-opencode-key",
+      },
+      encoding: "utf8",
     },
-    encoding: "utf8",
-  });
+  );
 
   assert.equal(result.status, 7);
   assert.match(result.stderr, new RegExp(`dry-run runtime dir: ${runtimeDir.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`));
   assert.match(result.stderr, /provision step failed with status 7; review runner was not started/u);
   assert.match(result.stderr, /review payload: .+review_payload\.json \(missing\)/u);
+  assert.match(result.stderr, /review extraction finished/u);
   assert.equal(fs.existsSync(path.join(runtimeDir, "dry-run-bin", "gh")), true);
+  assert.equal(fs.existsSync(path.join(runtimeDir, "review_transcript.md")), true);
+  assert.equal(fs.existsSync(path.join(outputDir, "review_transcript.md")), true);
+  assert.equal(fs.existsSync(path.join(outputDir, "review_comments.json")), true);
+  assert.equal(fs.existsSync(path.join(outputDir, "review_stats.json")), true);
   assert.equal(fs.existsSync(runnerMarker), false);
 });
