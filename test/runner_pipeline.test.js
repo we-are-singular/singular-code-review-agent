@@ -394,6 +394,67 @@ test("runner uses gate answer for direct mention questions without submitting a 
   })
 })
 
+test("runner treats explicit retry mentions as full review requests", async () => {
+  const { workspace, base, reviewed } = createGitWorkspace("runner-mention-rereview-")
+  const config = createConfig(workspace)
+  config.eventName = "issue_comment"
+  config.eventPath = writeEventFile(workspace, {
+    action: "created",
+    comment: {
+      id: 123,
+      body: "@singular-code-review can you try again?",
+      html_url: "https://github.com/owner/repo/pull/42#issuecomment-123",
+      user: { login: "octocat" }
+    },
+    sender: { login: "octocat" }
+  })
+  const artifacts = new ArtifactStore(config.artifacts)
+  const comment = {
+    id: 123,
+    body: "@singular-code-review can you try again?",
+    html_url: "https://github.com/owner/repo/pull/42#issuecomment-123",
+    author_association: "MEMBER",
+    user: { login: "octocat" }
+  }
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"), {
+    baseSha: base,
+    headSha: reviewed,
+    issueComments: [comment],
+    reviews: [botReview(reviewed)]
+  })
+  const calls = []
+  const opencode = {
+    async run(options) {
+      calls.push(options)
+      assert.notEqual(options.agent, "gate")
+      if (options.prompt.includes("Review this pull request")) {
+        return { text: "No blocking findings.", sessionId: "review-session", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        return { text: "LGTM. Re-reviewed the same head.", sessionId: "post-session", args: [] }
+      }
+      throw new Error(`unexpected prompt: ${options.prompt}`)
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: createLogger()
+  })
+
+  assert.equal(result.status, "submitted")
+  assert.deepEqual(
+    calls.map(call => call.agent),
+    ["reviewer", "auditor"]
+  )
+  assert.equal(fs.existsSync(config.artifacts.gateResultFile), false)
+  assert.deepEqual(github.submitted.issueComments, [])
+  assert.equal(github.submitted.reviews[0].body, "> reviewer · minimax-m3\n\nLGTM. Re-reviewed the same head.")
+})
+
 test("runner escalates synchronize gate review decisions into the full review pipeline", async () => {
   const { workspace, base, reviewed } = createGitWorkspace("runner-gate-review-")
   writeFile(workspace, "src/app.js", "export const value = 2;\n")

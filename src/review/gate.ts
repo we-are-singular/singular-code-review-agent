@@ -101,6 +101,21 @@ function latestBotReview(context: ReviewContext, botLogin: string): GateContext[
   return botReviews[botReviews.length - 1] || null
 }
 
+function mentionRequestsFullReview(context: ReviewContext): boolean {
+  if (context.run.reason !== "mention" || !context.run.trigger_comment) {
+    return false
+  }
+
+  const text = context.run.trigger_comment.body.toLowerCase().replace(/\s+/gu, " ").trim()
+  return (
+    /\bre-?review\b/u.test(text) ||
+    /\breview\s+(?:it\s+|this\s+|the\s+pr\s+)?again\b/u.test(text) ||
+    /\b(?:please|pls|can you|could you|would you)\b.{0,80}\b(?:full\s+review|(?:try|run)\s+(?:it\s+|this\s+)?again)\b/u.test(
+      text
+    )
+  )
+}
+
 function diffHash(text: string): string | null {
   return text ? createHash("sha256").update(text).digest("hex") : null
 }
@@ -314,6 +329,10 @@ export function prepareGate(options: {
   const reason = options.context.run.reason
   if (reason !== "synchronize" && reason !== "mention") {
     return { action: "run-review", reason: `gate is not used for ${reason} triggers` }
+  }
+
+  if (mentionRequestsFullReview(options.context)) {
+    return { action: "run-review", reason: "mention explicitly requested a full review" }
   }
 
   const lastReview = latestBotReview(options.context, options.botLogin)

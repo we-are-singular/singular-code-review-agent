@@ -25,6 +25,7 @@ Output contract:
 
 Decision rules:
 
+- A trusted human top-level mention can override the default skip rules. When the human asks for a review, re-review, full review, retry, or says to try/run again, choose `review` even when the head commit or diff matches the last completed review.
 - Choose `review` when the user asks for review, the delta contains meaningful code/config/test/API/security changes, the prior review context is missing, the delta is hard to reconstruct, or you are unsure.
 - Choose `no-review` only when the latest delta is clearly low-risk: documentation-only, formatting-only, rebase-only, or a contained fix to previous review feedback without new meaningful risk.
 - Choose `answer` when the user is asking a direct question or requesting an explanation instead of asking the bot to review the PR.

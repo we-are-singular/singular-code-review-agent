@@ -43,7 +43,12 @@ function createRepo() {
 function reviewContext(options) {
   const triggerComment =
     options.reason === "mention"
-      ? { id: 123, user: "octocat", body: "@singular-code-review should this run again?", html_url: null }
+      ? {
+          id: 123,
+          user: "octocat",
+          body: options.commentBody || "@singular-code-review should this run again?",
+          html_url: null
+        }
       : null
 
   return createEmptyReviewContext({
@@ -197,4 +202,33 @@ test("mention trigger can use the gate even before the first completed review", 
 
   assert.equal(result.action, "run-gate")
   assert.equal(result.context.delta.mode, "no_previous_review")
+})
+
+test("mention retry request bypasses the gate even when the same head was reviewed", () => {
+  const { repo, base, reviewed } = createRepo()
+  const context = reviewContext({
+    reason: "mention",
+    base,
+    head: reviewed,
+    reviews: [botReview(reviewed)],
+    commentBody: "@singular-code-review can you try again?"
+  })
+  const result = prepareGate({ context, workspace: repo, diffText: "diff", botLogin })
+
+  assert.deepEqual(result, { action: "run-review", reason: "mention explicitly requested a full review" })
+})
+
+test("mention with incidental try again wording still uses the gate", () => {
+  const { repo, base, reviewed } = createRepo()
+  const context = reviewContext({
+    reason: "mention",
+    base,
+    head: reviewed,
+    reviews: [botReview(reviewed)],
+    commentBody: "@singular-code-review why did the previous review tell me to try again?"
+  })
+  const result = prepareGate({ context, workspace: repo, diffText: "diff", botLogin })
+
+  assert.equal(result.action, "run-gate")
+  assert.equal(result.context.delta.mode, "same_head")
 })
