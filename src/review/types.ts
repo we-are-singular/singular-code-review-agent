@@ -112,6 +112,8 @@ export type IssueComment = {
   html_url?: string | null
   issue_url?: string | null
   author_association?: string | null
+  created_at?: string | null
+  updated_at?: string | null
   user?: GitHubUser | null
 }
 
@@ -181,6 +183,7 @@ export type ReviewActionItem =
       actor: string | null
       body: string
       comment_id: number
+      created_at?: string | null
     }
   | {
       id: string
@@ -299,6 +302,7 @@ export type ReviewerContext = Omit<AuditorContext, "diff"> & {
     body: string
     html_url: string | null
     author_association: string | null
+    created_at: string | null
   }>
   recent_reviews: Array<{
     id: number | null

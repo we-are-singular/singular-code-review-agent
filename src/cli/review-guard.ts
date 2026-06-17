@@ -33,6 +33,17 @@ function trustedAssociation(value: string | null | undefined): boolean {
   return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR"
 }
 
+function requestsSkip(body: unknown): boolean {
+  const text = String(body || "").toLowerCase()
+  const commandIndex = text.indexOf(REVIEW_COMMAND)
+  if (commandIndex < 0) {
+    return false
+  }
+
+  const commandText = text.slice(commandIndex + REVIEW_COMMAND.length).trim()
+  return /^(?:please\s+)?skip(?:\s+(?:this|review|run))?[.!?]?\s*$/u.test(commandText)
+}
+
 function parseIssueUrl(value: string | null | undefined): { repository: string; issueNumber: number } | null {
   if (!value) {
     return null
@@ -111,6 +122,10 @@ export async function evaluateGuard(options: {
 
     if (!String(comment.body || "").includes(REVIEW_COMMAND)) {
       return { shouldReview: false, reason: `trigger comment does not mention ${REVIEW_COMMAND}` }
+    }
+
+    if (requestsSkip(comment.body)) {
+      return { shouldReview: false, reason: "trigger comment requested skip" }
     }
   }
 

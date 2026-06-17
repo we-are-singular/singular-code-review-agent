@@ -10,6 +10,7 @@ import {
   type CompactLineRanges,
   type IssueComment,
   type ModelCommentRanges,
+  type PullRequestReview,
   type ReviewActionItem,
   type ReviewComment,
   type ReviewContext,
@@ -149,6 +150,52 @@ function containsMention(body: unknown, botLogin: string, command: string): bool
   return needles.some(needle => text.includes(needle))
 }
 
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function latestBotActivityMs(options: {
+  issueComments: IssueComment[]
+  reviews: PullRequestReview[]
+  botLogin: string
+}): number | null {
+  let latest: number | null = null
+  const record = (value: string | null | undefined) => {
+    const parsed = timestampMs(value)
+    if (parsed !== null && (latest === null || parsed > latest)) {
+      latest = parsed
+    }
+  }
+
+  for (const comment of options.issueComments || []) {
+    if (comment.user?.login === options.botLogin) {
+      record(comment.created_at || comment.updated_at)
+    }
+  }
+
+  for (const review of options.reviews || []) {
+    if (review.user?.login === options.botLogin) {
+      record(review.submitted_at || review.submittedAt)
+    }
+  }
+
+  return latest
+}
+
+function commentIsAfterLatestBotActivity(comment: IssueComment, latestBotActivity: number | null): boolean {
+  if (latestBotActivity === null) {
+    return true
+  }
+
+  const commentTime = timestampMs(comment.created_at || comment.updated_at)
+  return commentTime === null || commentTime > latestBotActivity
+}
+
 /**
  * Converts mentions and existing review-thread activity into explicit work the
  * reviewer should answer before or during the review.
@@ -159,10 +206,16 @@ export function buildActionItems(options: {
   reviewComments: ReviewComment[]
   reviewThreads: ReviewThread[]
   reviewThreadsAvailable: boolean
+  reviews: PullRequestReview[]
   botLogin: string
   command: string
 }): ReviewActionItem[] {
   const actionItems: ReviewActionItem[] = []
+  const latestBotActivity = latestBotActivityMs({
+    issueComments: options.issueComments,
+    reviews: options.reviews,
+    botLogin: options.botLogin
+  })
 
   if (options.trigger.trigger_comment) {
     actionItems.push({
@@ -175,15 +228,23 @@ export function buildActionItems(options: {
   }
 
   for (const comment of options.issueComments || []) {
-    if (containsMention(comment.body, options.botLogin, options.command)) {
-      actionItems.push({
-        id: `issue-comment:${comment.id}`,
-        kind: "mentioned",
-        actor: comment.user?.login || null,
-        body: comment.body || "",
-        comment_id: comment.id
-      })
+    if (
+      options.trigger.trigger_comment?.id === comment.id ||
+      comment.user?.login === options.botLogin ||
+      !containsMention(comment.body, options.botLogin, options.command) ||
+      !commentIsAfterLatestBotActivity(comment, latestBotActivity)
+    ) {
+      continue
     }
+
+    actionItems.push({
+      id: `issue-comment:${comment.id}`,
+      kind: "mentioned",
+      actor: comment.user?.login || null,
+      body: comment.body || "",
+      comment_id: comment.id,
+      created_at: comment.created_at || null
+    })
   }
 
   if (options.botLogin && options.reviewThreadsAvailable) {
@@ -366,7 +427,8 @@ function compactIssueComment(comment: IssueComment): ReviewerContext["issue_comm
     user_login: comment.user?.login || null,
     body: comment.body || "",
     html_url: comment.html_url || null,
-    author_association: comment.author_association || null
+    author_association: comment.author_association || null,
+    created_at: comment.created_at || null
   }
 }
 
@@ -492,6 +554,7 @@ export async function buildReviewContext(options: BuildReviewContextOptions): Pr
       reviewComments,
       reviewThreads,
       reviewThreadsAvailable: reviewThreadsResult.available,
+      reviews,
       botLogin,
       command
     })

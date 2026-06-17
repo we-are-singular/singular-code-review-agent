@@ -114,6 +114,7 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /timeout 15m \/usr\/local\/bin\/review_runner/)
   assert.match(workflow, /review_runner attempt \$\{attempt\}\/2/)
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/)
+  assert.match(workflow, /BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
   assert.match(workflow, /Extract review outputs and telemetry/)
   assert.match(workflow, /\/usr\/local\/bin\/review_extract --github-summary/)
   assert.doesNotMatch(workflow, /review_guard\.sh/)

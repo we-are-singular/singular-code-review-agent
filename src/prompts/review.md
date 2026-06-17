@@ -8,6 +8,8 @@ When a top-level `@singular-code-review` trigger comment asks a direct question 
 
 Check `unresolved_bot_threads` and `previous_bot_findings` before adding inline comments so active bot findings are handled as existing review context.
 
+For re-reviews, use `recent_reviews`, `previous_bot_findings`, and `unresolved_bot_threads` as PR history. You can build on prior review findings and focus deeper investigation on the latest delta, unresolved paths, and new risk. Do not re-derive unchanged code that was already reviewed unless the new delta, an unresolved finding, or a human instruction makes it relevant again.
+
 The review queue is the canonical home for actionable findings: run `review_comments add` for inline findings, `review_comments add --start-line` for multiline findings, `review_comments suggest` for code suggestions, and `review_comments reply` for existing review discussions. Use `--side RIGHT` for added lines and `--side LEFT` for deleted lines; RIGHT is the default. The `review_comments` command is installed on PATH; if you need to verify it, run `command -v review_comments`.
 
 Only queue comments on changed source lines: RIGHT-side added lines or LEFT-side deleted lines. Use the context `diff.ranges` as guidance; `added`/`right` entries are RIGHT-side targets and `deleted`/`left` entries are LEFT-side targets. Ranges are compact strings such as `"34"` or `"30-37"`. Rely on `review_comments add` as the final validation gate. Do not use `rg -n`, editor output, or line numbers from `pr.diff` itself as source line numbers; those are artifact line numbers, not file line numbers. If `review_comments add` rejects a target, correct the path/line/side before mentioning the finding as queued.

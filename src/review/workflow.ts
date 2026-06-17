@@ -249,7 +249,19 @@ async function runGatePhase(
   })
 
   if (prepared.action === "run-review") {
-    logPhase(logger, "gate", "skipped; running full review", { reason: prepared.reason })
+    const logContext: Record<string, unknown> = { reason: prepared.reason }
+    if (prepared.reason === "no previous bot review") {
+      const matchingBotReviews = context.reviews.filter(review => review.user?.login === config.botLogin)
+      const anchoredBotReviews = matchingBotReviews.filter(review => review.commit_id || review.commitId)
+      Object.assign(logContext, {
+        bot_login: config.botLogin,
+        total_reviews: context.reviews.length,
+        matching_bot_reviews: matchingBotReviews.length,
+        anchored_bot_reviews: anchoredBotReviews.length
+      })
+    }
+
+    logPhase(logger, "gate", "skipped; running full review", logContext)
     return null
   }
 

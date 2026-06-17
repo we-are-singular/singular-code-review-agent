@@ -28,6 +28,54 @@ test("guard allows trusted same-repository trigger comments", async () => {
   assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
 })
 
+test("guard deterministically skips trusted skip commands", async () => {
+  const result = await evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: 99,
+    github: {
+      async getPullRequest() {
+        return { number: 42, head: { repo: { full_name: "owner/repo" } } }
+      },
+      async getIssueComment() {
+        return {
+          id: 99,
+          issue_url: "https://api.github.com/repos/owner/repo/issues/42",
+          author_association: "MEMBER",
+          user: { login: "alice", type: "User" },
+          body: "@singular-code-review skip"
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(result, { shouldReview: false, reason: "trigger comment requested skip" })
+})
+
+test("guard does not treat incidental skip wording as a skip command", async () => {
+  const result = await evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: 99,
+    github: {
+      async getPullRequest() {
+        return { number: 42, head: { repo: { full_name: "owner/repo" } } }
+      },
+      async getIssueComment() {
+        return {
+          id: 99,
+          issue_url: "https://api.github.com/repos/owner/repo/issues/42",
+          author_association: "MEMBER",
+          user: { login: "alice", type: "User" },
+          body: "@singular-code-review why did you skip the last review?"
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
+})
+
 test("guard denies forks and untrusted trigger comments", async () => {
   assert.deepEqual(
     await evaluateGuard({
