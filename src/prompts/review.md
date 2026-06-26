@@ -1,29 +1,15 @@
 Review this pull request using the compact reviewer context at {{contextFile}} and filtered diff at {{diffFile}}.
 
-Start by running `review_context` if you need the context JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation.
+Use the attached context and diff as the starting point. The reviewer agent instructions own the review workflow, queueing rules, and inline-comment style; this prompt only names phase inputs and PR-history hints. Run `review_context` if you need to re-read the normalized JSON. Use read-only git, gh, rg, tests, and Context7 MCP as needed for investigation.
+
+For actionable findings, queue the inline comment before relying on it in terminal output. For line targeting, use `review_context`, `diff.ranges`, and `valid_comment_ranges` as the source of truth; never use artifact line numbers from `pr.diff`, `rg -n pr.diff`, or editor output.
+
+Do not queue a final conclusion; a later audit/synthesis pass will tighten queued comments and turn your review output into the GitHub review body. Never use `gh api` to post review comments or reviews directly. Do not edit repository files.
 
 The attached diff intentionally omits high-noise `package-lock.json` hunks. If dependency lockfile changes are materially relevant, inspect them directly with read-only git commands.
-
-When a top-level `@singular-code-review` trigger comment asks a direct question or gives instructions, begin your terminal output with a concise answer addressed to the commenter, then continue with the review.
-
-Use exact GitHub handles from context. The reviewer context includes `participants`: humans who authored, commented, reviewed, or pushed commits on the PR, formatted as `Name <@username>` or `<@username>`. Tag people only with the exact `@username` shown inside a participant entry. Never invent an `@handle` from a real name or first name. If the exact handle is not available, omit the tag. Write mentions as plain text, for example `@octocat`, without backticks or code formatting so GitHub notifies the user.
-
-Check `unresolved_bot_threads` and `previous_bot_findings` before adding inline comments so active bot findings are handled as existing review context.
 
 Use `pr_timeline.chronological_entries` as the compact chronological PR history. If an event SHA, review id, comment id, or thread id looks important, inspect `pr_timeline.full_event_file` or use read-only `gh`/git commands to drill down.
 
 For re-reviews, use `pr_timeline.chronological_entries`, `recent_reviews`, `previous_bot_findings`, and `unresolved_bot_threads` as PR history. You can build on prior review findings and focus deeper investigation on the latest delta, unresolved paths, and new risk. Do not re-derive unchanged code that was already reviewed unless the new delta, an unresolved finding, or a human instruction makes it relevant again.
 
 For re-reviews, keep terminal output delta-focused. Do not repeat a full PR summary unless the latest delta substantially changes the PR shape. Prefer a short note that says what changed since the last bot review, whether previous findings are resolved, and what remains new or risky.
-
-The review queue is the canonical home for actionable findings: run `review_comments add` for inline findings, `review_comments add --start-line` for multiline findings, `review_comments suggest` for code suggestions, and `review_comments reply` for existing review discussions. Use `--side RIGHT` for added lines and `--side LEFT` for deleted lines; RIGHT is the default. The `review_comments` command is installed on PATH; if you need to verify it, run `command -v review_comments`.
-
-Only queue comments on changed source lines: RIGHT-side added lines or LEFT-side deleted lines. Use the context `diff.ranges` as guidance; `added`/`right` entries are RIGHT-side targets and `deleted`/`left` entries are LEFT-side targets. Ranges are compact strings such as `"34"` or `"30-37"`. Rely on `review_comments add` as the final validation gate. Do not use `rg -n`, editor output, or line numbers from `pr.diff` itself as source line numbers; those are artifact line numbers, not file line numbers. If `review_comments add` rejects a target, correct the path/line/side before mentioning the finding as queued.
-
-Use terminal output for the high-level review summary, important risk themes, praise, direct answers, and verdict. If an observation is actionable enough to be a finding, queue it before relying on it in the summary.
-
-If multiple comments are queued for the same path and line, combine overlapping comments when they describe the same issue and keep separate comments only when they are genuinely distinct actionable issues.
-
-Always pass review text with `--body-stdin`, `--body-file`, `--message-stdin`, or `--message-file`; prefer a single-quoted heredoc such as `<<'REVIEW_COMMENT'`. Never put Markdown, backticks, quotes, or code snippets directly in shell arguments.
-
-Do not queue a final conclusion; a later audit/synthesis pass will tighten queued comments and turn your review output into the GitHub review body. Never use `gh api` to post review comments or reviews directly. Do not edit repository files.
