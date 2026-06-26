@@ -109,9 +109,9 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/)
   assert.match(
     workflow,
-    /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 32\s+run: \|\s+for attempt in 1 2; do/
+    /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 42\s+run: \|\s+for attempt in 1 2; do/
   )
-  assert.match(workflow, /timeout 15m \/usr\/local\/bin\/review_runner/)
+  assert.match(workflow, /timeout 20m \/usr\/local\/bin\/review_runner/)
   assert.match(workflow, /review_runner attempt \$\{attempt\}\/2/)
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/)
   assert.match(workflow, /BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
