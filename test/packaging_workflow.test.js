@@ -93,9 +93,28 @@ test("example trigger workflow runs gate-capable reviews on new pull request hea
   assert.doesNotMatch(workflow, /"CONTRIBUTOR"/)
 })
 
+test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "publish-image.yml"), "utf8")
+
+  assert.match(workflow, /uses: actions\/checkout@v7/)
+  assert.match(workflow, /uses: actions\/setup-node@v6/)
+  assert.match(workflow, /node-version: 26/)
+  assert.match(workflow, /uses: docker\/setup-buildx-action@v4/)
+  assert.match(workflow, /uses: docker\/login-action@v4/)
+  assert.match(workflow, /uses: docker\/metadata-action@v6/)
+  assert.match(workflow, /uses: docker\/build-push-action@v7/)
+  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v4/)
+  assert.doesNotMatch(workflow, /uses: docker\/(?:setup-buildx-action|login-action)@v3/)
+  assert.doesNotMatch(workflow, /uses: docker\/metadata-action@v5/)
+  assert.doesNotMatch(workflow, /uses: docker\/build-push-action@v6/)
+})
+
 test("reusable workflow runs guard, ack, provisioning, and the new runner", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review.yml"), "utf8")
 
+  assert.match(workflow, /uses: actions\/create-github-app-token@v3/)
+  assert.match(workflow, /uses: actions\/checkout@v7/)
+  assert.doesNotMatch(workflow, /uses: actions\/checkout@v4/)
   assert.match(workflow, /run: \/usr\/local\/bin\/review_guard/)
   assert.match(workflow, /npm_install:\s*\n\s+description: Install repository dependencies before review\./)
   assert.match(workflow, /type: boolean\s*\n\s+default: false/)
