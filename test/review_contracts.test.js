@@ -144,7 +144,7 @@ test("diff ranges support right-side context and left-side deletions", () => {
   assert.deepEqual(app?.leftLines, [1, 2, 3, 4])
 })
 
-test("review diff filtering excludes package-lock hunks", () => {
+test("review diff filtering excludes noisy generated and binary hunks", () => {
   const diffText = `diff --git a/package-lock.json b/package-lock.json
 index 111..222 100644
 --- a/package-lock.json
@@ -154,6 +154,27 @@ index 111..222 100644
 -  "lockfileVersion": 2
 +  "lockfileVersion": 3
  }
+diff --git a/packages/api/pnpm-lock.yaml b/packages/api/pnpm-lock.yaml
+index 111..222 100644
+--- a/packages/api/pnpm-lock.yaml
++++ b/packages/api/pnpm-lock.yaml
+@@ -1,2 +1,2 @@
+-lockfileVersion: "8.0"
++lockfileVersion: "9.0"
+diff --git a/assets/logo.png b/assets/logo.png
+new file mode 100644
+index 0000000..1111111
+Binary files /dev/null and b/assets/logo.png differ
+diff --git a/vendor/archive.zip b/vendor/archive.zip
+index 1111111..2222222 100644
+GIT binary patch
+literal 0
+HcmV?d00001
+diff --git a/data/model b/data/model
+index 1111111..2222222 100644
+GIT binary patch
+literal 0
+HcmV?d00001
 diff --git a/src/app.js b/src/app.js
 index 333..444 100644
 --- a/src/app.js
@@ -165,8 +186,15 @@ index 333..444 100644
 
   const filtered = filterReviewDiff(diffText)
 
-  assert.deepEqual(filtered.ignoredFiles, ["package-lock.json"])
+  assert.deepEqual(filtered.ignoredFiles, [
+    "assets/logo.png",
+    "data/model",
+    "package-lock.json",
+    "packages/api/pnpm-lock.yaml",
+    "vendor/archive.zip"
+  ])
   assert.doesNotMatch(filtered.text, /lockfileVersion/u)
+  assert.doesNotMatch(filtered.text, /GIT binary patch|Binary files/u)
   assert.match(filtered.text, /src\/app\.js/u)
   assert.deepEqual(
     parseUnifiedDiff(filtered.text).files.map(file => file.path),
