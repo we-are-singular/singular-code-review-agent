@@ -9,7 +9,7 @@ import { buildAuditPrompt, buildGatePrompt, buildReviewPrompt, buildSynthesisPro
 import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "./body.js"
 import { buildAuditorContext, buildReviewContext, buildReviewerContext, buildValidationContext } from "./context.js"
 import { parseGateDecision, prepareGate } from "./gate.js"
-import { clearQueue, loadQueue, persistValidation, setConclusion, validateQueue } from "./queue.js"
+import { clearQueue, loadQueue, persistValidation, saveQueue, setConclusion, validateQueue } from "./queue.js"
 import { type GateContext, type GateDecision, type ReviewContext, type ValidatedReviewQueue } from "./types.js"
 
 /**
@@ -166,7 +166,7 @@ function logPhase(
 
 /**
  * Gathers every durable input the later phases need: PR metadata, diff ranges,
- * existing comments/threads, trigger context, and bot history.
+ * optional PR history, trigger context, and bot history.
  */
 async function runGatheringPhase(state: ReviewWorkflowState): Promise<ReviewContext> {
   const { config, github, artifacts, paths, logger } = state
@@ -185,7 +185,8 @@ async function runGatheringPhase(state: ReviewWorkflowState): Promise<ReviewCont
     eventName: config.eventName,
     eventPath: config.eventPath,
     actor: config.actor,
-    botLogin: config.botLogin
+    botLogin: config.botLogin,
+    ignoreHistory: config.ignoreHistory
   })
 
   artifacts.writeJson(paths.contextFile, buildValidationContext(context))
@@ -385,6 +386,7 @@ async function runAuditPhase(
     return currentValidation
   }
 
+  const queueBeforeAudit = loadQueue(paths.queueFile)
   logPhase(logger, "audit", "running OpenCode")
   await opencode.run({
     workspace: config.workspace,
@@ -409,7 +411,16 @@ async function runAuditPhase(
     })
   })
 
-  return validateCurrentQueue(state, context, "audit", "post-audit validation")
+  try {
+    return validateCurrentQueue(state, context, "audit", "post-audit validation")
+  } catch (error) {
+    logger.warn("audit: post-audit queue validation failed; restoring pre-audit queue", {
+      error: error instanceof Error ? error.message : String(error)
+    })
+    saveQueue(paths.queueFile, queueBeforeAudit)
+    state.artifacts.writeJson(paths.validatedFile, currentValidation)
+    return currentValidation
+  }
 }
 
 /**

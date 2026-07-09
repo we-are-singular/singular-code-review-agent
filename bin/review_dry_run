@@ -340,7 +340,7 @@ install_node_commands() {
     script="${entry#*:}"
     target="${dist_dir}/cli/${script}"
     [[ -f "$target" ]] || die "built CLI entrypoint not found: $target; run npm run build first"
-    chmod +x "$target"
+    [[ -x "$target" ]] || chmod +x "$target"
     ln -sf "$target" "${wrapper_dir}/${command}"
   done
 }

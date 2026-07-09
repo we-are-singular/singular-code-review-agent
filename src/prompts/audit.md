@@ -12,6 +12,7 @@ Use these attached files:
 Tighten the queue in place:
 
 - edit the exact `{{queueFile}}` path; do not derive, normalize, or rewrite artifact paths from the workspace path
+- preserve valid JSON; if a comment body needs paragraph breaks, encode them as `\n` inside the JSON string rather than inserting literal line breaks inside the string
 - remove exact duplicate comments
 - merge overlapping same-line comments when they are the same issue
 - keep multiple same-line comments only when they are genuinely distinct actionable issues
@@ -22,4 +23,4 @@ Tighten the queue in place:
 - preserve valid replies
 - tighten wording only when the underlying finding is unchanged
 
-Do not add new findings unless they are already present in the first reviewer output. Keep `review_queue.json` valid JSON with the existing schema. When finished, write a brief audit summary to stdout.
+Do not add new findings unless they are already present in the first reviewer output. Keep `review_queue.json` valid JSON with the existing schema. Before finishing, read the queue back or otherwise verify it still parses as JSON. When finished, write a brief audit summary to stdout.

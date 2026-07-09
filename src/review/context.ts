@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { readJsonFile, writeJsonFile } from "../lib/json.js"
-import { type GitHubClient } from "../clients/github.js"
+import { type GitHubClient, type ReviewThreadsResult } from "../clients/github.js"
 import { filterReviewDiff, parseUnifiedDiff, validCommentRangesFromDiff } from "./diff.js"
 import {
   REVIEW_BOT_LOGIN,
@@ -33,6 +33,7 @@ type BuildReviewContextOptions = {
   eventPath?: string | null
   actor?: string | null
   botLogin?: string
+  ignoreHistory?: boolean
 }
 
 /**
@@ -838,16 +839,25 @@ export async function buildReviewContext(options: BuildReviewContextOptions): Pr
   mkdirSync(dirname(options.diffFile), { recursive: true })
   writeFileSync(options.diffFile, diffText, { mode: 0o600 })
 
-  // Fetch independent GitHub surfaces in parallel so the gathering phase is
-  // bounded by the slowest API call rather than their sum.
-  const [pr, issueComments, reviewComments, reviews, commits, reviewThreadsResult] = await Promise.all([
+  const [pr, commits] = await Promise.all([
     options.github.getPullRequest(options.prNumber),
-    options.github.listIssueComments(options.prNumber),
-    options.github.listReviewComments(options.prNumber),
-    options.github.listReviews(options.prNumber),
-    options.github.listPullRequestCommits(options.prNumber),
-    options.github.listReviewThreads(options.prNumber)
+    options.github.listPullRequestCommits(options.prNumber)
   ])
+
+  // Skip PR history when evaluating or debugging a fresh-review run.
+  const [issueComments, reviewComments, reviews, reviewThreadsResult]: [
+    IssueComment[],
+    ReviewComment[],
+    PullRequestReview[],
+    ReviewThreadsResult
+  ] = options.ignoreHistory
+    ? [[], [], [], { available: true, threads: [] }]
+    : await Promise.all([
+        options.github.listIssueComments(options.prNumber),
+        options.github.listReviewComments(options.prNumber),
+        options.github.listReviews(options.prNumber),
+        options.github.listReviewThreads(options.prNumber)
+      ])
   const reviewThreads = reviewThreadsResult.threads
   const unresolvedReviewThreads = reviewThreads.filter(thread => !thread.is_resolved)
   const unresolvedBotThreads = unresolvedReviewThreads.filter(thread => thread.top_level_author === botLogin)

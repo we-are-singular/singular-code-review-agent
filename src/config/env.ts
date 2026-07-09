@@ -12,6 +12,7 @@ export type RunnerConfig = {
   gateModel: string
   command: string
   botLogin: string
+  ignoreHistory: boolean
   artifacts: ArtifactPaths
   triggerCommentId: number | null
   eventName: string | null
@@ -102,6 +103,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
     gateModel: env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash",
     command: REVIEW_COMMAND,
     botLogin: env.BOT_LOGIN || REVIEW_BOT_LOGIN,
+    ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true",
     artifacts,
     triggerCommentId: optionalPositiveInt(env.TRIGGER_COMMENT_ID),
     eventName: env.GITHUB_EVENT_NAME || null,

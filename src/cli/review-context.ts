@@ -72,7 +72,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       eventName: env.GITHUB_EVENT_NAME || null,
       eventPath: env.GITHUB_EVENT_PATH || null,
       actor: env.GITHUB_ACTOR || null,
-      botLogin: env.BOT_LOGIN
+      botLogin: env.BOT_LOGIN,
+      ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true"
     })
     const validationContext = buildValidationContext(context)
     writeJsonFile(defaults.contextFile, validationContext)

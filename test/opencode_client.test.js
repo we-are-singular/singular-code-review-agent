@@ -132,6 +132,8 @@ test("audit and synthesis prompts stay phase-specific because auditor owns post-
   assert.match(auditPrompt, /Audit the queued pull request review comments/u)
   assert.match(auditPrompt, /expect long or complex inline comments/u)
   assert.match(auditPrompt, /leave short or self-contained comments as they are/u)
+  assert.match(auditPrompt, /literal line breaks inside the string/u)
+  assert.match(auditPrompt, /verify it still parses as JSON/u)
   assert.doesNotMatch(synthesisPrompt, /^You are running a Singular Code Review post-processing phase\./u)
   assert.match(synthesisPrompt, /Write the final GitHub pull request review body/u)
   assert.match(synthesisPrompt, /pr_timeline\.chronological_entries/u)

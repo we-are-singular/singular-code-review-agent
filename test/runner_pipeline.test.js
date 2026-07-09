@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url"
 
 import { buildArtifactPaths } from "../dist/config/paths.js"
 import { ArtifactStore } from "../dist/lib/artifacts.js"
+import { buildReviewContext } from "../dist/review/context.js"
 import { addInlineComment, loadQueue, saveQueue } from "../dist/review/queue.js"
 import { REVIEW_WORKFLOW_PHASES, runReviewWorkflow } from "../dist/review/workflow.js"
 
@@ -34,6 +35,7 @@ function createConfig(workspace, dryRun = false) {
     gateModel: "opencode-go/deepseek-v4-flash",
     command: "@singular-code-review",
     botLogin: "singular-code-review[bot]",
+    ignoreHistory: false,
     artifacts: buildArtifactPaths({}, workspace),
     triggerCommentId: null,
     eventName: null,
@@ -153,6 +155,58 @@ function botReview(commitId) {
     html_url: "https://github.com/owner/repo/pull/42#pullrequestreview-1"
   }
 }
+
+test("review context can ignore live PR history", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-ignore-history-"))
+  const diffText = fs.readFileSync(fixture, "utf8")
+  const github = createGitHub(diffText, {
+    commits: [
+      {
+        sha: "47138577abc123",
+        author: { login: "entomb" },
+        parents: [{ sha: "base" }],
+        commit: {
+          message: "Add timeout guard",
+          author: { name: "Joao", date: "2026-06-16T10:00:00Z" },
+          committer: { name: "Joao", date: "2026-06-16T10:00:00Z" }
+        }
+      }
+    ]
+  }).client
+
+  github.listIssueComments = async () => {
+    throw new Error("issue comments should not be fetched")
+  }
+  github.listReviewComments = async () => {
+    throw new Error("review comments should not be fetched")
+  }
+  github.listReviews = async () => {
+    throw new Error("reviews should not be fetched")
+  }
+  github.listReviewThreads = async () => {
+    throw new Error("review threads should not be fetched")
+  }
+
+  const context = await buildReviewContext({
+    github,
+    repository: "owner/repo",
+    prNumber: 42,
+    diffFile: path.join(workspace, "pr.diff"),
+    timelineFile: path.join(workspace, "timeline.json"),
+    ignoreHistory: true
+  })
+
+  assert.deepEqual(context.issue_comments, [])
+  assert.deepEqual(context.review_comments, [])
+  assert.deepEqual(context.reviews, [])
+  assert.deepEqual(context.review_threads, [])
+  assert.deepEqual(context.unresolved_review_threads, [])
+  assert.deepEqual(context.unresolved_bot_threads, [])
+  assert.deepEqual(context.previous_bot_findings, [])
+  assert.deepEqual(context.action_items, [])
+  assert.equal(context.review_threads_available, true)
+  assert.match(context.pr_timeline.chronological_entries.join("\n"), /4713857 \| commit/u)
+})
 
 test("runner executes review, audit, synthesis, validation, and submission in order", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-pipeline-"))
@@ -403,6 +457,59 @@ test("runner executes review, audit, synthesis, validation, and submission in or
     }
   ])
   assert.equal(JSON.parse(fs.readFileSync(config.artifacts.payloadFile, "utf8")).comments.length, 1)
+})
+
+test("runner restores the pre-audit queue when audit writes invalid JSON", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-audit-corrupt-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  const warnings = []
+
+  const opencode = {
+    async run(options) {
+      if (options.prompt.includes("Review this pull request")) {
+        addInlineComment(config.artifacts.queueFile, {
+          path: "src/app.js",
+          line: 2,
+          body: "The timeout can become NaN."
+        })
+        return { text: "Request changes: queued one finding.", sessionId: "review-session", args: [] }
+      }
+      if (options.prompt.includes("Audit the queued pull request review comments")) {
+        fs.writeFileSync(
+          config.artifacts.queueFile,
+          '{"version":1,"inlineComments":[{"path":"src/app.js","line":2,"body":"bad\njson"}]}\n'
+        )
+        return { text: "Audit complete.", sessionId: "post-session", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        return { text: "Request changes: keep the restored queue.", sessionId: "post-session", args: [] }
+      }
+      throw new Error(`unexpected prompt: ${options.prompt}`)
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: { ...createLogger(), warn: (message, context) => warnings.push({ message, context }) }
+  })
+
+  assert.equal(result.status, "dry-run")
+  assert.match(warnings[0].message, /post-audit queue validation failed/u)
+  assert.deepEqual(github.submitted.reviews[0].comments, [
+    {
+      path: "src/app.js",
+      line: 2,
+      side: "RIGHT",
+      body: "The timeout can become NaN."
+    }
+  ])
+  assert.equal(loadQueue(config.artifacts.queueFile).inlineComments[0].body, "The timeout can become NaN.")
 })
 
 test("runner skips audit when the first pass queues no actions", async () => {
