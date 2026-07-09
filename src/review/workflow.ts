@@ -76,6 +76,22 @@ function reviewerOutputSeemsComplete(reviewText: string): boolean {
   )
 }
 
+function reviewerOutputShowsPermissionDenial(reviewText: string): boolean {
+  return /(?:permission requested:|auto-rejecting|external_directory|permission denied|tool access issue)/iu.test(
+    reviewText
+  )
+}
+
+function readReviewPassOutput(paths: ArtifactPaths, reviewPass: OpenCodeRunResult): string {
+  return existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : reviewPass.text
+}
+
+function shouldRetryReviewAfterPermissionDenial(reviewText: string, validation: ValidatedReviewQueue): boolean {
+  const queueIsEmpty =
+    validation.stats.queued_inline === 0 && validation.stats.queued_replies === 0 && !validation.stats.has_conclusion
+  return queueIsEmpty && !reviewerOutputSeemsComplete(reviewText) && reviewerOutputShowsPermissionDenial(reviewText)
+}
+
 function fallbackConclusion(reviewText: string): string {
   const trimmed = reviewText.trim()
   if (trimmed) {
@@ -119,8 +135,9 @@ function createReviewWorkflowState(deps: ReviewWorkflowDependencies): ReviewWork
   }
 }
 
-function clearStaleGateResult(paths: ArtifactPaths): void {
+function clearStaleRunState(paths: ArtifactPaths): void {
   rmSync(paths.gateResultFile, { force: true })
+  rmSync(paths.reviewSessionFile, { force: true })
 }
 
 /**
@@ -193,6 +210,7 @@ async function runReviewPhase(state: ReviewWorkflowState): Promise<OpenCodeRunRe
     jsonOutputFile: `${paths.reviewOutputFile}.jsonl`,
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.reviewSessionFile,
+    reuseSession: true,
     agent: "reviewer",
     model: config.model,
     files: [opencodePaths.reviewContextPath, opencodePaths.diffPath],
@@ -404,9 +422,7 @@ async function runSynthesisPhase(
   reviewPass: OpenCodeRunResult
 ): Promise<string> {
   const { config, opencode, artifacts, paths, opencodePaths, logger } = state
-  const reviewerOutputText = existsSync(paths.reviewOutputFile)
-    ? readFileSync(paths.reviewOutputFile, "utf8")
-    : reviewPass.text
+  const reviewerOutputText = readReviewPassOutput(paths, reviewPass)
   const reviewSeemsComplete = reviewerOutputSeemsComplete(reviewerOutputText)
   artifacts.writeJson(paths.auditorContextFile, {
     ...buildAuditorContext(context),
@@ -490,7 +506,7 @@ export async function runReviewWorkflow(deps: ReviewWorkflowDependencies): Promi
   const state = createReviewWorkflowState(deps)
   const { config, paths, logger } = state
 
-  clearStaleGateResult(paths)
+  clearStaleRunState(paths)
   exposeReviewArtifactsToTools(config, paths)
 
   const context = await runGatheringPhase(state)
@@ -511,12 +527,21 @@ export async function runReviewWorkflow(deps: ReviewWorkflowDependencies): Promi
     return { status: "skipped", reason: "PR diff is empty" }
   }
 
-  const reviewPass = await runReviewPhase(state)
-  const reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-  await runAuditPhase(state, context, reviewValidation)
-  const synthesized = await runSynthesisPhase(state, context, reviewPass)
+  // First review
+  let reviewPass = await runReviewPhase(state)
+  let reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
 
-  return submitReviewResult(state, context, synthesized)
+  // did that review pass leave the queue empty and the output incomplete?
+  // if so, retry with repository-relative guidance
+  if (shouldRetryReviewAfterPermissionDenial(readReviewPassOutput(paths, reviewPass), reviewValidation)) {
+    logger.warn("review: permission denial left the pass incomplete; retrying with repository-relative path guidance")
+    // Second review
+    reviewPass = await runReviewPhase(state)
+    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
+  }
+
+  await runAuditPhase(state, context, reviewValidation)
+  return submitReviewResult(state, context, await runSynthesisPhase(state, context, reviewPass))
 }
 
 export const runReview = runReviewWorkflow

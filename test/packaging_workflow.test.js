@@ -72,6 +72,10 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "gate.md")), true)
   assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "auditor.md")), true)
 
+  const reviewerAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "reviewer.md"), "utf8")
+  assert.match(reviewerAgent, /use repository-relative paths without a leading slash/u)
+  assert.match(reviewerAgent, /filesystem root to OpenCode/u)
+
   const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8")
   assert.match(auditorAgent, /Sandbox diagnostics:/)
   assert.match(auditorAgent, /denials usually mean the sandbox worked/u)

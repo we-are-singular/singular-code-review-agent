@@ -484,6 +484,62 @@ test("runner lets synthesis post an incomplete verdict for unfinished empty revi
   assert.deepEqual(github.submitted.replies, [])
 })
 
+test("runner retries an unfinished empty review after an OpenCode permission denial", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-retry-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  const calls = []
+  let reviewAttempts = 0
+
+  const opencode = {
+    async run(options) {
+      calls.push(options)
+      if (options.prompt.includes("Review this pull request")) {
+        reviewAttempts += 1
+        if (reviewAttempts === 1) {
+          fs.writeFileSync(
+            options.outputFile,
+            [
+              "Let me continue reading the rest of the diff and key files.",
+              "! permission requested: external_directory (/apps/web/src/lib/server/*); auto-rejecting"
+            ].join("\n")
+          )
+          return { text: "Let me continue reading the rest of the diff and key files.", sessionId: "first", args: [] }
+        }
+
+        fs.writeFileSync(options.outputFile, "No blocking findings.\n")
+        return { text: "No blocking findings.", sessionId: "second", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        const auditorContext = JSON.parse(fs.readFileSync(config.artifacts.auditorContextFile, "utf8"))
+        assert.equal(auditorContext.review_seems_complete, true)
+        return { text: "LGTM. No actionable findings after retry.", sessionId: "post-session", args: [] }
+      }
+      throw new Error("audit should not run for an empty queue")
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: createLogger()
+  })
+
+  assert.equal(result.status, "dry-run")
+  assert.equal(calls.length, 3)
+  const reviewCalls = calls.filter(call => call.prompt.includes("Review this pull request"))
+  assert.equal(reviewCalls.length, 2)
+  assert.equal(reviewCalls[0].prompt, reviewCalls[1].prompt)
+  assert.equal(reviewCalls[0].reuseSession, true)
+  assert.equal(reviewCalls[1].reuseSession, true)
+  assert.equal(github.submitted.reviews[0].body, "> reviewer · minimax-m3\n\nLGTM. No actionable findings after retry.")
+  assert.deepEqual(github.submitted.replies, [])
+})
+
 test("runner uses gate answer for direct mention questions without submitting a review", async () => {
   const { workspace, base, reviewed } = createGitWorkspace("runner-gate-answer-")
   const config = createConfig(workspace)
