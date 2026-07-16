@@ -79,6 +79,8 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8")
   assert.match(auditorAgent, /Sandbox diagnostics:/)
   assert.match(auditorAgent, /denials usually mean the sandbox worked/u)
+  assert.match(reviewerAgent, /bold, lower-case category label/u)
+  assert.match(reviewerAgent, /This is not a fixed vocabulary/u)
 })
 
 test("example trigger workflow runs gate-capable reviews on new pull request heads", () => {

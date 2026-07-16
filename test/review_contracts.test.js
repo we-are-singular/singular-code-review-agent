@@ -6,7 +6,7 @@ import test from "node:test"
 import { fileURLToPath } from "node:url"
 
 import { main as reviewCommentsMain } from "../dist/cli/review-comments.js"
-import { applyReviewBanner, buildReviewPayload } from "../dist/review/body.js"
+import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../dist/review/body.js"
 import { buildReviewerContext, buildValidationContext, createEmptyReviewContext } from "../dist/review/context.js"
 import { filterReviewDiff, parseUnifiedDiff, validCommentRangesFromDiff } from "../dist/review/diff.js"
 import {
@@ -53,6 +53,13 @@ function context(diffText, overrides = {}) {
     ...overrides
   }
 }
+
+test("review body limit keeps verbose synthesized conclusions compact", () => {
+  const body = enforceReviewBodyLimit("x".repeat(6_500))
+
+  assert.ok(body.length <= 6_000)
+  assert.match(body, /\[Review body truncated\]$/u)
+})
 
 test("queue supports comments, suggestions, replies, and conclusion", () => {
   const queueFile = tempFile("queue.json")

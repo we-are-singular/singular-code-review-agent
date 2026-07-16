@@ -28,6 +28,34 @@ test("guard allows trusted same-repository trigger comments", async () => {
   assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
 })
 
+test("guard allows a contributor PR author to trigger a review", async () => {
+  const result = await evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: 99,
+    github: {
+      async getPullRequest() {
+        return {
+          number: 42,
+          user: { login: "pr-author" },
+          head: { repo: { full_name: "owner/repo" } }
+        }
+      },
+      async getIssueComment() {
+        return {
+          id: 99,
+          issue_url: "https://api.github.com/repos/owner/repo/issues/42",
+          author_association: "CONTRIBUTOR",
+          user: { login: "pr-author", type: "User" },
+          body: "@singular-code-review please review"
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
+})
+
 test("guard deterministically skips trusted skip commands", async () => {
   const result = await evaluateGuard({
     repository: "owner/repo",
@@ -145,7 +173,11 @@ test("guard denies forks and untrusted trigger comments", async () => {
       triggerCommentId: 99,
       github: {
         async getPullRequest() {
-          return { number: 42, head: { repo: { full_name: "owner/repo" } } }
+          return {
+            number: 42,
+            user: { login: "pr-author" },
+            head: { repo: { full_name: "owner/repo" } }
+          }
         },
         async getIssueComment() {
           return {
@@ -160,6 +192,34 @@ test("guard denies forks and untrusted trigger comments", async () => {
     }),
     { shouldReview: false, reason: "trigger comment author is not trusted" }
   )
+})
+
+test("guard rejects bot trigger comments from the PR author", async () => {
+  const result = await evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: 99,
+    github: {
+      async getPullRequest() {
+        return {
+          number: 42,
+          user: { login: "review-bot" },
+          head: { repo: { full_name: "owner/repo" } }
+        }
+      },
+      async getIssueComment() {
+        return {
+          id: 99,
+          issue_url: "https://api.github.com/repos/owner/repo/issues/42",
+          author_association: "CONTRIBUTOR",
+          user: { login: "review-bot", type: "Bot" },
+          body: "@singular-code-review please review"
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(result, { shouldReview: false, reason: "bot trigger comments are ignored" })
 })
 
 test("guard matches trigger comment issue URLs by exact PR number", async () => {

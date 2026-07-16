@@ -35,7 +35,11 @@ export function enforceReviewBodyLimit(body: string, maxLength = MAX_REVIEW_BODY
     return body
   }
 
-  return `${body.slice(0, maxLength).trimEnd()}\n\n[Review body truncated]`
+  const suffix = "\n\n[Review body truncated]"
+  if (maxLength <= suffix.length) {
+    return suffix.slice(0, maxLength)
+  }
+  return `${body.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`
 }
 
 /**

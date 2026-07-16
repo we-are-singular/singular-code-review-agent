@@ -92,13 +92,12 @@ function shouldRetryReviewAfterPermissionDenial(reviewText: string, validation: 
   return queueIsEmpty && !reviewerOutputSeemsComplete(reviewText) && reviewerOutputShowsPermissionDenial(reviewText)
 }
 
-function fallbackConclusion(reviewText: string): string {
-  const trimmed = reviewText.trim()
-  if (trimmed) {
-    return `Automated review completed, but the synthesis pass did not produce a body. Posting the reviewer output so the run still leaves a GitHub review:\n\n${trimmed}`
+function fallbackConclusion(hasInlineComments: boolean): string {
+  if (hasInlineComments) {
+    return "The inline review comments identify the changes that need attention.\n\n## Verdict\n\n⚠️ Request changes: address the inline review comments."
   }
 
-  return "Automated review completed, but the synthesis pass did not produce a body."
+  return "## Verdict\n\n❓ Incomplete review: the final review summary could not be generated."
 }
 
 /**
@@ -444,24 +443,37 @@ async function runSynthesisPhase(
   }
 
   logPhase(logger, "synthesis", "running OpenCode")
-  const synthesis = await opencode.run({
+  const prompt = buildSynthesisPrompt({
+    reviewerOutputFile: opencodePaths.reviewOutputPath,
+    validatedFile: opencodePaths.validatedPath,
+    auditorContextFile: opencodePaths.auditorContextPath
+  })
+  const synthesisInput = {
     workspace: config.workspace,
     outputFile: paths.synthesisOutputFile,
     jsonOutputFile: `${paths.synthesisOutputFile}.jsonl`,
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.auditorSessionFile,
-    reuseSession: true,
-    agent: "auditor",
+    agent: "auditor" as const,
     model: config.model,
-    files: [opencodePaths.reviewOutputPath, opencodePaths.validatedPath, opencodePaths.auditorContextPath],
-    prompt: buildSynthesisPrompt({
-      reviewerOutputFile: opencodePaths.reviewOutputPath,
-      validatedFile: opencodePaths.validatedPath,
-      auditorContextFile: opencodePaths.auditorContextPath
-    })
-  })
+    files: [opencodePaths.reviewOutputPath, opencodePaths.validatedPath, opencodePaths.auditorContextPath]
+  }
 
-  return synthesis.text.trim() || fallbackConclusion(reviewPass.text)
+  let synthesis = await opencode.run({
+    ...synthesisInput,
+    reuseSession: true,
+    prompt
+  })
+  if (!synthesis.text.trim()) {
+    logger.warn("synthesis: empty body; retrying in a fresh session")
+    synthesis = await opencode.run({
+      ...synthesisInput,
+      reuseSession: false,
+      prompt: `${prompt}\n\nThe previous synthesis attempt produced no review body. Write the required final body now; do not return an empty response.`
+    })
+  }
+
+  return synthesis.text.trim() || fallbackConclusion(loadQueue(paths.queueFile).inlineComments.length > 0)
 }
 
 /**

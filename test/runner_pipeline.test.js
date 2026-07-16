@@ -591,6 +591,46 @@ test("runner lets synthesis post an incomplete verdict for unfinished empty revi
   assert.deepEqual(github.submitted.replies, [])
 })
 
+test("runner keeps an empty synthesis result compact instead of exposing reviewer output", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-empty-synthesis-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  const reviewerProgress = "I'll inspect one more concern before reaching a verdict. "
+  const synthesisCalls = []
+
+  const opencode = {
+    async run(options) {
+      if (options.prompt.includes("Review this pull request")) {
+        return { text: reviewerProgress.repeat(500), sessionId: "review-session", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        synthesisCalls.push(options)
+        return { text: "", sessionId: "post-session", args: [] }
+      }
+      throw new Error("audit should not run for an empty queue")
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: createLogger()
+  })
+
+  const body = github.submitted.reviews[0].body
+  assert.equal(result.status, "dry-run")
+  assert.equal(synthesisCalls.length, 2)
+  assert.equal(synthesisCalls[0].reuseSession, true)
+  assert.equal(synthesisCalls[1].reuseSession, false)
+  assert.match(body, /❓ Incomplete review: the final review summary could not be generated\./u)
+  assert.doesNotMatch(body, /I'll inspect one more concern/u)
+  assert.ok(body.length <= 6_000)
+})
+
 test("runner retries an unfinished empty review after an OpenCode permission denial", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-retry-"))
   fs.mkdirSync(path.join(workspace, ".git"))

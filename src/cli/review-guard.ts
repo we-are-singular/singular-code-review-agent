@@ -135,12 +135,15 @@ export async function evaluateGuard(options: {
       return { shouldReview: false, reason: "trigger comment does not belong to this pull request" }
     }
 
-    if (!trustedAssociation(comment.author_association)) {
-      return { shouldReview: false, reason: "trigger comment author is not trusted" }
-    }
-
     if (comment.user?.type === "Bot") {
       return { shouldReview: false, reason: "bot trigger comments are ignored" }
+    }
+
+    const commentAuthor = comment.user?.login
+    const isPullRequestAuthor =
+      !!commentAuthor && (commentAuthor === pr.user?.login || commentAuthor === pr.author?.login)
+    if (!trustedAssociation(comment.author_association) && !isPullRequestAuthor) {
+      return { shouldReview: false, reason: "trigger comment author is not trusted" }
     }
 
     if (!String(comment.body || "").includes(REVIEW_COMMAND)) {

@@ -22,5 +22,6 @@ Tighten the queue in place:
 - leave short or self-contained comments as they are, and never restate the problem in the action line
 - preserve valid replies
 - tighten wording only when the underlying finding is unchanged
+- Preserve valid, clearly labeled nonblocking inline comments, including concrete nits and nice-to-haves; never elevate their priority or rewrite them as substantive or blocking findings.
 
 Do not add new findings unless they are already present in the first reviewer output. Keep `review_queue.json` valid JSON with the existing schema. Before finishing, read the queue back or otherwise verify it still parses as JSON. When finished, write a brief audit summary to stdout.
