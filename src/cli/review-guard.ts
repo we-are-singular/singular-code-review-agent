@@ -89,6 +89,28 @@ function parseIssueUrl(value: string | null | undefined): { repository: string; 
   }
 }
 
+function hasHttpStatus(error: unknown, status: number): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    error.status === status
+  )
+}
+
+/**
+ * A missing resource is a safe skip. Transport and GitHub service failures
+ * must fail the workflow instead of suppressing an otherwise valid review.
+ */
+function skipMissingResource(error: unknown, reason: string): { shouldReview: boolean; reason: string } {
+  if (!hasHttpStatus(error, 404)) {
+    throw error
+  }
+
+  return { shouldReview: false, reason }
+}
+
 /**
  * Re-checks whether the request is safe to review inside the reusable workflow.
  * Client workflows also gate triggers, but this protects against drift.
@@ -102,8 +124,8 @@ export async function evaluateGuard(options: {
   let pr
   try {
     pr = await options.github.getPullRequest(options.prNumber)
-  } catch {
-    return { shouldReview: false, reason: "pull request not found" }
+  } catch (error) {
+    return skipMissingResource(error, "pull request not found")
   }
 
   if (pr.head?.repo?.full_name !== options.repository) {
@@ -124,8 +146,8 @@ export async function evaluateGuard(options: {
     let comment
     try {
       comment = await options.github.getIssueComment(options.triggerCommentId)
-    } catch {
-      return { shouldReview: false, reason: "trigger comment not found" }
+    } catch (error) {
+      return skipMissingResource(error, "trigger comment not found")
     }
 
     const issue = parseIssueUrl(comment.issue_url)

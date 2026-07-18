@@ -55,7 +55,19 @@ jobs:
         id: review-guard
         env:
           GH_TOKEN: ${{ github.token }}
-        run: /usr/local/bin/review_guard
+        run: |
+          for attempt in 1 2; do
+            echo "review_guard attempt ${attempt}/2"
+            if /usr/local/bin/review_guard; then
+              exit 0
+            fi
+
+            status=$?
+            echo "::warning::review_guard attempt ${attempt}/2 failed with status ${status}"
+            if [ "$attempt" -eq 2 ]; then
+              exit "$status"
+            fi
+          done
 
       - name: Create GitHub App token
         if: steps.review-guard.outputs.should_review == 'true'

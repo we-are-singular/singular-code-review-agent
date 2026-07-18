@@ -28,6 +28,63 @@ test("guard allows trusted same-repository trigger comments", async () => {
   assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
 })
 
+test("guard skips only a pull request confirmed missing by GitHub", async () => {
+  const missing = await evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: null,
+    github: {
+      async getPullRequest() {
+        throw Object.assign(new Error("Not Found"), { status: 404 })
+      },
+      async getIssueComment() {
+        throw new Error("not used")
+      }
+    }
+  })
+
+  assert.deepEqual(missing, { shouldReview: false, reason: "pull request not found" })
+
+  const unavailable = Object.assign(new Error("Service Unavailable"), { status: 503 })
+  await assert.rejects(
+    evaluateGuard({
+      repository: "owner/repo",
+      prNumber: 42,
+      triggerCommentId: null,
+      github: {
+        async getPullRequest() {
+          throw unavailable
+        },
+        async getIssueComment() {
+          throw new Error("not used")
+        }
+      }
+    }),
+    error => error === unavailable
+  )
+})
+
+test("guard rethrows unavailable trigger comment lookups", async () => {
+  const unavailable = Object.assign(new Error("Service Unavailable"), { status: 503 })
+
+  await assert.rejects(
+    evaluateGuard({
+      repository: "owner/repo",
+      prNumber: 42,
+      triggerCommentId: 99,
+      github: {
+        async getPullRequest() {
+          return { number: 42, head: { repo: { full_name: "owner/repo" } } }
+        },
+        async getIssueComment() {
+          throw unavailable
+        }
+      }
+    }),
+    error => error === unavailable
+  )
+})
+
 test("guard allows a contributor PR author to trigger a review", async () => {
   const result = await evaluateGuard({
     repository: "owner/repo",
