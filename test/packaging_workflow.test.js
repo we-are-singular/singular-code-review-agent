@@ -75,6 +75,7 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   const reviewerAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "reviewer.md"), "utf8")
   assert.match(reviewerAgent, /use repository-relative paths without a leading slash/u)
   assert.match(reviewerAgent, /filesystem root to OpenCode/u)
+  assert.match(reviewerAgent, /`\/tmp\/\.singular-code-review` only for temporary files/u)
 
   const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8")
   assert.match(auditorAgent, /Sandbox diagnostics:/)
@@ -121,7 +122,8 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /uses: actions\/create-github-app-token@v3/)
   assert.match(workflow, /uses: actions\/checkout@v7/)
   assert.doesNotMatch(workflow, /uses: actions\/checkout@v4/)
-  assert.match(workflow, /run: \/usr\/local\/bin\/review_guard/)
+  assert.match(workflow, /if \/usr\/local\/bin\/review_guard; then/)
+  assert.match(workflow, /review_guard attempt \$\{attempt\}\/2/)
   assert.match(workflow, /npm_install:\s*\n\s+description: Install repository dependencies before review\./)
   assert.match(workflow, /type: boolean\s*\n\s+default: false/)
   assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/)
