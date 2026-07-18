@@ -646,6 +646,7 @@ test("runner retries an unfinished empty review after an OpenCode permission den
       if (options.prompt.includes("Review this pull request")) {
         reviewAttempts += 1
         if (reviewAttempts === 1) {
+          fs.writeFileSync(options.sessionFile, "ses_permission_denied\n")
           fs.writeFileSync(
             options.outputFile,
             [
@@ -680,11 +681,95 @@ test("runner retries an unfinished empty review after an OpenCode permission den
   assert.equal(calls.length, 3)
   const reviewCalls = calls.filter(call => call.prompt.includes("Review this pull request"))
   assert.equal(reviewCalls.length, 2)
-  assert.equal(reviewCalls[0].prompt, reviewCalls[1].prompt)
+  assert.notEqual(reviewCalls[0].prompt, reviewCalls[1].prompt)
+  assert.match(reviewCalls[1].prompt, /Resume the prior review\./u)
+  assert.match(reviewCalls[1].prompt, /`\/tmp\/\.singular-code-review` only for temporary files/u)
   assert.equal(reviewCalls[0].reuseSession, true)
   assert.equal(reviewCalls[1].reuseSession, true)
   assert.equal(github.submitted.reviews[0].body, "> reviewer · minimax-m3\n\nLGTM. No actionable findings after retry.")
   assert.deepEqual(github.submitted.replies, [])
+})
+
+test("runner resumes a failed empty review in the same OpenCode session after a permission denial", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-exit-retry-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  const calls = []
+  let reviewAttempts = 0
+
+  const opencode = {
+    async run(options) {
+      calls.push(options)
+      if (options.prompt.includes("Review this pull request")) {
+        reviewAttempts += 1
+        if (reviewAttempts === 1) {
+          fs.writeFileSync(options.outputFile, "! permission requested: external_directory (/tmp); auto-rejecting")
+          fs.writeFileSync(options.sessionFile, "ses_permission_denied\n")
+          throw new Error("opencode exited with status 1")
+        }
+
+        fs.writeFileSync(options.outputFile, "No blocking findings.\n")
+        return { text: "No blocking findings.", sessionId: "second", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        return { text: "LGTM. No actionable findings after resumed retry.", sessionId: "post-session", args: [] }
+      }
+      throw new Error("audit should not run for an empty queue")
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: createLogger()
+  })
+
+  assert.equal(result.status, "dry-run")
+  const reviewCalls = calls.filter(call => call.prompt.includes("Review this pull request"))
+  assert.equal(reviewCalls.length, 2)
+  assert.equal(reviewCalls[0].sessionFile, reviewCalls[1].sessionFile)
+  assert.equal(reviewCalls[1].reuseSession, true)
+  assert.match(reviewCalls[1].prompt, /Resume the prior review\./u)
+  assert.equal(
+    github.submitted.reviews[0].body,
+    "> reviewer · minimax-m3\n\nLGTM. No actionable findings after resumed retry."
+  )
+})
+
+test("runner propagates a permission-denial exit without a reusable OpenCode session", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-no-session-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  let reviewCalls = 0
+
+  const opencode = {
+    async run(options) {
+      if (options.prompt.includes("Review this pull request")) {
+        reviewCalls += 1
+        fs.writeFileSync(options.outputFile, "! permission requested: external_directory (/tmp); auto-rejecting")
+        throw new Error("opencode exited with status 1")
+      }
+      throw new Error("unexpected non-review phase")
+    }
+  }
+
+  await assert.rejects(
+    runReviewWorkflow({
+      config,
+      artifacts,
+      github: github.client,
+      opencode,
+      logger: createLogger()
+    }),
+    /opencode exited with status 1/u
+  )
+  assert.equal(reviewCalls, 1)
 })
 
 test("runner uses gate answer for direct mention questions without submitting a review", async () => {

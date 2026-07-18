@@ -61,6 +61,9 @@ type ReviewWorkflowState = ReviewWorkflowDependencies & {
   opencodePaths: OpenCodeReviewPaths
 }
 
+const REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION =
+  "Resume the prior review. The previous attempt was interrupted by a sandbox permission denial. Do not repeat the denied access. Use workspace-relative repository paths and use `/tmp/.singular-code-review` only for temporary files; do not access `/tmp` itself or other external directories. Complete the review."
+
 function queueHasReviewActions(queueFile: string): boolean {
   const queue = loadQueue(queueFile)
   return queue.inlineComments.length > 0 || queue.replies.length > 0
@@ -82,14 +85,20 @@ function reviewerOutputShowsPermissionDenial(reviewText: string): boolean {
   )
 }
 
-function readReviewPassOutput(paths: ArtifactPaths, reviewPass: OpenCodeRunResult): string {
-  return existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : reviewPass.text
-}
-
-function shouldRetryReviewAfterPermissionDenial(reviewText: string, validation: ValidatedReviewQueue): boolean {
+function shouldResumeReviewAfterPermissionDenial(
+  paths: ArtifactPaths,
+  reviewText: string,
+  validation: ValidatedReviewQueue
+): boolean {
   const queueIsEmpty =
     validation.stats.queued_inline === 0 && validation.stats.queued_replies === 0 && !validation.stats.has_conclusion
-  return queueIsEmpty && !reviewerOutputSeemsComplete(reviewText) && reviewerOutputShowsPermissionDenial(reviewText)
+  const sessionId = existsSync(paths.reviewSessionFile) ? readFileSync(paths.reviewSessionFile, "utf8").trim() : ""
+  return (
+    queueIsEmpty &&
+    !reviewerOutputSeemsComplete(reviewText) &&
+    reviewerOutputShowsPermissionDenial(reviewText) &&
+    sessionId.length > 0
+  )
 }
 
 function fallbackConclusion(hasInlineComments: boolean): string {
@@ -198,7 +207,7 @@ async function runGatheringPhase(state: ReviewWorkflowState): Promise<ReviewCont
  * Runs the only exploratory OpenCode phase. This phase may inspect the
  * repository and queue structured findings through the review tools.
  */
-async function runReviewPhase(state: ReviewWorkflowState): Promise<OpenCodeRunResult> {
+async function runReviewPhase(state: ReviewWorkflowState, resumeInstruction?: string): Promise<OpenCodeRunResult> {
   const { config, opencode, paths, opencodePaths, logger } = state
 
   clearQueue(paths.queueFile)
@@ -216,7 +225,8 @@ async function runReviewPhase(state: ReviewWorkflowState): Promise<OpenCodeRunRe
     files: [opencodePaths.reviewContextPath, opencodePaths.diffPath],
     prompt: buildReviewPrompt({
       contextFile: opencodePaths.reviewContextPath,
-      diffFile: opencodePaths.diffPath
+      diffFile: opencodePaths.diffPath,
+      resumeInstruction
     })
   })
 }
@@ -432,7 +442,9 @@ async function runSynthesisPhase(
   reviewPass: OpenCodeRunResult
 ): Promise<string> {
   const { config, opencode, artifacts, paths, opencodePaths, logger } = state
-  const reviewerOutputText = readReviewPassOutput(paths, reviewPass)
+  const reviewerOutputText = existsSync(paths.reviewOutputFile)
+    ? readFileSync(paths.reviewOutputFile, "utf8")
+    : reviewPass.text
   const reviewSeemsComplete = reviewerOutputSeemsComplete(reviewerOutputText)
   artifacts.writeJson(paths.auditorContextFile, {
     ...buildAuditorContext(context),
@@ -551,15 +563,30 @@ export async function runReviewWorkflow(deps: ReviewWorkflowDependencies): Promi
   }
 
   // First review
-  let reviewPass = await runReviewPhase(state)
-  let reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-
-  // did that review pass leave the queue empty and the output incomplete?
-  // if so, retry with repository-relative guidance
-  if (shouldRetryReviewAfterPermissionDenial(readReviewPassOutput(paths, reviewPass), reviewValidation)) {
-    logger.warn("review: permission denial left the pass incomplete; retrying with repository-relative path guidance")
-    // Second review
+  let reviewPass: OpenCodeRunResult
+  let reviewValidation: ValidatedReviewQueue
+  try {
     reviewPass = await runReviewPhase(state)
+    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
+  } catch (error) {
+    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
+    const reviewText = existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : ""
+    if (!shouldResumeReviewAfterPermissionDenial(paths, reviewText, reviewValidation)) {
+      throw error
+    }
+
+    logger.warn("review: permission denial interrupted the pass; resuming the same session with sandbox guidance")
+    reviewPass = await runReviewPhase(state, REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION)
+    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
+  }
+
+  // Did that completed review pass leave the queue empty and the output incomplete?
+  // If so, resume the same session with corrective sandbox guidance.
+  const reviewText = existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : reviewPass.text
+  if (shouldResumeReviewAfterPermissionDenial(paths, reviewText, reviewValidation)) {
+    logger.warn("review: permission denial left the pass incomplete; resuming the same session with sandbox guidance")
+    // Second review
+    reviewPass = await runReviewPhase(state, REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION)
     reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
   }
 

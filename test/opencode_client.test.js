@@ -91,6 +91,49 @@ printf '{"type":"text","sessionID":"ses_789","text":"Rendered review.\\\\n"}\\n'
   }
 })
 
+test("CLI-backed OpenCode client preserves a session after a failed permission-denied run", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-client-failure-"))
+  const mockbin = path.join(dir, "mockbin")
+  fs.mkdirSync(mockbin)
+  makeExecutable(
+    path.join(mockbin, "opencode"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
+  printf '%s\\n' '--format' '--file' '--session'
+  exit 0
+fi
+printf '{"type":"text","sessionID":"ses_denied","text":"! permission requested: external_directory (/tmp); auto-rejecting"}\\n'
+exit 1
+`
+  )
+
+  const oldPath = process.env.PATH
+  process.env.PATH = `${mockbin}:${oldPath}`
+  try {
+    const client = createCliOpenCodeClient()
+    const outputFile = path.join(dir, "opencode.log")
+    const sessionFile = path.join(dir, "session.txt")
+
+    await assert.rejects(
+      client.run({
+        workspace: dir,
+        outputFile,
+        capabilitiesFile: path.join(dir, "capabilities.json"),
+        sessionFile,
+        agent: "reviewer",
+        prompt: "Review this"
+      }),
+      /opencode exited with status 1/u
+    )
+
+    assert.equal(fs.readFileSync(sessionFile, "utf8").trim(), "ses_denied")
+    assert.match(fs.readFileSync(outputFile, "utf8"), /permission requested/u)
+  } finally {
+    process.env.PATH = oldPath
+  }
+})
+
 test("audit and synthesis prompts stay phase-specific because auditor owns post-processing scope", () => {
   const gatePrompt = buildGatePrompt({
     contextFile: "gate_context.json",
@@ -99,6 +142,11 @@ test("audit and synthesis prompts stay phase-specific because auditor owns post-
   const reviewPrompt = buildReviewPrompt({
     contextFile: "review_model_context.json",
     diffFile: "pr.diff"
+  })
+  const resumedReviewPrompt = buildReviewPrompt({
+    contextFile: "review_model_context.json",
+    diffFile: "pr.diff",
+    resumeInstruction: "Resume the prior review."
   })
   const auditPrompt = buildAuditPrompt({
     workspace: "/repo",
@@ -127,6 +175,8 @@ test("audit and synthesis prompts stay phase-specific because auditor owns post-
   assert.match(reviewPrompt, /queue the inline comment before relying on it in terminal output/u)
   assert.match(reviewPrompt, /Do not queue a final conclusion/u)
   assert.match(reviewPrompt, /For re-reviews, keep terminal output delta-focused/u)
+  assert.doesNotMatch(reviewPrompt, /Resume the prior review\./u)
+  assert.match(resumedReviewPrompt, /Resume the prior review\./u)
   assert.doesNotMatch(reviewPrompt, /participants.+formatted as `Name <@username>`/u)
   assert.doesNotMatch(reviewPrompt, /review_comments add/u)
   assert.match(auditPrompt, /Audit the queued pull request review comments/u)

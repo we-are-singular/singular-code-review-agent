@@ -26,8 +26,13 @@ export function buildGatePrompt(values: { contextFile: string; deltaFile: string
  * Builds the exploratory review prompt. It receives only artifact paths because
  * OpenCode gets the larger context/diff content as file attachments.
  */
-export function buildReviewPrompt(values: { contextFile: string; diffFile: string }): string {
-  return interpolate(loadPrompt("review"), values)
+export function buildReviewPrompt(values: {
+  contextFile: string
+  diffFile: string
+  resumeInstruction?: string
+}): string {
+  const prompt = interpolate(loadPrompt("review"), values)
+  return values.resumeInstruction ? `${prompt}\n\n${values.resumeInstruction}` : prompt
 }
 
 /**
