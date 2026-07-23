@@ -9,8 +9,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 test("Dockerfile builds and packages the TypeScript runner surface", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8")
 
-  assert.match(dockerfile, /^ARG NODE_VERSION=26\.3\.0$/m)
-  assert.match(dockerfile, /^ARG NPM_MIN_VERSION=11\.13\.0$/m)
+  assert.match(dockerfile, /^ARG BASE_IMAGE=docker\.io\/cloudflare\/sandbox:0\.13\.0-next\.709\.1-opencode$/m)
+  assert.match(dockerfile, /^ARG CONTEXT7_MCP_VERSION=3\.2\.4$/m)
+  assert.match(dockerfile, /^ARG NODE_VERSION=26\.5\.0$/m)
+  assert.match(dockerfile, /^ARG NPM_VERSION=12\.0\.1$/m)
   assert.match(dockerfile, /\bbuild-essential\b/)
   assert.match(dockerfile, /\bpython3\b/)
   assert.match(dockerfile, /\bripgrep\b/)
@@ -104,7 +106,7 @@ test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "publish-image.yml"), "utf8")
 
   assert.match(workflow, /uses: actions\/checkout@v7/)
-  assert.match(workflow, /uses: actions\/setup-node@v6/)
+  assert.match(workflow, /uses: actions\/setup-node@v7/)
   assert.match(workflow, /node-version: 26/)
   assert.match(workflow, /uses: docker\/setup-buildx-action@v4/)
   assert.match(workflow, /uses: docker\/login-action@v4/)

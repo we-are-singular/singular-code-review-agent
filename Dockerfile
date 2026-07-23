@@ -1,13 +1,13 @@
-ARG BASE_IMAGE=docker.io/cloudflare/sandbox:0.9.2-opencode
+ARG BASE_IMAGE=docker.io/cloudflare/sandbox:0.13.0-next.709.1-opencode
 FROM ${BASE_IMAGE}
 
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CONTEXT7_MCP_VERSION=3.2.0
-ARG NODE_VERSION=26.3.0
-ARG NPM_MIN_VERSION=11.13.0
+ARG CONTEXT7_MCP_VERSION=3.2.4
+ARG NODE_VERSION=26.5.0
+ARG NPM_VERSION=12.0.1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -46,9 +46,9 @@ RUN set -eux; \
     tar -xJf "${node_archive}" -C /usr/local --strip-components=1 --no-same-owner; \
     rm "${node_archive}"; \
     node --version; \
-    npm --version; \
+    npm install -g "npm@${NPM_VERSION}"; \
     node -e 'require("/usr/local/lib/node_modules/npm/node_modules/minipass-flush")'; \
-    node -e 'const min = process.argv[1].split(".").map(Number); const got = process.argv[2].split(".").map(Number); const ok = got[0] > min[0] || (got[0] === min[0] && (got[1] > min[1] || (got[1] === min[1] && got[2] >= min[2]))); if (!ok) { console.error(`npm ${got.join(".")} is below required ${min.join(".")}`); process.exit(1); }' "${NPM_MIN_VERSION}" "$(npm --version)"
+    npm --version
 
 RUN mkdir -p /root/.config/opencode/skills \
     /root/.config/opencode/agents \
