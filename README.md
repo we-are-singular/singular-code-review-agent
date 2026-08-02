@@ -248,7 +248,9 @@ reusable workflow:
 Optional runtime environment variables:
 
 - `OPENCODE_MODEL`: model id used by the bundled `reviewer` and `auditor`
-  agents; defaults to `opencode/deepseek-v4-flash-free`.
+  agents; defaults to `opencode/deepseek-v4-flash-free`. An optional
+  `:variant` suffix (e.g. `opencode/deepseek-v4-flash:high`) selects the
+  OpenCode reasoning-effort variant via the `--variant` flag.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
   during provisioning. The reusable workflow sets this from `npm_install`.

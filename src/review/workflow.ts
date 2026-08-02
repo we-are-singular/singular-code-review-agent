@@ -222,6 +222,7 @@ async function runReviewPhase(state: ReviewWorkflowState, resumeInstruction?: st
     reuseSession: true,
     agent: "reviewer",
     model: config.model,
+    variant: config.modelVariant ?? undefined,
     files: [opencodePaths.reviewContextPath, opencodePaths.diffPath],
     prompt: buildReviewPrompt({
       contextFile: opencodePaths.reviewContextPath,
@@ -329,6 +330,7 @@ async function runGatePhase(
       sessionFile: paths.gateSessionFile,
       agent: "gate",
       model: config.gateModel,
+      variant: config.gateModelVariant ?? undefined,
       files: [opencodePaths.gateContextPath, opencodePaths.gateDeltaPath],
       prompt: buildGatePrompt({
         contextFile: opencodePaths.gateContextPath,
@@ -405,6 +407,7 @@ async function runAuditPhase(
     sessionFile: paths.auditorSessionFile,
     agent: "auditor",
     model: config.model,
+    variant: config.modelVariant ?? undefined,
     files: [
       opencodePaths.queuePath,
       opencodePaths.validatedPath,
@@ -468,6 +471,7 @@ async function runSynthesisPhase(
     sessionFile: paths.auditorSessionFile,
     agent: "auditor" as const,
     model: config.model,
+    variant: config.modelVariant ?? undefined,
     files: [opencodePaths.reviewOutputPath, opencodePaths.validatedPath, opencodePaths.auditorContextPath]
   }
 

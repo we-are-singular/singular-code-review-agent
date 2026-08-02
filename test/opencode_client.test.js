@@ -10,6 +10,7 @@ import {
   findSessionId,
   textFromJsonEvent
 } from "../dist/clients/opencode.js"
+import { parseModelSpec } from "../dist/config/env.js"
 import { buildAuditPrompt, buildGatePrompt, buildReviewPrompt, buildSynthesisPrompt } from "../dist/prompts/prompts.js"
 
 function makeExecutable(file, body) {
@@ -22,6 +23,25 @@ test("extracts text and session ids from OpenCode JSON events", () => {
   assert.equal(textFromJsonEvent({ event: { part: { type: "text", text: "Nested text" } } }), "Nested text")
 })
 
+test("splits an optional model variant off the model env var spec", () => {
+  assert.deepEqual(parseModelSpec("opencode/deepseek-v4-flash-free"), {
+    model: "opencode/deepseek-v4-flash-free",
+    variant: null
+  })
+  assert.deepEqual(parseModelSpec("opencode-go/deepseek-v4-flash:low"), {
+    model: "opencode-go/deepseek-v4-flash",
+    variant: "low"
+  })
+  assert.deepEqual(parseModelSpec("opencode-go/deepseek-v4-flash:max:unused"), {
+    model: "opencode-go/deepseek-v4-flash",
+    variant: "max:unused"
+  })
+  assert.deepEqual(parseModelSpec("opencode-go/deepseek-v4-flash:"), {
+    model: "opencode-go/deepseek-v4-flash",
+    variant: null
+  })
+})
+
 test("builds modern OpenCode args with explicit file attachments and session reuse", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-args-"))
   const sessionFile = path.join(dir, "session.txt")
@@ -32,19 +52,57 @@ test("builds modern OpenCode args with explicit file attachments and session reu
       workspace: "/repo",
       outputFile: "/tmp/out.log",
       agent: "reviewer",
+      variant: "low",
       sessionFile,
       reuseSession: true,
       files: ["/tmp/context.json", "/tmp/pr.diff"],
       prompt: "Review this"
     },
-    { run: true, formatJson: true, file: true, session: true }
+    { run: true, formatJson: true, file: true, session: true, variant: true }
   )
 
-  assert.deepEqual(args.slice(0, 7), ["run", "--agent", "reviewer", "--format", "json", "--session", "ses_456"])
+  assert.deepEqual(args.slice(0, 9), [
+    "run",
+    "--agent",
+    "reviewer",
+    "--variant",
+    "low",
+    "--format",
+    "json",
+    "--session",
+    "ses_456"
+  ])
   assert(args.includes("/tmp/context.json"))
   assert(args.includes("/tmp/pr.diff"))
   assert.equal(args.at(-2), "--")
   assert.equal(args.at(-1), "Review this")
+})
+
+test("omits the variant flag when the CLI or caller does not support it", () => {
+  const base = {
+    workspace: "/repo",
+    outputFile: "/tmp/out.log",
+    variant: "low",
+    prompt: "Review this"
+  }
+
+  const withSupport = buildOpenCodeArgs(base, {
+    run: true,
+    formatJson: false,
+    file: false,
+    session: false,
+    variant: true
+  })
+  assert.deepEqual(withSupport.slice(0, 3), ["run", "--variant", "low"])
+
+  const withoutSupport = buildOpenCodeArgs(base, {
+    run: true,
+    formatJson: false,
+    file: false,
+    session: false,
+    variant: false
+  })
+  assert.deepEqual(withoutSupport.slice(0, 1), ["run"])
 })
 
 test("CLI-backed OpenCode client renders JSON text and stores raw JSONL", async () => {

@@ -8,6 +8,7 @@ export type OpenCodeCapabilities = {
   formatJson: boolean
   file: boolean
   session: boolean
+  variant: boolean
 }
 
 export type OpenCodeRunOptions = {
@@ -19,6 +20,7 @@ export type OpenCodeRunOptions = {
   reuseSession?: boolean
   agent?: string
   model?: string
+  variant?: string
   files?: string[]
   prompt: string
 }
@@ -75,7 +77,8 @@ export function detectOpenCodeCapabilities(cacheFile?: string): OpenCodeCapabili
     run: result.status === 0,
     formatJson: result.status === 0 && help.includes("--format"),
     file: result.status === 0 && help.includes("--file"),
-    session: result.status === 0 && help.includes("--session")
+    session: result.status === 0 && help.includes("--session"),
+    variant: result.status === 0 && help.includes("--variant")
   }
 
   if (cacheFile) {
@@ -160,6 +163,9 @@ export function buildOpenCodeArgs(options: OpenCodeRunOptions, capabilities: Ope
   const args = ["run"]
   if (options.agent) {
     args.push("--agent", options.agent)
+  }
+  if (options.variant && capabilities.variant) {
+    args.push("--variant", options.variant)
   }
   if (capabilities.formatJson) {
     args.push("--format", "json")

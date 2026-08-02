@@ -9,7 +9,9 @@ export type RunnerConfig = {
   workspace: string
   dryRun: boolean
   model: string
+  modelVariant: string | null
   gateModel: string
+  gateModelVariant: string | null
   command: string
   botLogin: string
   ignoreHistory: boolean
@@ -85,6 +87,20 @@ function optionalPositiveInt(value: string | undefined): number | null {
 }
 
 /**
+ * Splits an optional OpenCode model variant off a model id given as
+ * `provider/model:variant`. OpenCode resolves variants only through its
+ * separate `--variant` flag, so the runner must never pass the raw suffix
+ * in the model id itself.
+ */
+export function parseModelSpec(value: string): { model: string; variant: string | null } {
+  const index = value.indexOf(":")
+  if (index === -1) {
+    return { model: value, variant: null }
+  }
+  return { model: value.slice(0, index), variant: value.slice(index + 1) || null }
+}
+
+/**
  * Loads the runner configuration at the CLI boundary from GitHub Actions env
  * vars plus local dry-run overrides.
  */
@@ -92,6 +108,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
   const args = parseCliArgs(argv)
   const workspace = args.workspace || resolveWorkspace(env)
   const artifacts = buildArtifactPaths(env, workspace, args.runtimeDir)
+  const modelSpec = parseModelSpec(env.OPENCODE_MODEL || "opencode/deepseek-v4-flash-free")
+  const gateModelSpec = parseModelSpec(env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash")
 
   return {
     repository: requiredString(args.repo || env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
@@ -99,8 +117,10 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
     githubToken: requiredString(env.GH_TOKEN || env.GITHUB_TOKEN, "GH_TOKEN"),
     workspace,
     dryRun: args.dryRun || env.DRY_RUN === "true",
-    model: env.OPENCODE_MODEL || "opencode/deepseek-v4-flash-free",
-    gateModel: env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash",
+    model: modelSpec.model,
+    modelVariant: modelSpec.variant,
+    gateModel: gateModelSpec.model,
+    gateModelVariant: gateModelSpec.variant,
     command: REVIEW_COMMAND,
     botLogin: env.BOT_LOGIN || REVIEW_BOT_LOGIN,
     ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true",
