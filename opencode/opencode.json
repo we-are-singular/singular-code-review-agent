@@ -29,6 +29,7 @@
       "description": "Routes review triggers before the full review pipeline runs.",
       "mode": "primary",
       "model": "{env:OPENCODE_GATE_MODEL}",
+      "variant": "low",
       "prompt": "{file:./agents/gate.md}",
       "permission": {
         "edit": "deny",
