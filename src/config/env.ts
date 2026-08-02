@@ -99,7 +99,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
     githubToken: requiredString(env.GH_TOKEN || env.GITHUB_TOKEN, "GH_TOKEN"),
     workspace,
     dryRun: args.dryRun || env.DRY_RUN === "true",
-    model: env.OPENCODE_MODEL || "opencode-go/minimax-m2.7",
+    model: env.OPENCODE_MODEL || "opencode/deepseek-v4-flash-free",
     gateModel: env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash",
     command: REVIEW_COMMAND,
     botLogin: env.BOT_LOGIN || REVIEW_BOT_LOGIN,

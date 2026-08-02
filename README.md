@@ -118,8 +118,8 @@ with the reusable workflow input `npm_install: true`.
    - `CONTEXT7_API_KEY`: optional Context7 API key.
 3. Optionally set the repository variable `OPENCODE_MODEL` to use a different
    review model. If omitted, the reusable workflow defaults to
-   `opencode-go/minimax-m2.7`. Optionally set `OPENCODE_GATE_MODEL` to use a
-   different gate model.
+   `opencode/deepseek-v4-flash-free`. Optionally set `OPENCODE_GATE_MODEL` to
+   use a different gate model.
 4. Copy `examples/singular-code-review.yml` into the target repository as
    `.github/workflows/singular-code-review.yml`.
 5. Open a non-draft same-repository pull request, mark a same-repository draft
@@ -248,7 +248,7 @@ reusable workflow:
 Optional runtime environment variables:
 
 - `OPENCODE_MODEL`: model id used by the bundled `reviewer` and `auditor`
-  agents; defaults to `opencode-go/minimax-m2.7`.
+  agents; defaults to `opencode/deepseek-v4-flash-free`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
   during provisioning. The reusable workflow sets this from `npm_install`.
