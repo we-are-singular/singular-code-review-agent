@@ -111,6 +111,8 @@ Use these always-on lanes. When delegation is available, SPAWN ONE SUBAGENT PER 
 - `documentation-commentary` - checks applicable Markdown/docs-site updates and whether changed code explains its non-obvious contracts, choices, and workarounds.
 - `maintainability-elegance` - checks code judo, unnecessary complexity, over-engineering, weird branching, file growth, and refactor paths.
 
+Add `state-transition-checker` when changed code transitions durable state or gates an external side effect. Add other conditional lanes only when the diff warrants them: security, performance, API contract, data migration, accessibility, deployment/rollback, or prior review comments.
+
 Subagents are read-only reviewers. They may use non-mutating git/gh/rg/read commands. They must not edit files, change branches, commit, push, or post comments.
 
 ### 5. Synthesize Findings
