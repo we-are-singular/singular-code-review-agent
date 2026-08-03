@@ -83,8 +83,10 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8")
   assert.match(auditorAgent, /Sandbox diagnostics:/)
   assert.match(auditorAgent, /denials usually mean the sandbox worked/u)
-  assert.match(reviewerAgent, /bold, lower-case category label/u)
-  assert.match(reviewerAgent, /This is not a fixed vocabulary/u)
+  assert.match(reviewerAgent, /bold, lower-case review flag/u)
+  assert.match(reviewerAgent, /`critical` to `⛔ Block`/u)
+  assert.match(reviewerAgent, /`high`, `low`, or `question` to `⚠️ Request changes`/u)
+  assert.match(reviewerAgent, /exclusively `hint`\/`nit` findings to `✅ LGTM`/u)
 
   const reviewSkill = fs.readFileSync(
     path.join(repoRoot, "opencode", "skills", "singular-code-review", "SKILL.md"),

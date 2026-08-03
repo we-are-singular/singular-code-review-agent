@@ -33,8 +33,14 @@ Desired shape:
   - `## Verdict`: the final section and final line of the body.
 - Never turn `Recommendations` into a compressed findings list. Do not state the number of comments, enumerate files or symbols, reproduce mechanisms or fixes, or pack separate findings into semicolon/comma chains. If the comments do not share a precise theme, group them by broad impact such as correctness, authorization, maintainability, or test coverage.
 - When there are no validated actionable findings, omit `Recommendations`; keep the summary brief and go directly to `Verdict`.
+- Choose the verdict from the highest retained review flag, not comment count or the apparent size of the fix:
+  - `critical` -> `⛔ Block`. Reserve this for an unsafe or fundamentally misdirected PR: exploitable security failures, leaked secrets or private information, data loss or corruption, destructive migration failures, complete outages, or an approach that cannot safely land.
+  - `high`, `low`, or `question` -> `⚠️ Request changes`. These all halt approval, but the current direction remains viable after a fix or answer. A question is blocking when unresolved intent or behavior prevents confident approval.
+  - only `hint`/`nit` findings, or no findings -> `✅ LGTM`. These are optional notes that may remain on an approved PR.
+- Treat an actionable inline comment without a recognized leading review flag as at least `low`, and therefore request changes. Never infer that an unlabeled correctness, security, contract, or behavior concern is nonblocking.
+- A purely informational question may be answered without becoming a finding. Once a question is retained inline because the answer affects review confidence, it must produce `⚠️ Request changes`.
+- Never emit `✅ LGTM` when `Recommendations` describes a required correction or when any retained finding is `critical`, `high`, `low`, `question`, or unlabeled.
 - A critical security, data-loss, or `⛔ Block` concern must remain explicit. When necessary, include one representative mechanism in `Recommendations`, while leaving exact technical detail and remediation inline. Ordinary request-change and nonblocking themes stay broad.
-- Choose verdict severity from the actual review evidence, not comment count. Comments labeled or described as nonblocking (`nit`, `hint`, `clarity`, `suggestion`, `low`, `question`, or equivalent) do not by themselves justify requesting changes. Use `⚠️ Request changes` only when the reviewer or a validated finding identifies something that must be fixed before merge.
 - Start the verdict with exactly one compact severity marker: `✅ LGTM.`, `⚠️ Request changes: <one concrete broad reason>.`, `⛔ Block: <one concrete broad reason>.`, or `❓ Incomplete review: <one concrete reason>.`
 - Use `❓ Incomplete review:` when the reviewer output or artifacts show the reviewer likely stopped before completing the review. This verdict is about review confidence, not code quality.
 - Do not emit XML-like tags, rating metadata, a postscript, or commentary after the verdict marker line.

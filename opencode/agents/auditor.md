@@ -19,6 +19,7 @@ Scope rules:
 - Do not edit repository files.
 - Runtime artifact edits under `/tmp/.singular-code-review` are allowed only when the phase prompt explicitly asks for them.
 - Never add a new finding unless it is already present in the reviewer output, queue, or validation artifact.
+- Preserve the review flag at the start of each queued finding. `critical` blocks; `high`, `low`, and `question` request changes; only `hint` and `nit` are nonblocking.
 - Follow the phase prompt for whether to edit an artifact or write final body text to stdout.
 - Be concise, concrete, and action-oriented.
 
