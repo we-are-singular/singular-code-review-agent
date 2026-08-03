@@ -20,8 +20,30 @@ type JsonRecord = Record<string, unknown>
 export type PhaseUsageStats = {
   inputTokens: number | null
   outputTokens: number | null
+  reasoningTokens: number | null
   totalTokens: number | null
   costUsd: number | null
+}
+
+export type PhaseTimingTelemetry = {
+  steps: Array<{
+    startedAt: string
+    endedAt: string
+    durationMs: number
+    reason: string | null
+  }>
+  toolCalls: Array<{
+    tool: string
+    status: string | null
+    startedAt: string | null
+    endedAt: string | null
+    durationMs: number | null
+  }>
+  gaps: Array<{
+    after: string
+    before: string
+    durationMs: number
+  }>
 }
 
 export type ExtractedPhaseStats = {
@@ -38,6 +60,7 @@ export type ExtractedPhaseStats = {
   durationMs: number | null
   turns: number | null
   usage: PhaseUsageStats
+  timing: PhaseTimingTelemetry
 }
 
 export type OpenCodeSqliteStats = {
@@ -68,6 +91,7 @@ export type ReviewStatsExport = {
     turns: number | null
     inputTokens: number | null
     outputTokens: number | null
+    reasoningTokens: number | null
     totalTokens: number | null
     costUsd: number | null
     jsonEvents: number
@@ -147,6 +171,7 @@ function emptyUsage(): PhaseUsageStats {
   return {
     inputTokens: null,
     outputTokens: null,
+    reasoningTokens: null,
     totalTokens: null,
     costUsd: null
   }
@@ -177,6 +202,8 @@ function collectNamedUsage(key: string, item: number, usage: PhaseUsageStats, pa
     usage.inputTokens = maxNumber(usage.inputTokens, item)
   } else if (isOutputTokens) {
     usage.outputTokens = maxNumber(usage.outputTokens, item)
+  } else if (parentIsUsage && normalized === "reasoning") {
+    usage.reasoningTokens = maxNumber(usage.reasoningTokens, item)
   } else if (isTotalTokens) {
     usage.totalTokens = maxNumber(usage.totalTokens, item)
   } else if (normalized.includes("cost") || normalized.includes("price")) {
@@ -212,6 +239,9 @@ function addUsageSum(target: PhaseUsageStats, source: PhaseUsageStats): void {
   if (source.outputTokens !== null) {
     target.outputTokens = sumNumber(target.outputTokens, source.outputTokens)
   }
+  if (source.reasoningTokens !== null) {
+    target.reasoningTokens = sumNumber(target.reasoningTokens, source.reasoningTokens)
+  }
   if (source.totalTokens !== null) {
     target.totalTokens = sumNumber(target.totalTokens, source.totalTokens)
   }
@@ -239,6 +269,9 @@ function openCodeStepUsage(event: unknown): PhaseUsageStats | null {
   if (typeof tokens.output === "number" && Number.isFinite(tokens.output)) {
     usage.outputTokens = tokens.output
   }
+  if (typeof tokens.reasoning === "number" && Number.isFinite(tokens.reasoning)) {
+    usage.reasoningTokens = tokens.reasoning
+  }
   if (typeof tokens.total === "number" && Number.isFinite(tokens.total)) {
     usage.totalTokens = tokens.total
   }
@@ -247,7 +280,11 @@ function openCodeStepUsage(event: unknown): PhaseUsageStats | null {
   }
 
   const hasUsage =
-    usage.inputTokens !== null || usage.outputTokens !== null || usage.totalTokens !== null || usage.costUsd !== null
+    usage.inputTokens !== null ||
+    usage.outputTokens !== null ||
+    usage.reasoningTokens !== null ||
+    usage.totalTokens !== null ||
+    usage.costUsd !== null
   return hasUsage ? usage : null
 }
 
@@ -297,11 +334,88 @@ function collectTimestamps(value: unknown, timestamps: number[], parentKey: stri
   }
 }
 
+function eventTimestamp(event: unknown): number | null {
+  const timestamp = asRecord(event).timestamp
+  return typeof timestamp === "number" ? numericTimestamp(timestamp) : null
+}
+
+function eventKind(event: unknown): string {
+  const record = asRecord(event)
+  const part = asRecord(record.part)
+  return String(part.type || record.type || "event")
+}
+
+function isoTimestamp(value: number | null): string | null {
+  return value === null ? null : new Date(value).toISOString()
+}
+
+function emptyTiming(): PhaseTimingTelemetry {
+  return { steps: [], toolCalls: [], gaps: [] }
+}
+
+/**
+ * Summarizes the raw OpenCode event stream without retaining model reasoning
+ * text. Large inter-event gaps distinguish model/service latency from timed
+ * tool calls while keeping the exported stats concise and safe to inspect.
+ */
+function collectTimingEvent(
+  event: unknown,
+  timing: PhaseTimingTelemetry,
+  state: { previous: { timestamp: number; kind: string } | null; stepStartedAt: number | null }
+): void {
+  const timestamp = eventTimestamp(event)
+  const kind = eventKind(event)
+  if (timestamp !== null && state.previous && timestamp - state.previous.timestamp >= 1_000) {
+    timing.gaps.push({
+      after: state.previous.kind,
+      before: kind,
+      durationMs: timestamp - state.previous.timestamp
+    })
+  }
+  if (timestamp !== null) {
+    state.previous = { timestamp, kind }
+  }
+
+  const record = asRecord(event)
+  const part = asRecord(record.part)
+  if (record.type === "step_start" || part.type === "step-start") {
+    state.stepStartedAt = timestamp
+    return
+  }
+  if (record.type === "step_finish" || part.type === "step-finish") {
+    if (state.stepStartedAt !== null && timestamp !== null) {
+      timing.steps.push({
+        startedAt: new Date(state.stepStartedAt).toISOString(),
+        endedAt: new Date(timestamp).toISOString(),
+        durationMs: Math.max(0, timestamp - state.stepStartedAt),
+        reason: stringValue(part.reason)
+      })
+    }
+    state.stepStartedAt = null
+    return
+  }
+  if (record.type !== "tool_use" && part.type !== "tool") {
+    return
+  }
+
+  const toolState = asRecord(part.state)
+  const time = asRecord(toolState.time)
+  const startedAt = typeof time.start === "number" ? numericTimestamp(time.start) : null
+  const endedAt = typeof time.end === "number" ? numericTimestamp(time.end) : null
+  timing.toolCalls.push({
+    tool: stringValue(part.tool) || "unknown",
+    status: stringValue(toolState.status),
+    startedAt: isoTimestamp(startedAt),
+    endedAt: isoTimestamp(endedAt),
+    durationMs: startedAt === null || endedAt === null ? null : Math.max(0, endedAt - startedAt)
+  })
+}
+
 function jsonlStats(
   file: string
 ): Pick<
   ExtractedPhaseStats,
-  "jsonEvents" | "textEvents" | "startedAt" | "endedAt" | "durationMs" | "turns" | "usage" | "sessionId"
+  "jsonEvents" | "textEvents" | "startedAt" | "endedAt" | "durationMs" | "turns" | "usage" | "sessionId" | "timing"
 > {
   const genericUsage = emptyUsage()
   const stepUsage = emptyUsage()
@@ -311,6 +425,11 @@ function jsonlStats(
   let hasStepUsage = false
   let sessionId: string | null = null
   const timestamps: number[] = []
+  const timing = emptyTiming()
+  const timingState = {
+    previous: null as { timestamp: number; kind: string } | null,
+    stepStartedAt: null as number | null
+  }
 
   for (const line of readTextFile(file).split(/\r?\n/u)) {
     if (!line.trim()) {
@@ -334,6 +453,7 @@ function jsonlStats(
       }
       collectGenericUsage(event, genericUsage)
       collectTimestamps(event, timestamps)
+      collectTimingEvent(event, timing, timingState)
     } catch {
       // Raw stdout warnings can appear in JSONL files when OpenCode falls back
       // or emits non-JSON diagnostics. They are not telemetry events.
@@ -350,7 +470,8 @@ function jsonlStats(
     durationMs: started === null || ended === null ? null : Math.max(0, ended - started),
     turns: turns || null,
     usage: hasStepUsage ? stepUsage : genericUsage,
-    sessionId
+    sessionId,
+    timing
   }
 }
 
@@ -370,7 +491,8 @@ function phaseStats(name: ExtractedPhaseStats["name"], outputFile: string, sessi
     endedAt: stats.endedAt,
     durationMs: stats.durationMs,
     turns: stats.turns,
-    usage: stats.usage
+    usage: stats.usage,
+    timing: stats.timing
   }
 }
 
@@ -727,6 +849,7 @@ function statsExport(options: {
       turns: sumNullable(phases.map(phase => phase.turns)),
       inputTokens: sumNullable(phases.map(phase => phase.usage.inputTokens)),
       outputTokens: sumNullable(phases.map(phase => phase.usage.outputTokens)),
+      reasoningTokens: sumNullable(phases.map(phase => phase.usage.reasoningTokens)),
       totalTokens: sumNullable(phases.map(phase => phase.usage.totalTokens)),
       costUsd: sumNullable(phases.map(phase => phase.usage.costUsd)),
       jsonEvents: phases.reduce((sum, phase) => sum + phase.jsonEvents, 0),

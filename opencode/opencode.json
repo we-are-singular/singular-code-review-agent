@@ -9,6 +9,7 @@
       "*.env.test": "allow"
     },
     "external_directory": {
+      "*": "deny",
       "/tmp/.singular-code-review/**": "allow"
     },
     "edit": {

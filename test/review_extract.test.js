@@ -138,6 +138,21 @@ test("extractor reads OpenCode step usage, turns, and numeric timestamps", () =>
         }
       }),
       JSON.stringify({
+        type: "tool_use",
+        timestamp: 1781518617000,
+        part: {
+          type: "tool",
+          tool: "bash",
+          state: {
+            status: "completed",
+            time: {
+              start: 1781518616800,
+              end: 1781518616900
+            }
+          }
+        }
+      }),
+      JSON.stringify({
         type: "step_finish",
         timestamp: 1781518625000,
         sessionID: "review-session",
@@ -170,9 +185,34 @@ test("extractor reads OpenCode step usage, turns, and numeric timestamps", () =>
   assert.equal(extraction.stats.totals.turns, 2)
   assert.equal(extraction.stats.totals.inputTokens, 30)
   assert.equal(extraction.stats.totals.outputTokens, 7)
+  assert.equal(extraction.stats.totals.reasoningTokens, null)
   assert.equal(extraction.stats.totals.totalTokens, 37)
   assert.equal(extraction.stats.totals.costUsd, 0.30000000000000004)
   assert.equal(extraction.stats.phases[0].textEvents, 1)
+  assert.deepEqual(extraction.stats.phases[0].timing.steps, [
+    {
+      startedAt: "2026-06-15T10:16:55.389Z",
+      endedAt: "2026-06-15T10:16:56.708Z",
+      durationMs: 1319,
+      reason: null
+    }
+  ])
+  assert.deepEqual(extraction.stats.phases[0].timing.toolCalls, [
+    {
+      tool: "bash",
+      status: "completed",
+      startedAt: "2026-06-15T10:16:56.800Z",
+      endedAt: "2026-06-15T10:16:56.900Z",
+      durationMs: 100
+    }
+  ])
+  assert.deepEqual(extraction.stats.phases[0].timing.gaps, [
+    {
+      after: "tool",
+      before: "step-finish",
+      durationMs: 8000
+    }
+  ])
 })
 
 test("extractor includes gate-only comments in exports and GitHub summary", () => {

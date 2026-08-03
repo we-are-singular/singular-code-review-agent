@@ -143,6 +143,8 @@ For each changed function, class, route, worker, consumer, command, hook, and te
 3. Follow changed writes/events/jobs into their consumers when the changed code creates durable state, enqueues work, emits events, or calls external systems.
 4. Compare changed behavior with tests, but do not stop at the happy path.
 
+For a changed function that transitions durable state or gates an external side effect, compare the old and new write predicate and returned-value contract, then trace one duplicate or retry through its next side effect.
+
 Review for:
 - wrong return semantics from helper/repository APIs, especially "returns existing" vs "created new"
 - races between prechecks and writes, double-submit, duplicate enqueue, double-claim, lost update, and conflicting-payload paths
@@ -158,6 +160,23 @@ Do not comment on naming, layering, abstraction shape, or elegance unless it cre
 
 Every finding must include the exact changed path and the downstream/callee path that makes the bug real. If the issue depends on an assumption and cannot be verified, use `question` with the exact assumption to resolve.
 Return JSON using the shared output shape.
+```
+
+## State Transition Checker
+
+Use only when a changed function transitions durable state or gates an external side effect.
+
+Prompt:
+
+```text
+You are the state-transition-checker. Independently inspect changed durable-state transitions and the external side effects they permit. Do not repeat general code-path review; focus on the replay path.
+
+For every relevant changed function:
+1. Compare the old and new accepted pre-states, write predicate, affected-row or uniqueness handling, and returned-value contract.
+2. Trace one duplicate delivery, retry, or concurrent worker through the next provider, queue, audit, or database side effect.
+3. Check whether changed tests exercise that replay path rather than only the happy path.
+
+Report only concrete, high-confidence regressions introduced by the diff. Do not emit stylistic findings, future-policy concerns, or findings already covered by another lane. Return JSON using the shared output shape.
 ```
 
 ## Correctness, Risk, And Testing Reviewer
@@ -183,6 +202,24 @@ Do not emit generic "add tests" findings. Name the concrete scenario that is not
 Return JSON using the shared output shape.
 ```
 
+## Documentation And Commentary Reviewer
+
+Prompt:
+
+```text
+You are the documentation-commentary reviewer. Check whether the change remains understandable to maintainers and future agents through the project documentation and the code itself.
+
+First discover the relevant documentation: README files, package docs, `docs/`, ADRs, plans/specs, and documentation-site/project sources when present. Compare the changed behavior, public API, configuration, workflow, operational procedure, or user-facing feature against those docs. Flag missing or stale documentation only when the change makes an existing explanation inaccurate or introduces information users/operators/contributors need to act correctly.
+
+Then inspect changed code for explanation at real abstraction boundaries:
+- exported APIs and non-obvious contracts should say what callers may rely on;
+- long or multi-stage functions should have concise signposts around important phases, unusual branch chains, or invariants;
+- hard-coded values, injected behavior, monkey patches, workarounds, compatibility shims, and deliberately unorthodox choices must explain why they exist and what constraint they preserve;
+- non-obvious library, method, call, or architecture choices should explain the local reason when it cannot be recovered from the surrounding code.
+
+Do not demand comments that merely restate code, docblocks for self-evident exports, or docs-site edits for internal refactors with no documentation impact. Every finding must identify the missing explanation, the reader it helps, and the smallest appropriate location for it. Return JSON using the shared output shape.
+```
+
 ## Maintainability And Elegance Reviewer
 
 Prompt:
@@ -195,12 +232,16 @@ Read the diff and enough surrounding code to understand the local architecture. 
 Review for:
 - code judo opportunities that delete branches, modes, helpers, or concepts
 - over-engineering, thin wrappers, identity abstractions, generic magic
+- newly added one-line or private helpers that neither name a real domain concept nor improve a call site; search the project for an existing equivalent before accepting a near-duplicate
+- repeated functions, object declarations, and controller/route-path logic that have drifted into slight variations of the same behavior; prefer an existing shared abstraction only when it makes ownership and call sites clearer
 - ad-hoc conditionals bolted into busy flows
 - feature logic leaking into shared/general-purpose modules
 - file growth, especially crossing 1000 lines without a strong reason
 - cast-heavy, optional-heavy, fallback-heavy code that hides invariants
 - refactors that move complexity around instead of reducing it
 - vague names and new terminology that obscure domain ownership
+
+Keep the code damp, not aggressively DRY: inline logic and some repetition are acceptable when they are clearer than a thin abstraction. Flag duplication only when it duplicates an existing helper or creates behavioral drift, and flag a helper only when it obscures intent or lacks a clear reason to exist.
 
 Refactor findings must include a minimal safe path: what moves, what disappears, where ownership lands, and which tests prove behavior stayed the same.
 

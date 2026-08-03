@@ -212,6 +212,41 @@ fi
   assert.equal(stats.model, "opencode-go/minimax-m2.7")
 })
 
+test("review_dry_run keeps its default workspace under the runtime permission root", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-dry-run-workspace-"))
+  const mockbin = path.join(dir, "mockbin")
+  const runtimeDir = path.join(dir, "runtime")
+  const workspaceFile = path.join(dir, "workspace")
+  fs.mkdirSync(mockbin)
+
+  makeExecutable(
+    path.join(mockbin, "gh"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "auth" ]]; then exit 0; fi
+if [[ "\${1:-}" == "repo" && "\${2:-}" == "clone" ]]; then mkdir -p "$4/.git"; exit 0; fi
+exit 1
+`
+  )
+  makeExecutable(path.join(mockbin, "git"), "#!/usr/bin/env bash\nexit 0\n")
+  const runner = path.join(dir, "runner")
+  makeExecutable(runner, `#!/usr/bin/env bash\nprintf '%s' "$WORKSPACE" > "${workspaceFile}"\n`)
+
+  execFileSync("bash", [dryRun, "owner/repo", "42", "--runtime-dir", runtimeDir], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PATH: `${mockbin}:${process.env.PATH}`,
+      REVIEW_PROVISION: "/bin/true",
+      REVIEW_RUNNER: runner,
+      OPENCODE_API_KEY: "test-opencode-key"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+
+  assert.equal(fs.readFileSync(workspaceFile, "utf8"), path.join(runtimeDir, "workspace"))
+})
+
 test("review_dry_run keeps explicit runtime dir artifacts and reports provision failure", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-dry-run-"))
   const mockbin = path.join(dir, "mockbin")

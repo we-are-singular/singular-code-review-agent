@@ -9,6 +9,7 @@ export type OpenCodeCapabilities = {
   file: boolean
   session: boolean
   variant: boolean
+  dir: boolean
 }
 
 export type OpenCodeRunOptions = {
@@ -78,7 +79,8 @@ export function detectOpenCodeCapabilities(cacheFile?: string): OpenCodeCapabili
     formatJson: result.status === 0 && help.includes("--format"),
     file: result.status === 0 && help.includes("--file"),
     session: result.status === 0 && help.includes("--session"),
-    variant: result.status === 0 && help.includes("--variant")
+    variant: result.status === 0 && help.includes("--variant"),
+    dir: result.status === 0 && help.includes("--dir")
   }
 
   if (cacheFile) {
@@ -169,6 +171,9 @@ export function buildOpenCodeArgs(options: OpenCodeRunOptions, capabilities: Ope
   }
   if (capabilities.formatJson) {
     args.push("--format", "json")
+  }
+  if (capabilities.dir) {
+    args.push("--dir", options.workspace)
   }
 
   const sessionId = options.reuseSession && options.sessionFile ? readTextFile(options.sessionFile) : ""

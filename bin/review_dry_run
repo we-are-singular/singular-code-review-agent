@@ -361,15 +361,17 @@ main() {
   local slug
   slug="$(slugify_repo "$repo")"
 
-  if [[ -z "$workspace" ]]; then
-    workspace="${TMPDIR:-/tmp}/singular-code-review-dry-run/${slug}-pr-${pr_number}-$(date +%Y%m%d%H%M%S)"
-  fi
-
   if [[ -z "$runtime_dir" ]]; then
     runtime_dir="${SINGULAR_CODE_REVIEW_RUNTIME_DIR:-}"
   fi
   if [[ -z "$runtime_dir" ]]; then
     runtime_dir="${TMPDIR:-/tmp}/.singular-code-review/${slug}-pr-${pr_number}-$(date +%Y%m%d%H%M%S)"
+  fi
+
+  # OpenCode may inspect the checkout directly, so keep the default workspace
+  # within its packaged external-directory permission root.
+  if [[ -z "$workspace" ]]; then
+    workspace="${runtime_dir}/workspace"
   fi
 
   local wrapper_dir="${runtime_dir}/dry-run-bin"

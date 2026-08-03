@@ -58,10 +58,10 @@ test("builds modern OpenCode args with explicit file attachments and session reu
       files: ["/tmp/context.json", "/tmp/pr.diff"],
       prompt: "Review this"
     },
-    { run: true, formatJson: true, file: true, session: true, variant: true }
+    { run: true, formatJson: true, file: true, session: true, variant: true, dir: true }
   )
 
-  assert.deepEqual(args.slice(0, 9), [
+  assert.deepEqual(args.slice(0, 11), [
     "run",
     "--agent",
     "reviewer",
@@ -69,6 +69,8 @@ test("builds modern OpenCode args with explicit file attachments and session reu
     "low",
     "--format",
     "json",
+    "--dir",
+    "/repo",
     "--session",
     "ses_456"
   ])
@@ -91,7 +93,8 @@ test("omits the variant flag when the CLI or caller does not support it", () => 
     formatJson: false,
     file: false,
     session: false,
-    variant: true
+    variant: true,
+    dir: false
   })
   assert.deepEqual(withSupport.slice(0, 3), ["run", "--variant", "low"])
 
@@ -100,7 +103,8 @@ test("omits the variant flag when the CLI or caller does not support it", () => 
     formatJson: false,
     file: false,
     session: false,
-    variant: false
+    variant: false,
+    dir: false
   })
   assert.deepEqual(withoutSupport.slice(0, 1), ["run"])
 })

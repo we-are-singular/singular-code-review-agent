@@ -53,14 +53,15 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
     "*.env.test": "allow"
   })
   assert.deepEqual(config.permission.external_directory, {
+    "*": "deny",
     "/tmp/.singular-code-review/**": "allow"
   })
   assert.equal(config.default_agent, "reviewer")
   assert.equal(config.agent.reviewer.prompt, "{file:./agents/reviewer.md}")
+  assert.equal(Object.hasOwn(config.agent.reviewer, "permission"), false)
   assert.equal(config.agent.gate.model, "{env:OPENCODE_GATE_MODEL}")
   assert.equal(config.agent.gate.prompt, "{file:./agents/gate.md}")
   assert.equal(config.agent.auditor.prompt, "{file:./agents/auditor.md}")
-  assert.equal(Object.hasOwn(config.agent.reviewer, "permission"), false)
   assert.deepEqual(config.agent.gate.permission, {
     edit: "deny",
     bash: "deny",
@@ -84,6 +85,14 @@ test("OpenCode config defines reviewer and auditor agents with scoped permission
   assert.match(auditorAgent, /denials usually mean the sandbox worked/u)
   assert.match(reviewerAgent, /bold, lower-case category label/u)
   assert.match(reviewerAgent, /This is not a fixed vocabulary/u)
+
+  const reviewSkill = fs.readFileSync(
+    path.join(repoRoot, "opencode", "skills", "singular-code-review", "SKILL.md"),
+    "utf8"
+  )
+  assert.match(reviewSkill, /spawn every review lane.*in one assistant turn/u)
+  assert.match(reviewSkill, /run the same lanes sequentially and keep their notes separated before synthesis/u)
+  assert.match(reviewSkill, /documentation-commentary/u)
 })
 
 test("example trigger workflow runs gate-capable reviews on new pull request heads", () => {

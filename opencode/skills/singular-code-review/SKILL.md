@@ -7,7 +7,7 @@ description: Use when reviewing code changes, pull requests, branches, or work-i
 
 Review code as a senior engineer validating whether a change should land. Start from the diff, but do not stay there: read surrounding code, local standards, linked plans/issues, PR body, commit messages, and conversation history when available.
 
-This skill is designed for subagent orchestration. If the current environment supports subagents and the invocation permits delegation, spawn review lanes from `references/subagent-prompts.md`. If subagents are unavailable or not permitted, run the same lanes sequentially and keep their notes separated before synthesis.
+This skill is designed for subagent orchestration. If the current environment supports subagents and the invocation permits delegation, spawn every review lane from `references/subagent-prompts.md` in one assistant turn so independent lanes run in parallel. If subagents are unavailable or not permitted, run the same lanes sequentially and keep their notes separated before synthesis.
 
 ## Read These References
 
@@ -102,15 +102,14 @@ Use deterministic doc discovery first: for each changed file, check each parent 
 
 ### 4. Run Review Lanes
 
-Use these always-on lanes. Spawn one subagent per lane when allowed; otherwise run them sequentially.
+Use these always-on lanes. When delegation is available, SPAWN ONE SUBAGENT PER LANE and launch every `task` call in one assistant turn so the independent lanes can run in **parallel**. Otherwise run the same lanes sequentially, keeping their notes separated before synthesis.
 
 - `intent-contract` - verifies diff against conversation, PR body, issue, plan/PRD/spec, and external contracts.
 - `standards-architecture` - checks local docs, surrounding patterns, layer ownership, naming, and backend/frontend architecture.
 - `code-path-bug-hunter` - walks each changed function/class/route/consumer for runtime bugs, races, retry/idempotency failures, side-effect durability, and bad state/error transitions.
 - `correctness-risk-testing` - checks logic, security, data integrity, error paths, concurrency, compatibility, and test quality.
+- `documentation-commentary` - checks applicable Markdown/docs-site updates and whether changed code explains its non-obvious contracts, choices, and workarounds.
 - `maintainability-elegance` - checks code judo, unnecessary complexity, over-engineering, weird branching, file growth, and refactor paths.
-
-Add conditional lanes only when the diff warrants them: security, performance, API contract, data migration, accessibility, deployment/rollback, or prior review comments.
 
 Subagents are read-only reviewers. They may use non-mutating git/gh/rg/read commands. They must not edit files, change branches, commit, push, or post comments.
 
