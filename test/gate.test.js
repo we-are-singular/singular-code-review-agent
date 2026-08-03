@@ -105,13 +105,25 @@ test("gate decision parser accepts only the exact review shape", () => {
     decision: "review",
     reason: "meaningful code delta"
   })
+  assert.deepEqual(parseGateDecision('```json\n{"decision":"review","reason":"x"}\n```'), {
+    decision: "review",
+    reason: "x"
+  })
+  assert.deepEqual(parseGateDecision('```\n{"decision":"review","reason":"x"}\n```'), {
+    decision: "review",
+    reason: "x"
+  })
 
   assert.throws(() => parseGateDecision('{"decision":"review","reason":"x","answer":"extra"}'), /decision and reason/u)
-  assert.throws(() => parseGateDecision('```json\n{"decision":"review","reason":"x"}\n```'), /Unexpected token/u)
+  assert.throws(() => parseGateDecision('Result:\n{"decision":"review","reason":"x"}'), /Unexpected token/u)
 })
 
 test("gate decision parser accepts only answer-bearing no-review and answer shapes", () => {
   assert.deepEqual(parseGateDecision('{"decision":"no-review","answer":"Docs only."}'), {
+    decision: "no-review",
+    answer: "Docs only."
+  })
+  assert.deepEqual(parseGateDecision('```json\n{"decision":"no-review","answer":"Docs only."}\n```'), {
     decision: "no-review",
     answer: "Docs only."
   })

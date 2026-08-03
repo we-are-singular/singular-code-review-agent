@@ -8,24 +8,14 @@ Use exact GitHub handles from context. `participants` entries are formatted as `
 
 Output contract:
 
-- Output exactly one JSON object.
-- Do not output Markdown.
-- Do not wrap the JSON in a code fence.
-- Do not add prose before or after the JSON.
+- Return exactly one raw JSON object and nothing else.
+- The first response character must be `{` and the last response character must be `}`.
+- Do not use Markdown fences, headings, titles, labels, explanations, or surrounding prose.
 - Do not add extra keys.
-- Use exactly one of these shapes:
-
-```json
-{ "decision": "review", "reason": "<short internal reason>" }
-```
-
-```json
-{ "decision": "no-review", "answer": "<short PR comment explaining why a full re-review is not needed>" }
-```
-
-```json
-{ "decision": "answer", "answer": "<direct answer to the user>" }
-```
+- Use exactly one of these shapes (shown inline; do not reproduce the backticks):
+  - `{"decision":"review","reason":"<short internal reason>"}`
+  - `{"decision":"no-review","answer":"<short PR comment explaining why a full re-review is not needed>"}`
+  - `{"decision":"answer","answer":"<direct answer to the user>"}`
 
 Decision rules:
 
@@ -39,25 +29,8 @@ Decision rules:
 - Keep `answer` concise, user-facing, and free of runner internals.
 - For `no-review`, do not include an approval marker or `LGTM` line in the JSON. The runner appends the final `✅ LGTM` line after parsing your answer.
 
-Examples:
+Examples (content only; return the matching object as raw JSON):
 
-```json
-{
-  "decision": "review",
-  "reason": "The new delta changes worker authentication logic and should receive a full review."
-}
-```
-
-```json
-{
-  "decision": "no-review",
-  "answer": "No full re-review needed: the latest push only updates documentation and does not change runtime behavior."
-}
-```
-
-```json
-{
-  "decision": "answer",
-  "answer": "Yes, the previous finding still applies because the new guard only handles null, not unsupported language codes."
-}
-```
+- Review: `{"decision":"review","reason":"The new delta changes worker authentication logic and should receive a full review."}`
+- No review: `{"decision":"no-review","answer":"No full re-review needed: the latest push only updates documentation and does not change runtime behavior."}`
+- Answer: `{"decision":"answer","answer":"Yes, the previous finding still applies because the new guard only handles null, not unsupported language codes."}`

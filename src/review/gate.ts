@@ -446,7 +446,10 @@ export function prepareGate(options: {
 
 export function parseGateDecision(text: string): GateDecision {
   const trimmed = text.trim()
-  const parsed = JSON.parse(trimmed) as unknown
+  // Some models wrap an otherwise valid response despite the JSON-only prompt.
+  // Accept one complete fence without relaxing the decision schema or accepting prose.
+  const fenced = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(trimmed)
+  const parsed = JSON.parse((fenced?.[1] || trimmed).trim()) as unknown
   const record = asRecord(parsed)
   const decision = record.decision
 
