@@ -139,6 +139,8 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
   assert.match(workflow, /review_guard attempt \$\{attempt\}\/2/)
   assert.match(workflow, /npm_install:\s*\n\s+description: Install repository dependencies before review\./)
   assert.match(workflow, /type: boolean\s*\n\s+default: false/)
+  assert.match(workflow, /runner:\s*\n\s+description: Runner label used for the review job\./)
+  assert.match(workflow, /runs-on: "\$\{\{ inputs\.runner \|\| 'ubuntu-latest' \}\}"/)
   assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/)
   assert.match(workflow, /name: Provision review workspace/)
   assert.match(workflow, /\/usr\/local\/bin\/provision\.sh/)
