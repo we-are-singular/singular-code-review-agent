@@ -6,6 +6,7 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
+import { OpenCodeRunError } from "../dist/clients/opencode.js"
 import { buildArtifactPaths } from "../dist/config/paths.js"
 import { ArtifactStore } from "../dist/lib/artifacts.js"
 import { buildReviewContext } from "../dist/review/context.js"
@@ -32,6 +33,8 @@ function createConfig(workspace, dryRun = false) {
     workspace,
     dryRun,
     model: "opencode-go/minimax-m3",
+    fallbackModel: "opencode-go/minimax-m3",
+    fallbackModelVariant: null,
     gateModel: "opencode-go/deepseek-v4-flash",
     command: "@singular-code-review",
     botLogin: "singular-code-review[bot]",
@@ -309,7 +312,7 @@ test("runner executes review, audit, synthesis, validation, and submission in or
           line: 2,
           body: "The timeout can become NaN."
         })
-        return { text: "Queued one finding.", sessionId: "review-session", args: [] }
+        return { text: "Queued one finding.", sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Audit the queued pull request review comments")) {
         const queue = loadQueue(config.artifacts.queueFile)
@@ -323,11 +326,16 @@ test("runner executes review, audit, synthesis, validation, and submission in or
           }
         ]
         saveQueue(config.artifacts.queueFile, queue)
-        return { text: "Audit complete.", sessionId: "post-session", args: [] }
+        return { text: "Audit complete.", sessionId: "post-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
         assert.equal(options.reuseSession, true)
-        return { text: "Request changes: keep the queued finding.", sessionId: "post-session", args: [] }
+        return {
+          text: "Request changes: keep the queued finding.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error(`unexpected prompt: ${options.prompt}`)
     }
@@ -475,17 +483,27 @@ test("runner restores the pre-audit queue when audit writes invalid JSON", async
           line: 2,
           body: "The timeout can become NaN."
         })
-        return { text: "Request changes: queued one finding.", sessionId: "review-session", args: [] }
+        return {
+          text: "Request changes: queued one finding.",
+          sessionId: "review-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       if (options.prompt.includes("Audit the queued pull request review comments")) {
         fs.writeFileSync(
           config.artifacts.queueFile,
           '{"version":1,"inlineComments":[{"path":"src/app.js","line":2,"body":"bad\njson"}]}\n'
         )
-        return { text: "Audit complete.", sessionId: "post-session", args: [] }
+        return { text: "Audit complete.", sessionId: "post-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "Request changes: keep the restored queue.", sessionId: "post-session", args: [] }
+        return {
+          text: "Request changes: keep the restored queue.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error(`unexpected prompt: ${options.prompt}`)
     }
@@ -524,10 +542,15 @@ test("runner skips audit when the first pass queues no actions", async () => {
     async run(options) {
       calls.push(options.prompt)
       if (options.prompt.includes("Review this pull request")) {
-        return { text: "No blocking findings.", sessionId: "review-session", args: [] }
+        return { text: "No blocking findings.", sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "LGTM. The change is narrow and safe.", sessionId: "post-session", args: [] }
+        return {
+          text: "LGTM. The change is narrow and safe.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error("audit should not run")
     }
@@ -550,7 +573,7 @@ test("runner skips audit when the first pass queues no actions", async () => {
   assert.deepEqual(github.submitted.reviews[0].comments, [])
 })
 
-test("runner lets synthesis post an incomplete verdict for unfinished empty reviews", async () => {
+test("runner does not publish when all three review attempts remain incomplete", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-interrupted-empty-"))
   fs.mkdirSync(path.join(workspace, ".git"))
   const config = createConfig(workspace, true)
@@ -560,16 +583,12 @@ test("runner lets synthesis post an incomplete verdict for unfinished empty revi
 
   const opencode = {
     async run(options) {
-      calls.push(options.prompt)
+      calls.push(options)
       if (options.prompt.includes("Review this pull request")) {
-        return { text: "I'll review the PR. Let me inspect the changed files.", sessionId: "review-session", args: [] }
-      }
-      if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        const auditorContext = JSON.parse(fs.readFileSync(config.artifacts.auditorContextFile, "utf8"))
-        assert.equal(auditorContext.review_seems_complete, false)
         return {
-          text: "The automated review appears to have stopped before completing its analysis.\n\n## Verdict\n\n❓ Incomplete review: automated reviewer stopped before producing a final conclusion.",
-          sessionId: "post-session",
+          text: "I'll review the PR. Let me inspect the changed files.",
+          sessionId: `review-session-${calls.length}`,
+          finishReason: "unknown",
           args: []
         }
       }
@@ -577,17 +596,29 @@ test("runner lets synthesis post an incomplete verdict for unfinished empty revi
     }
   }
 
-  const result = await runReviewWorkflow({
-    config,
-    artifacts,
-    github: github.client,
-    opencode,
-    logger: createLogger()
-  })
+  await assert.rejects(
+    runReviewWorkflow({ config, artifacts, github: github.client, opencode, logger: createLogger() }),
+    /all three OpenCode attempts failed or produced incomplete output/u
+  )
 
-  assert.equal(result.status, "dry-run")
-  assert.equal(calls.length, 2)
-  assert.match(github.submitted.reviews[0].body, /❓ Incomplete review: automated reviewer stopped/u)
+  assert.equal(calls.length, 3)
+  assert.deepEqual(
+    calls.map(call => call.model),
+    [config.model, config.model, "opencode-go/minimax-m3"]
+  )
+  assert.equal(new Set(calls.map(call => call.sessionFile)).size, 3)
+  assert(calls.every(call => call.reuseSession === false))
+  const attempts = JSON.parse(fs.readFileSync(artifacts.child("review_attempts.json"), "utf8"))
+  assert.deepEqual(
+    attempts.map(attempt => attempt.attempt),
+    [1, 2, 3]
+  )
+  assert.deepEqual(
+    attempts.map(attempt => attempt.finish_reason),
+    ["unknown", "unknown", "unknown"]
+  )
+  assert(attempts.every(attempt => attempt.successful === false))
+  assert.deepEqual(github.submitted.reviews, [])
   assert.deepEqual(github.submitted.replies, [])
 })
 
@@ -597,17 +628,17 @@ test("runner keeps an empty synthesis result compact instead of exposing reviewe
   const config = createConfig(workspace, true)
   const artifacts = new ArtifactStore(config.artifacts)
   const github = createGitHub(fs.readFileSync(fixture, "utf8"))
-  const reviewerProgress = "I'll inspect one more concern before reaching a verdict. "
+  const reviewerProgress = "I inspected the change and found no actionable issues. "
   const synthesisCalls = []
 
   const opencode = {
     async run(options) {
       if (options.prompt.includes("Review this pull request")) {
-        return { text: reviewerProgress.repeat(500), sessionId: "review-session", args: [] }
+        return { text: reviewerProgress.repeat(500), sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
         synthesisCalls.push(options)
-        return { text: "", sessionId: "post-session", args: [] }
+        return { text: "", sessionId: "post-session", finishReason: "stop", args: [] }
       }
       throw new Error("audit should not run for an empty queue")
     }
@@ -631,10 +662,11 @@ test("runner keeps an empty synthesis result compact instead of exposing reviewe
   assert.ok(body.length <= 6_000)
 })
 
-test("runner retries an unfinished empty review after an OpenCode permission denial", async () => {
+test("runner resumes a permission-denied review in the same configured-model session", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-retry-"))
   fs.mkdirSync(path.join(workspace, ".git"))
   const config = createConfig(workspace, true)
+  config.model = "opencode-go/deepseek-v4-flash"
   const artifacts = new ArtifactStore(config.artifacts)
   const github = createGitHub(fs.readFileSync(fixture, "utf8"))
   const calls = []
@@ -654,16 +686,26 @@ test("runner retries an unfinished empty review after an OpenCode permission den
               "! permission requested: external_directory (/apps/web/src/lib/server/*); auto-rejecting"
             ].join("\n")
           )
-          return { text: "Let me continue reading the rest of the diff and key files.", sessionId: "first", args: [] }
+          return {
+            text: "Let me continue reading the rest of the diff and key files.",
+            sessionId: "first",
+            finishReason: "unknown",
+            args: []
+          }
         }
 
         fs.writeFileSync(options.outputFile, "No blocking findings.\n")
-        return { text: "No blocking findings.", sessionId: "second", args: [] }
+        return { text: "No blocking findings.", sessionId: "first", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
         const auditorContext = JSON.parse(fs.readFileSync(config.artifacts.auditorContextFile, "utf8"))
         assert.equal(auditorContext.review_seems_complete, true)
-        return { text: "LGTM. No actionable findings after retry.", sessionId: "post-session", args: [] }
+        return {
+          text: "LGTM. No actionable findings after retry.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error("audit should not run for an empty queue")
     }
@@ -683,14 +725,101 @@ test("runner retries an unfinished empty review after an OpenCode permission den
   assert.equal(reviewCalls.length, 2)
   assert.notEqual(reviewCalls[0].prompt, reviewCalls[1].prompt)
   assert.match(reviewCalls[1].prompt, /Resume the prior review\./u)
-  assert.match(reviewCalls[1].prompt, /`\/tmp\/\.singular-code-review` only for temporary files/u)
-  assert.equal(reviewCalls[0].reuseSession, true)
+  assert.equal(reviewCalls[0].sessionFile, reviewCalls[1].sessionFile)
+  assert.equal(reviewCalls[0].reuseSession, false)
   assert.equal(reviewCalls[1].reuseSession, true)
-  assert.equal(github.submitted.reviews[0].body, "> reviewer · minimax-m3\n\nLGTM. No actionable findings after retry.")
+  assert.equal(reviewCalls[0].model, config.model)
+  assert.equal(reviewCalls[1].model, config.model)
+  assert.equal(
+    github.submitted.reviews[0].body,
+    "> reviewer · deepseek-v4-flash\n\nLGTM. No actionable findings after retry."
+  )
+  const attempts = JSON.parse(fs.readFileSync(artifacts.child("review_attempts.json"), "utf8"))
+  assert.equal(attempts.length, 1)
+  assert.equal(attempts[0].session_id, "first")
+  assert.equal(attempts[0].permission_resume.session_id, "first")
+  assert.equal(attempts[0].permission_resume.successful, true)
   assert.deepEqual(github.submitted.replies, [])
 })
 
-test("runner resumes a failed empty review in the same OpenCode session after a permission denial", async () => {
+test("runner falls back to MiniMax after two incomplete DeepSeek attempts", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-model-fallback-"))
+  fs.mkdirSync(path.join(workspace, ".git"))
+  const config = createConfig(workspace, true)
+  config.model = "opencode-go/deepseek-v4-flash"
+  config.fallbackModelVariant = "high"
+  const artifacts = new ArtifactStore(config.artifacts)
+  const github = createGitHub(fs.readFileSync(fixture, "utf8"))
+  const calls = []
+  let reviewAttempts = 0
+
+  const opencode = {
+    async run(options) {
+      calls.push(options)
+      if (options.prompt.includes("Review this pull request")) {
+        reviewAttempts += 1
+        if (reviewAttempts === 1) {
+          return { text: "No findings.", sessionId: "deepseek-1", finishReason: "unknown", args: [] }
+        }
+        if (reviewAttempts === 2) {
+          return { text: "Still inspecting the workflow.", sessionId: "deepseek-2", finishReason: "stop", args: [] }
+        }
+
+        addInlineComment(config.artifacts.queueFile, {
+          path: "src/app.js",
+          line: 2,
+          body: "The fallback found a concrete issue."
+        })
+        return { text: "Queued one finding.", sessionId: "minimax-3", finishReason: "stop", args: [] }
+      }
+      if (options.prompt.includes("Audit the queued pull request review comments")) {
+        return { text: "Audit complete.", sessionId: "audit", finishReason: "stop", args: [] }
+      }
+      if (options.prompt.includes("Write the final GitHub pull request review body")) {
+        return {
+          text: "Request changes: address the inline finding.",
+          sessionId: "audit",
+          finishReason: "stop",
+          args: []
+        }
+      }
+      throw new Error(`unexpected prompt: ${options.prompt}`)
+    }
+  }
+
+  const result = await runReviewWorkflow({
+    config,
+    artifacts,
+    github: github.client,
+    opencode,
+    logger: createLogger()
+  })
+
+  assert.equal(result.status, "dry-run")
+  const reviewCalls = calls.filter(call => call.prompt.includes("Review this pull request"))
+  assert.deepEqual(
+    reviewCalls.map(call => call.model),
+    ["opencode-go/deepseek-v4-flash", "opencode-go/deepseek-v4-flash", "opencode-go/minimax-m3"]
+  )
+  assert.equal(new Set(reviewCalls.map(call => call.sessionFile)).size, 3)
+  assert.deepEqual(
+    reviewCalls.map(call => call.variant),
+    [undefined, undefined, "high"]
+  )
+  assert(calls.slice(3).every(call => call.model === "opencode-go/minimax-m3"))
+  assert.match(github.submitted.reviews[0].body, /^> reviewer · minimax-m3/u)
+  const attempts = JSON.parse(fs.readFileSync(artifacts.child("review_attempts.json"), "utf8"))
+  assert.deepEqual(
+    attempts.map(attempt => attempt.successful),
+    [false, false, true]
+  )
+  assert.deepEqual(
+    attempts.map(attempt => attempt.session_id),
+    ["deepseek-1", "deepseek-2", "minimax-3"]
+  )
+})
+
+test("runner resumes a nonzero permission denial in the same session", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-exit-retry-"))
   fs.mkdirSync(path.join(workspace, ".git"))
   const config = createConfig(workspace, true)
@@ -707,14 +836,29 @@ test("runner resumes a failed empty review in the same OpenCode session after a 
         if (reviewAttempts === 1) {
           fs.writeFileSync(options.outputFile, "! permission requested: external_directory (/tmp); auto-rejecting")
           fs.writeFileSync(options.sessionFile, "ses_permission_denied\n")
-          throw new Error("opencode exited with status 1")
+          throw new OpenCodeRunError("opencode exited with status 1", {
+            text: "! permission requested: external_directory (/tmp); auto-rejecting",
+            sessionId: "ses_permission_denied",
+            finishReason: null,
+            args: []
+          })
         }
 
         fs.writeFileSync(options.outputFile, "No blocking findings.\n")
-        return { text: "No blocking findings.", sessionId: "second", args: [] }
+        return {
+          text: "No blocking findings.",
+          sessionId: "ses_permission_denied",
+          finishReason: "stop",
+          args: []
+        }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "LGTM. No actionable findings after resumed retry.", sessionId: "post-session", args: [] }
+        return {
+          text: "LGTM. No actionable findings after resumed retry.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error("audit should not run for an empty queue")
     }
@@ -740,7 +884,7 @@ test("runner resumes a failed empty review in the same OpenCode session after a 
   )
 })
 
-test("runner propagates a permission-denial exit without a reusable OpenCode session", async () => {
+test("runner exhausts all three attempts after repeated nonzero exits", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "runner-permission-no-session-"))
   fs.mkdirSync(path.join(workspace, ".git"))
   const config = createConfig(workspace, true)
@@ -767,9 +911,10 @@ test("runner propagates a permission-denial exit without a reusable OpenCode ses
       opencode,
       logger: createLogger()
     }),
-    /opencode exited with status 1/u
+    /all three OpenCode attempts failed or produced incomplete output/u
   )
-  assert.equal(reviewCalls, 1)
+  assert.equal(reviewCalls, 3)
+  assert.deepEqual(github.submitted.reviews, [])
 })
 
 test("runner uses gate answer for direct mention questions without submitting a review", async () => {
@@ -913,10 +1058,10 @@ test("runner treats explicit retry mentions as full review requests", async () =
       calls.push(options)
       assert.notEqual(options.agent, "gate")
       if (options.prompt.includes("Review this pull request")) {
-        return { text: "No blocking findings.", sessionId: "review-session", args: [] }
+        return { text: "No blocking findings.", sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "LGTM. Re-reviewed the same head.", sessionId: "post-session", args: [] }
+        return { text: "LGTM. Re-reviewed the same head.", sessionId: "post-session", finishReason: "stop", args: [] }
       }
       throw new Error(`unexpected prompt: ${options.prompt}`)
     }
@@ -973,10 +1118,10 @@ test("runner escalates synchronize gate review decisions into the full review pi
         }
       }
       if (options.prompt.includes("Review this pull request")) {
-        return { text: "No blocking findings.", sessionId: "review-session", args: [] }
+        return { text: "No blocking findings.", sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "LGTM. The runtime change is safe.", sessionId: "post-session", args: [] }
+        return { text: "LGTM. The runtime change is safe.", sessionId: "post-session", finishReason: "stop", args: [] }
       }
       throw new Error(`unexpected prompt: ${options.prompt}`)
     }
@@ -1025,10 +1170,15 @@ test("dry-run synchronize triggers bypass the gate and run the full review", asy
       calls.push(options)
       assert.notEqual(options.agent, "gate")
       if (options.prompt.includes("Review this pull request")) {
-        return { text: "No blocking findings.", sessionId: "review-session", args: [] }
+        return { text: "No blocking findings.", sessionId: "review-session", finishReason: "stop", args: [] }
       }
       if (options.prompt.includes("Write the final GitHub pull request review body")) {
-        return { text: "LGTM. Dry run exercised the full review path.", sessionId: "post-session", args: [] }
+        return {
+          text: "LGTM. Dry run exercised the full review path.",
+          sessionId: "post-session",
+          finishReason: "stop",
+          args: []
+        }
       }
       throw new Error(`unexpected prompt: ${options.prompt}`)
     }

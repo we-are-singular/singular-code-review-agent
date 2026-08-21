@@ -129,6 +129,7 @@ test("extractor reads OpenCode step usage, turns, and numeric timestamps", () =>
         sessionID: "review-session",
         part: {
           type: "step-finish",
+          reason: "unknown",
           tokens: {
             input: 10,
             output: 2,
@@ -189,12 +190,13 @@ test("extractor reads OpenCode step usage, turns, and numeric timestamps", () =>
   assert.equal(extraction.stats.totals.totalTokens, 37)
   assert.equal(extraction.stats.totals.costUsd, 0.30000000000000004)
   assert.equal(extraction.stats.phases[0].textEvents, 1)
+  assert.equal(extraction.stats.phases[0].finishReason, "unknown")
   assert.deepEqual(extraction.stats.phases[0].timing.steps, [
     {
       startedAt: "2026-06-15T10:16:55.389Z",
       endedAt: "2026-06-15T10:16:56.708Z",
       durationMs: 1319,
-      reason: null
+      reason: "unknown"
     }
   ])
   assert.deepEqual(extraction.stats.phases[0].timing.toolCalls, [

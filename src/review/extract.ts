@@ -11,7 +11,7 @@ import {
   writeFileSync
 } from "node:fs"
 import { dirname, extname, join } from "node:path"
-import { findSessionId, textFromJsonEvent } from "../clients/opencode.js"
+import { findSessionId, finishReasonFromJsonEvent, textFromJsonEvent } from "../clients/opencode.js"
 import { type ArtifactPaths } from "../lib/artifacts.js"
 import { readJsonFile, writeJsonFile } from "../lib/json.js"
 
@@ -52,6 +52,7 @@ export type ExtractedPhaseStats = {
   jsonOutputFile: string
   sessionFile: string
   sessionId: string | null
+  finishReason: string | null
   outputBytes: number
   jsonEvents: number
   textEvents: number
@@ -415,7 +416,16 @@ function jsonlStats(
   file: string
 ): Pick<
   ExtractedPhaseStats,
-  "jsonEvents" | "textEvents" | "startedAt" | "endedAt" | "durationMs" | "turns" | "usage" | "sessionId" | "timing"
+  | "jsonEvents"
+  | "textEvents"
+  | "startedAt"
+  | "endedAt"
+  | "durationMs"
+  | "turns"
+  | "usage"
+  | "sessionId"
+  | "finishReason"
+  | "timing"
 > {
   const genericUsage = emptyUsage()
   const stepUsage = emptyUsage()
@@ -424,6 +434,7 @@ function jsonlStats(
   let turns = 0
   let hasStepUsage = false
   let sessionId: string | null = null
+  let finishReason: string | null = null
   const timestamps: number[] = []
   const timing = emptyTiming()
   const timingState = {
@@ -440,6 +451,7 @@ function jsonlStats(
       const event = JSON.parse(line) as unknown
       jsonEvents += 1
       sessionId ||= findSessionId(event) || null
+      finishReason = finishReasonFromJsonEvent(event) || finishReason
       if (textFromJsonEvent(event)) {
         textEvents += 1
       }
@@ -471,6 +483,7 @@ function jsonlStats(
     turns: turns || null,
     usage: hasStepUsage ? stepUsage : genericUsage,
     sessionId,
+    finishReason,
     timing
   }
 }
@@ -484,6 +497,7 @@ function phaseStats(name: ExtractedPhaseStats["name"], outputFile: string, sessi
     jsonOutputFile,
     sessionFile,
     sessionId: stats.sessionId || readTrimmedFile(sessionFile),
+    finishReason: stats.finishReason,
     outputBytes: fileSize(outputFile),
     jsonEvents: stats.jsonEvents,
     textEvents: stats.textEvents,

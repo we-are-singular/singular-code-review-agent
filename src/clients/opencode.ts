@@ -29,7 +29,18 @@ export type OpenCodeRunOptions = {
 export type OpenCodeRunResult = {
   text: string
   sessionId: string | null
+  finishReason: string | null
   args: string[]
+}
+
+export class OpenCodeRunError extends Error {
+  readonly result: OpenCodeRunResult
+
+  constructor(message: string, result: OpenCodeRunResult) {
+    super(message)
+    this.name = "OpenCodeRunError"
+    this.result = result
+  }
 }
 
 /**
@@ -126,6 +137,34 @@ export function findSessionId(value: unknown, depth = 0): string {
   return ""
 }
 
+/** Extracts the finish reason carried by OpenCode's terminal step event. */
+export function finishReasonFromJsonEvent(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return ""
+  }
+
+  const record = value as Record<string, unknown>
+  const part = record.part
+  const isFinishEvent =
+    record.type === "step_finish" ||
+    record.type === "step-finish" ||
+    (part &&
+      typeof part === "object" &&
+      ((part as Record<string, unknown>).type === "step_finish" ||
+        (part as Record<string, unknown>).type === "step-finish"))
+  if (!isFinishEvent) {
+    return ""
+  }
+
+  if (typeof record.reason === "string") {
+    return record.reason
+  }
+  if (part && typeof part === "object" && typeof (part as Record<string, unknown>).reason === "string") {
+    return (part as Record<string, unknown>).reason as string
+  }
+  return ""
+}
+
 /**
  * Extracts rendered assistant text from known JSON event shapes while ignoring
  * tool/status events.
@@ -217,6 +256,7 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
       let jsonOutput = ""
       let stdoutBuffer = ""
       let sessionId = ""
+      let finishReason = ""
 
       options.logger?.debug("running opencode", { args: args.slice(0, -1), workspace: runOptions.workspace })
 
@@ -251,6 +291,7 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
             const event = JSON.parse(line) as unknown
             jsonOutput += `${line}\n`
             sessionId ||= findSessionId(event)
+            finishReason = finishReasonFromJsonEvent(event) || finishReason
             const text = textFromJsonEvent(event)
             if (text) {
               rendered += text
@@ -283,6 +324,7 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
           const event = JSON.parse(stdoutBuffer) as unknown
           jsonOutput += `${stdoutBuffer}\n`
           sessionId ||= findSessionId(event)
+          finishReason = finishReasonFromJsonEvent(event) || finishReason
           const text = textFromJsonEvent(event)
           if (text) {
             rendered += text
@@ -306,11 +348,13 @@ export function createCliOpenCodeClient(options: { logger?: Logger } = {}): Open
         writeTextFile(runOptions.sessionFile, sessionId)
       }
 
+      const result = { text: rendered, sessionId: sessionId || null, finishReason: finishReason || null, args }
+
       if (code !== 0) {
-        throw new Error(`opencode exited with status ${code}`)
+        throw new OpenCodeRunError(`opencode exited with status ${code}`, result)
       }
 
-      return { text: rendered, sessionId: sessionId || null, args }
+      return result
     }
   }
 }
