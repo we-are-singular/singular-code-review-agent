@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, readFileSync, rmSync } from "node:fs"
 import { isAbsolute, relative } from "node:path"
 import { type GitHubClient } from "../clients/github.js"
-import { type OpenCodeClient, type OpenCodeRunResult } from "../clients/opencode.js"
+import { OpenCodeRunError, type OpenCodeClient, type OpenCodeRunResult } from "../clients/opencode.js"
 import { type RunnerConfig } from "../config/env.js"
 import { type ArtifactPaths, type ArtifactStore } from "../lib/artifacts.js"
 import { type Logger } from "../lib/logger.js"
@@ -82,22 +82,6 @@ function reviewerOutputSeemsComplete(reviewText: string): boolean {
 function reviewerOutputShowsPermissionDenial(reviewText: string): boolean {
   return /(?:permission requested:|auto-rejecting|external_directory|permission denied|tool access issue)/iu.test(
     reviewText
-  )
-}
-
-function shouldResumeReviewAfterPermissionDenial(
-  paths: ArtifactPaths,
-  reviewText: string,
-  validation: ValidatedReviewQueue
-): boolean {
-  const queueIsEmpty =
-    validation.stats.queued_inline === 0 && validation.stats.queued_replies === 0 && !validation.stats.has_conclusion
-  const sessionId = existsSync(paths.reviewSessionFile) ? readFileSync(paths.reviewSessionFile, "utf8").trim() : ""
-  return (
-    queueIsEmpty &&
-    !reviewerOutputSeemsComplete(reviewText) &&
-    reviewerOutputShowsPermissionDenial(reviewText) &&
-    sessionId.length > 0
   )
 }
 
@@ -207,29 +191,192 @@ async function runGatheringPhase(state: ReviewWorkflowState): Promise<ReviewCont
  * Runs the only exploratory OpenCode phase. This phase may inspect the
  * repository and queue structured findings through the review tools.
  */
-async function runReviewPhase(state: ReviewWorkflowState, resumeInstruction?: string): Promise<OpenCodeRunResult> {
+type ReviewAttempt = {
+  number: number
+  model: string
+  variant: string | null
+}
+
+type ReviewAttemptRecord = {
+  attempt: number
+  model: string
+  variant: string | null
+  session_id: string | null
+  finish_reason: string | null
+  successful: boolean
+  error: string | null
+  output_file: string
+  jsonl_file: string
+  session_file: string
+  permission_resume: Omit<ReviewAttemptRecord, "permission_resume"> | null
+}
+
+function reviewAttempts(config: RunnerConfig): ReviewAttempt[] {
+  return [
+    { number: 1, model: config.model, variant: config.modelVariant },
+    { number: 2, model: config.model, variant: config.modelVariant },
+    { number: 3, model: config.fallbackModel, variant: config.fallbackModelVariant }
+  ]
+}
+
+function attemptFile(state: ReviewWorkflowState, attempt: number, name: string): string {
+  return state.artifacts.child(`review-attempt-${attempt}/${name}`)
+}
+
+async function runReviewPhase(
+  state: ReviewWorkflowState,
+  attempt: ReviewAttempt,
+  resumePermissionDenial = false
+): Promise<OpenCodeRunResult> {
   const { config, opencode, paths, opencodePaths, logger } = state
+  const outputFile = attemptFile(
+    state,
+    attempt.number,
+    resumePermissionDenial ? "opencode_review_permission_resume.log" : "opencode_review.log"
+  )
+  const sessionFile = attemptFile(state, attempt.number, "session.txt")
+  state.artifacts.ensureParent(outputFile)
 
   clearQueue(paths.queueFile)
-  logPhase(logger, "review", "running OpenCode")
+  logPhase(logger, "review", resumePermissionDenial ? "resuming after permission denial" : "running OpenCode", {
+    attempt: attempt.number,
+    model: attempt.model,
+    fresh_session: attempt.number > 1 && !resumePermissionDenial,
+    reuse_session: resumePermissionDenial
+  })
 
   return opencode.run({
     workspace: config.workspace,
-    outputFile: paths.reviewOutputFile,
-    jsonOutputFile: `${paths.reviewOutputFile}.jsonl`,
+    outputFile,
+    jsonOutputFile: `${outputFile}.jsonl`,
     capabilitiesFile: paths.opencodeCapabilitiesFile,
-    sessionFile: paths.reviewSessionFile,
-    reuseSession: true,
+    sessionFile,
+    reuseSession: resumePermissionDenial,
     agent: "reviewer",
-    model: config.model,
-    variant: config.modelVariant ?? undefined,
+    model: attempt.model,
+    variant: attempt.variant ?? undefined,
     files: [opencodePaths.reviewContextPath, opencodePaths.diffPath],
     prompt: buildReviewPrompt({
       contextFile: opencodePaths.reviewContextPath,
       diffFile: opencodePaths.diffPath,
-      resumeInstruction
+      resumeInstruction: resumePermissionDenial ? REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION : undefined
     })
   })
+}
+
+function reviewAttemptSucceeded(result: OpenCodeRunResult, validation: ValidatedReviewQueue): boolean {
+  const hasFindings = validation.stats.queued_inline > 0 || validation.stats.queued_replies > 0
+  const hasTerminalVerdict = reviewerOutputSeemsComplete(result.text)
+  return (
+    typeof result.finishReason === "string" && result.finishReason !== "unknown" && (hasFindings || hasTerminalVerdict)
+  )
+}
+
+function preserveSelectedReviewAttempt(state: ReviewWorkflowState, attempt: ReviewAttempt): void {
+  const resumedOutputFile = attemptFile(state, attempt.number, "opencode_review_permission_resume.log")
+  const outputFile = existsSync(resumedOutputFile)
+    ? resumedOutputFile
+    : attemptFile(state, attempt.number, "opencode_review.log")
+  const jsonlFile = `${outputFile}.jsonl`
+  const sessionFile = attemptFile(state, attempt.number, "session.txt")
+  if (existsSync(outputFile)) {
+    copyFileSync(outputFile, state.paths.reviewOutputFile)
+  }
+  if (existsSync(jsonlFile)) {
+    copyFileSync(jsonlFile, `${state.paths.reviewOutputFile}.jsonl`)
+  }
+  if (existsSync(sessionFile)) {
+    copyFileSync(sessionFile, state.paths.reviewSessionFile)
+  }
+}
+
+async function executeReviewAttempt(
+  state: ReviewWorkflowState,
+  context: ReviewContext,
+  attempt: ReviewAttempt,
+  resumePermissionDenial = false
+): Promise<{
+  result: OpenCodeRunResult
+  validation: ValidatedReviewQueue
+  errorMessage: string | null
+  record: Omit<ReviewAttemptRecord, "permission_resume">
+}> {
+  let result: OpenCodeRunResult
+  let errorMessage: string | null = null
+  try {
+    result = await runReviewPhase(state, attempt, resumePermissionDenial)
+  } catch (error) {
+    errorMessage = error instanceof Error ? error.message : String(error)
+    result =
+      error instanceof OpenCodeRunError ? error.result : { text: "", sessionId: null, finishReason: null, args: [] }
+  }
+
+  const validation = validateCurrentQueue(
+    state,
+    context,
+    "review",
+    `attempt ${attempt.number}${resumePermissionDenial ? " permission resume" : ""} finding validation`
+  )
+  const outputName = resumePermissionDenial ? "opencode_review_permission_resume.log" : "opencode_review.log"
+  const outputFile = attemptFile(state, attempt.number, outputName)
+  return {
+    result,
+    validation,
+    errorMessage,
+    record: {
+      attempt: attempt.number,
+      model: attempt.model,
+      variant: attempt.variant,
+      session_id: result.sessionId,
+      finish_reason: result.finishReason,
+      successful: errorMessage === null && reviewAttemptSucceeded(result, validation),
+      error: errorMessage,
+      output_file: outputFile,
+      jsonl_file: `${outputFile}.jsonl`,
+      session_file: attemptFile(state, attempt.number, "session.txt")
+    }
+  }
+}
+
+async function runReviewAttempts(
+  state: ReviewWorkflowState,
+  context: ReviewContext
+): Promise<{ reviewPass: OpenCodeRunResult; validation: ValidatedReviewQueue; attempt: ReviewAttempt }> {
+  const records: ReviewAttemptRecord[] = []
+
+  for (const attempt of reviewAttempts(state.config)) {
+    const initialExecution = await executeReviewAttempt(state, context, attempt)
+    let execution = initialExecution
+    let permissionResume: Omit<ReviewAttemptRecord, "permission_resume"> | null = null
+    const reviewText = [
+      execution.result.text,
+      existsSync(execution.record.output_file) ? readFileSync(execution.record.output_file, "utf8") : ""
+    ].join("\n")
+
+    if (!execution.record.successful && execution.result.sessionId && reviewerOutputShowsPermissionDenial(reviewText)) {
+      state.logger.warn("review: permission denial interrupted the pass; resuming the same session with guidance")
+      execution = await executeReviewAttempt(state, context, attempt, true)
+      permissionResume = execution.record
+    }
+
+    const record: ReviewAttemptRecord = {
+      ...initialExecution.record,
+      successful: execution.record.successful,
+      permission_resume: permissionResume
+    }
+    records.push(record)
+    state.artifacts.writeJson(state.artifacts.child("review_attempts.json"), records)
+
+    if (execution.record.successful) {
+      preserveSelectedReviewAttempt(state, attempt)
+      return { reviewPass: execution.result, validation: execution.validation, attempt }
+    }
+
+    state.logger.warn("review: attempt incomplete; retrying with a fresh session", record)
+  }
+
+  clearQueue(state.paths.queueFile)
+  throw new Error("review unsuccessful: all three OpenCode attempts failed or produced incomplete output")
 }
 
 function gateContextForPrompt(context: GateContext, gateDeltaPath: string): GateContext {
@@ -387,7 +534,8 @@ function validateCurrentQueue(
 async function runAuditPhase(
   state: ReviewWorkflowState,
   context: ReviewContext,
-  currentValidation: ValidatedReviewQueue
+  currentValidation: ValidatedReviewQueue,
+  reviewAttempt: ReviewAttempt
 ): Promise<ValidatedReviewQueue> {
   const { config, opencode, paths, opencodePaths, logger } = state
 
@@ -406,8 +554,8 @@ async function runAuditPhase(
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.auditorSessionFile,
     agent: "auditor",
-    model: config.model,
-    variant: config.modelVariant ?? undefined,
+    model: reviewAttempt.model,
+    variant: reviewAttempt.variant ?? undefined,
     files: [
       opencodePaths.queuePath,
       opencodePaths.validatedPath,
@@ -442,7 +590,8 @@ async function runAuditPhase(
 async function runSynthesisPhase(
   state: ReviewWorkflowState,
   context: ReviewContext,
-  reviewPass: OpenCodeRunResult
+  reviewPass: OpenCodeRunResult,
+  reviewAttempt: ReviewAttempt
 ): Promise<string> {
   const { config, opencode, artifacts, paths, opencodePaths, logger } = state
   const reviewerOutputText = existsSync(paths.reviewOutputFile)
@@ -470,8 +619,8 @@ async function runSynthesisPhase(
     capabilitiesFile: paths.opencodeCapabilitiesFile,
     sessionFile: paths.auditorSessionFile,
     agent: "auditor" as const,
-    model: config.model,
-    variant: config.modelVariant ?? undefined,
+    model: reviewAttempt.model,
+    variant: reviewAttempt.variant ?? undefined,
     files: [opencodePaths.reviewOutputPath, opencodePaths.validatedPath, opencodePaths.auditorContextPath]
   }
 
@@ -499,11 +648,12 @@ async function runSynthesisPhase(
 async function submitReviewResult(
   state: ReviewWorkflowState,
   context: ReviewContext,
-  synthesized: string
+  synthesized: string,
+  model: string
 ): Promise<ReviewWorkflowResult> {
   const { config, github, artifacts, paths, logger } = state
 
-  const finalBody = enforceReviewBodyLimit(applyReviewBanner(synthesized, config.model))
+  const finalBody = enforceReviewBodyLimit(applyReviewBanner(synthesized, model))
   setConclusion(paths.queueFile, finalBody)
 
   // Revalidate after setting the conclusion so the submitted payload is built
@@ -566,36 +716,10 @@ export async function runReviewWorkflow(deps: ReviewWorkflowDependencies): Promi
     return { status: "skipped", reason: "PR diff is empty" }
   }
 
-  // First review
-  let reviewPass: OpenCodeRunResult
-  let reviewValidation: ValidatedReviewQueue
-  try {
-    reviewPass = await runReviewPhase(state)
-    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-  } catch (error) {
-    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-    const reviewText = existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : ""
-    if (!shouldResumeReviewAfterPermissionDenial(paths, reviewText, reviewValidation)) {
-      throw error
-    }
+  const { reviewPass, validation: reviewValidation, attempt } = await runReviewAttempts(state, context)
 
-    logger.warn("review: permission denial interrupted the pass; resuming the same session with sandbox guidance")
-    reviewPass = await runReviewPhase(state, REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION)
-    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-  }
-
-  // Did that completed review pass leave the queue empty and the output incomplete?
-  // If so, resume the same session with corrective sandbox guidance.
-  const reviewText = existsSync(paths.reviewOutputFile) ? readFileSync(paths.reviewOutputFile, "utf8") : reviewPass.text
-  if (shouldResumeReviewAfterPermissionDenial(paths, reviewText, reviewValidation)) {
-    logger.warn("review: permission denial left the pass incomplete; resuming the same session with sandbox guidance")
-    // Second review
-    reviewPass = await runReviewPhase(state, REVIEW_PERMISSION_DENIAL_RESUME_INSTRUCTION)
-    reviewValidation = validateCurrentQueue(state, context, "review", "finding validation")
-  }
-
-  await runAuditPhase(state, context, reviewValidation)
-  return submitReviewResult(state, context, await runSynthesisPhase(state, context, reviewPass))
+  await runAuditPhase(state, context, reviewValidation, attempt)
+  return submitReviewResult(state, context, await runSynthesisPhase(state, context, reviewPass, attempt), attempt.model)
 }
 
 export const runReview = runReviewWorkflow

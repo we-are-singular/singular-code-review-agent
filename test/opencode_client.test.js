@@ -8,9 +8,10 @@ import {
   buildOpenCodeArgs,
   createCliOpenCodeClient,
   findSessionId,
+  finishReasonFromJsonEvent,
   textFromJsonEvent
 } from "../dist/clients/opencode.js"
-import { parseModelSpec } from "../dist/config/env.js"
+import { loadRunnerConfig, parseModelSpec } from "../dist/config/env.js"
 import { buildAuditPrompt, buildGatePrompt, buildReviewPrompt, buildSynthesisPrompt } from "../dist/prompts/prompts.js"
 
 function makeExecutable(file, body) {
@@ -19,6 +20,11 @@ function makeExecutable(file, body) {
 
 test("extracts text and session ids from OpenCode JSON events", () => {
   assert.equal(findSessionId({ event: { part: { sessionID: "ses_123" } } }), "ses_123")
+  assert.equal(finishReasonFromJsonEvent({ type: "step_finish", part: { reason: "unknown" } }), "unknown")
+  assert.equal(
+    finishReasonFromJsonEvent({ type: "step_finish", part: { type: "step-finish", reason: "stop" } }),
+    "stop"
+  )
   assert.equal(textFromJsonEvent({ type: "text", text: "Review body" }), "Review body")
   assert.equal(textFromJsonEvent({ event: { part: { type: "text", text: "Nested text" } } }), "Nested text")
 })
@@ -40,6 +46,27 @@ test("splits an optional model variant off the model env var spec", () => {
     model: "opencode-go/deepseek-v4-flash",
     variant: null
   })
+})
+
+test("loads a configurable fallback model with MiniMax M3 as the default", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "fallback-model-config-"))
+  const baseEnv = {
+    GH_TOKEN: "token",
+    GITHUB_REPOSITORY: "owner/repo",
+    PR_NUMBER: "42",
+    WORKSPACE: workspace
+  }
+
+  const defaultConfig = loadRunnerConfig(baseEnv)
+  assert.equal(defaultConfig.fallbackModel, "opencode-go/minimax-m3")
+  assert.equal(defaultConfig.fallbackModelVariant, null)
+
+  const configured = loadRunnerConfig({
+    ...baseEnv,
+    OPENCODE_MODEL_FALLBACK: "opencode-go/gpt-5.6-luna:xhigh"
+  })
+  assert.equal(configured.fallbackModel, "opencode-go/gpt-5.6-luna")
+  assert.equal(configured.fallbackModelVariant, "xhigh")
 })
 
 test("builds modern OpenCode args with explicit file attachments and session reuse", () => {
@@ -122,6 +149,7 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "--help" ]]; then
   exit 0
 fi
 printf '{"type":"text","sessionID":"ses_789","text":"Rendered review.\\\\n"}\\n'
+printf '{"type":"step_finish","sessionID":"ses_789","part":{"type":"step-finish","reason":"stop"}}\\n'
 `
   )
 
@@ -145,6 +173,7 @@ printf '{"type":"text","sessionID":"ses_789","text":"Rendered review.\\\\n"}\\n'
 
     assert.equal(result.text, "Rendered review.\n")
     assert.equal(result.sessionId, "ses_789")
+    assert.equal(result.finishReason, "stop")
     assert.equal(fs.readFileSync(outputFile, "utf8"), "Rendered review.\n")
     assert.match(fs.readFileSync(jsonOutputFile, "utf8"), /"sessionID":"ses_789"/)
     assert.equal(fs.readFileSync(sessionFile, "utf8").trim(), "ses_789")

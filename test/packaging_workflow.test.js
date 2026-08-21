@@ -148,15 +148,18 @@ test("reusable workflow runs guard, ack, provisioning, and the new runner", () =
     workflow,
     /OPENCODE_GATE_MODEL: \$\{\{ vars\.OPENCODE_GATE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/
   )
+  assert.match(
+    workflow,
+    /OPENCODE_MODEL_FALLBACK: \$\{\{ vars\.OPENCODE_MODEL_FALLBACK \|\| 'opencode-go\/minimax-m3' \}\}/
+  )
   assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/)
   assert.match(
     workflow,
-    /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 42\s+run: \|\s+for attempt in 1 2; do/
+    /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 42\s+run: timeout 40m \/usr\/local\/bin\/review_runner/
   )
   assert.ok(workflow.indexOf("Run review guard") < workflow.indexOf("Create GitHub App token"))
   assert.ok(workflow.indexOf("Run review guard") < workflow.indexOf("Provision review workspace"))
-  assert.match(workflow, /timeout 20m \/usr\/local\/bin\/review_runner/)
-  assert.match(workflow, /review_runner attempt \$\{attempt\}\/2/)
+  assert.doesNotMatch(workflow, /review_runner attempt/)
   assert.match(workflow, /\/usr\/local\/bin\/review_runner/)
   assert.match(workflow, /BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
   assert.match(workflow, /Extract review outputs and telemetry/)

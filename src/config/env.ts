@@ -10,6 +10,8 @@ export type RunnerConfig = {
   dryRun: boolean
   model: string
   modelVariant: string | null
+  fallbackModel: string
+  fallbackModelVariant: string | null
   gateModel: string
   gateModelVariant: string | null
   command: string
@@ -109,6 +111,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
   const workspace = args.workspace || resolveWorkspace(env)
   const artifacts = buildArtifactPaths(env, workspace, args.runtimeDir)
   const modelSpec = parseModelSpec(env.OPENCODE_MODEL || "opencode/deepseek-v4-flash-free")
+  const fallbackModelSpec = parseModelSpec(env.OPENCODE_MODEL_FALLBACK || "opencode-go/minimax-m3")
   const gateModelSpec = parseModelSpec(env.OPENCODE_GATE_MODEL || "opencode-go/deepseek-v4-flash")
 
   return {
@@ -119,6 +122,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, argv: string[] = []): R
     dryRun: args.dryRun || env.DRY_RUN === "true",
     model: modelSpec.model,
     modelVariant: modelSpec.variant,
+    fallbackModel: fallbackModelSpec.model,
+    fallbackModelVariant: fallbackModelSpec.variant,
     gateModel: gateModelSpec.model,
     gateModelVariant: gateModelSpec.variant,
     command: REVIEW_COMMAND,

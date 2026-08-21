@@ -88,9 +88,15 @@ reconstruct the delta safely, or is unsure, the runner performs the full review.
 `DRY_RUN=true` bypasses the gate so local dry runs and eval captures always
 exercise the reviewer/auditor/synthesis path.
 
-The reusable workflow runs the review runner with two bounded attempts. Each
-attempt is capped at fifteen minutes so a transient OpenCode hang can be retried
-without leaving a PR review job stuck indefinitely.
+The review runner gives the exploratory review phase up to three attempts. It
+tries the configured review model twice in separate sessions, then uses the
+configured fallback model in a third fresh session. The fallback defaults to
+MiniMax M3. Incomplete attempts remain runtime
+artifacts and are never published. If all three attempts fail or stop without
+findings or a terminal verdict, the runner exits unsuccessfully.
+Detected sandbox permission denials first receive one steering message in the
+same session, so a recoverable path mistake does not waste a fresh-session
+attempt by repeating the same access pattern.
 
 OpenCode invocations are routed through `src/clients/opencode.ts`, which keeps
 rendered output and raw JSON event streams as runtime artifacts when supported
@@ -102,8 +108,10 @@ the consuming repository, while reviewer settings such as the command trigger,
 GitHub App client ID, image, and OpenCode agents are owned by this repository.
 Consuming repositories can optionally set the `OPENCODE_MODEL` repository
 variable to try a different review model without changing workflow YAML. They
-can also set `OPENCODE_GATE_MODEL` for the cheaper gate model; if omitted, the
-gate defaults to `opencode-go/deepseek-v4-flash`.
+can set `OPENCODE_MODEL_FALLBACK` for the third review attempt; if omitted, it
+defaults to `opencode-go/minimax-m3`. They can also set `OPENCODE_GATE_MODEL`
+for the cheaper gate model; if omitted, the gate defaults to
+`opencode-go/deepseek-v4-flash`.
 Dependency installation is disabled by default; consuming workflows can opt in
 with the reusable workflow input `npm_install: true`.
 
@@ -118,8 +126,9 @@ with the reusable workflow input `npm_install: true`.
    - `CONTEXT7_API_KEY`: optional Context7 API key.
 3. Optionally set the repository variable `OPENCODE_MODEL` to use a different
    review model. If omitted, the reusable workflow defaults to
-   `opencode/deepseek-v4-flash-free`. Optionally set `OPENCODE_GATE_MODEL` to
-   use a different gate model.
+   `opencode/deepseek-v4-flash-free`. Optionally set
+   `OPENCODE_MODEL_FALLBACK` to change the third-attempt fallback from MiniMax
+   M3, and `OPENCODE_GATE_MODEL` to use a different gate model.
 4. Copy `examples/singular-code-review.yml` into the target repository as
    `.github/workflows/singular-code-review.yml`.
 5. Open a non-draft same-repository pull request, mark a same-repository draft
@@ -251,6 +260,9 @@ Optional runtime environment variables:
   agents; defaults to `opencode/deepseek-v4-flash-free`. An optional
   `:variant` suffix (e.g. `opencode/deepseek-v4-flash:high`) selects the
   OpenCode reasoning-effort variant via the `--variant` flag.
+- `OPENCODE_MODEL_FALLBACK`: model id used by the third review attempt;
+  defaults to `opencode-go/minimax-m3` and supports the same optional
+  `:variant` suffix as `OPENCODE_MODEL`.
 - `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
 - `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
   during provisioning. The reusable workflow sets this from `npm_install`.
