@@ -1,369 +1,161 @@
 # Singular Code Review Agent
 
-Singular Code Review Agent packages an automated pull-request reviewer as a
-container image for GitHub Actions. It runs OpenCode against a pull request,
-collects review findings through local helper tools, validates every inline
-comment against the changed lines in the current diff, and submits one batched
-GitHub review from a GitHub App identity.
+Singular Code Review Agent runs an automated pull-request review inside GitHub
+Actions. It gives OpenCode the PR context and filtered diff, validates findings
+against changed lines, audits the result, and publishes one batched review from
+a GitHub App identity.
 
-The project is designed to be operated centrally: this repository builds and
-publishes the reviewer image and exposes a reusable workflow, while consuming
-repositories opt in with a small trigger workflow and runtime secrets.
+This repository publishes the container image and reusable workflow used by
+Singular repositories. It is open source infrastructure, not a hosted review
+service. Forks need their own GitHub App identity and model credentials.
 
-## Distribution model
+## Review flow
 
-This is open-source infrastructure for Singular's own repositories, not a
-hosted public review service. The workflow in this repository is wired to the
-Singular-owned GitHub App identity and expects the consuming repository to
-provide that App's private key as an Actions secret.
+The reusable workflow rejects fork PRs and skip directives before minting a
+GitHub App token or checking out code. For accepted runs, `review_runner`:
 
-That means:
+1. gathers normalized PR context and a filtered diff;
+2. optionally gates low-risk updates and direct mention questions;
+3. runs the reviewer, which queues findings through `review_comments`;
+4. validates comment locations against the current diff;
+5. audits the queue for invalid, duplicate, or overlapping findings;
+6. synthesizes the review body and publishes one GitHub review.
 
-- Singular repositories can use this directly after the App is installed and
-  the required org or repo secrets are available.
-- Outside repositories cannot use the Singular App unless they have the
-  private key, which they should not have.
-- Forks are welcome to run their own copy by creating their own GitHub App and
-  updating the hardcoded App identity in the forked source, including the App
-  client ID, bot login, and command trigger if they want different names.
+The gate can answer or skip a full re-review, but it never submits an approval.
+Dry runs bypass it so local checks exercise the complete review pipeline.
 
-The current design intentionally runs inside the consuming repository's GitHub
-Actions environment. It is easy to operate for trusted repositories, but it is
-not an install-only SaaS model: the consuming repository still needs a small
-workflow file and the runtime secrets required by that workflow.
+### Incomplete-review recovery
 
-## What it provides
+The exploratory review has three numbered attempts:
 
-- A reproducible Docker image built from an OpenCode sandbox base image.
-- A reusable GitHub Actions workflow that checks out a pull request, provisions
-  the reviewer runtime, and runs the TypeScript review runner.
-- A TypeScript runner that gathers pull-request context, executes OpenCode,
-  validates staged findings, builds the final review payload, and submits it
-  through a GitHub App token.
-- Local review tools that let the agent stage inline comments, multiline
-  comments, suggestions, replies, and the synthesized overall conclusion before
-  submission.
-- Static OpenCode gate/reviewer/auditor agent instruction files, centralized
-  review prompts, and vendored reviewer skills that keep the agent focused on
-  actionable code review feedback.
-- No-network test coverage for the review contracts, OpenCode client, guard/ack
-  decisions, runner pipeline, workflow, and image packaging.
+1. configured primary model, new session;
+2. configured primary model, new session;
+3. configured fallback model, new session.
 
-## How it works
+The fallback defaults to `opencode-go/minimax-m3`. A detected sandbox
+permission denial first receives one corrective steering message in the same
+session; that continuation does not consume another numbered attempt.
 
-At runtime, the reusable workflow starts with a mechanical `review_guard`
-preflight. The guard blocks fork PRs and PR-level skip directives before the
-workflow creates the GitHub App token, checks out code, provisions OpenCode, or
-starts a review. To opt out of a review, start the PR title with `[skip]` or put
-`@singular-code-review skip` in the PR body.
+An attempt succeeds only when OpenCode completes conclusively and produces
+findings or a terminal verdict. Nonzero exits, terminal `unknown`, and empty or
+mid-investigation output advance to the next attempt. Intermediate attempts are
+retained as artifacts and never published. Exhausting the policy fails the
+check instead of publishing an incomplete green review.
 
-When the guard allows a run, the workflow mints a GitHub App installation token
-and uses that token for checkout, context reads, review replies, and review
-submission. The container then runs `provision.sh` followed by `review_runner`.
-Provisioning installs the committed OpenCode config and target-repository
-dependencies. The runner then:
+## Model benchmark
 
-1. fetches normalized pull-request context with `review_context`;
-2. for non-dry-run `synchronize` and mention triggers, runs the cheap `gate`
-   agent to decide whether to answer, skip full re-review, or continue to full
-   review;
-3. starts OpenCode with the bundled `reviewer` agent and review phase prompt;
-4. lets the agent queue findings and replies through `review_comments`;
-5. validates queued comments against the current diff;
-6. runs the OpenCode `auditor` agent in an audit phase that edits the queue file to remove
-   duplicates, merge overlapping comments, and keep distinct same-line findings;
-7. validates the audited queue so only valid RIGHT-side additions and LEFT-side deletions are
-   submitted;
-8. runs the OpenCode `auditor` agent in a synthesis phase to create the final review body from the
-   reviewer output and validated queue;
-9. posts a single GitHub review whose body uses the synthesized conclusion and
-   any queued inline comments, plus any queued replies.
+Repeated history-blind runs against the same large private TypeScript PR
+produced these judge-score averages:
 
-The gate never submits a GitHub review. It either posts a fresh pull-request
-issue comment for direct answers or low-risk deltas, or it falls through to the
-normal full review pipeline. Low-risk no-review gate comments end with a final
-`✅ LGTM` line so the skip reads like a visual approval even though GitHub Apps
-cannot submit an approval review. If the gate fails, emits invalid JSON, cannot
-reconstruct the delta safely, or is unsure, the runner performs the full review.
-`DRY_RUN=true` bypasses the gate so local dry runs and eval captures always
-exercise the reviewer/auditor/synthesis path.
+| Model                    | Average score |
+| ------------------------ | ------------: |
+| DeepSeek V4 Flash `:max` |          80.0 |
+| GPT-5.6 Luna `:xhigh`    |          76.5 |
+| MiniMax M3               |          74.7 |
+| GPT-5.6 Luna             |          71.0 |
 
-The review runner gives the exploratory review phase up to three attempts. It
-tries the configured review model twice in separate sessions, then uses the
-configured fallback model in a third fresh session. The fallback defaults to
-MiniMax M3. Incomplete attempts remain runtime
-artifacts and are never published. If all three attempts fail or stop without
-findings or a terminal verdict, the runner exits unsuccessfully.
-Detected sandbox permission denials first receive one steering message in the
-same session, so a recoverable path mistake does not waste a fresh-session
-attempt by repeating the same access pattern.
+DeepSeek's clean retry set scored 78, 81, and 83, produced two comments per
+run, averaged about 11 minutes, and reported about $0.0416 per run. DeepSeek was
+more focused and grounded; MiniMax was broader and caught an additional
+important issue, but produced noisier findings.
 
-OpenCode invocations are routed through `src/clients/opencode.ts`, which keeps
-rendered output and raw JSON event streams as runtime artifacts when supported
-and reuses the same auditor OpenCode session for queue audit and final
-synthesis.
+These aggregate values were reconstructed from the generated benchmark summary
+after private run artifacts were removed. They are directional, not a universal
+model ranking. The PR, model variant, prompt, provider, and judge all affect the
+result. See the [eval guide](eval/README.md) and
+[`eval/benchmark.mjs`](eval/benchmark.mjs) for the capture and aggregation
+method.
 
-The image keeps credentials out of the build. Runtime secrets are provided by
-the consuming repository, while reviewer settings such as the command trigger,
-GitHub App client ID, image, and OpenCode agents are owned by this repository.
-Consuming repositories can optionally set the `OPENCODE_MODEL` repository
-variable to try a different review model without changing workflow YAML. They
-can set `OPENCODE_MODEL_FALLBACK` for the third review attempt; if omitted, it
-defaults to `opencode-go/minimax-m3`. They can also set `OPENCODE_GATE_MODEL`
-for the cheaper gate model; if omitted, the gate defaults to
-`opencode-go/deepseek-v4-flash`.
-Dependency installation is disabled by default; consuming workflows can opt in
-with the reusable workflow input `npm_install: true`.
+## Install
 
-## Install on a repository
+1. Install the Singular Code Review GitHub App on the target repository.
+2. Add `SINGULAR_CODE_REVIEW_PRIVATE_KEY` and `OPENCODE_API_KEY` as repository
+   or scoped organization Actions secrets. `CONTEXT7_API_KEY` is optional.
+3. Copy [`examples/singular-code-review.yml`](examples/singular-code-review.yml)
+   to `.github/workflows/singular-code-review.yml` in the target repository.
+4. Open a same-repository PR, mark a draft ready, or have an `OWNER`, `MEMBER`,
+   or `COLLABORATOR` comment `@singular-code-review`.
 
-1. Install the Singular Code Review GitHub App on the target repository or on
-   the owning organization with access to that repository.
-2. Add these Actions secrets to the repository, or preferably as organization
-   secrets scoped to selected repositories:
-   - `SINGULAR_CODE_REVIEW_PRIVATE_KEY`: private key for the GitHub App.
-   - `OPENCODE_API_KEY`: OpenCode Go API key used by the reviewer.
-   - `CONTEXT7_API_KEY`: optional Context7 API key.
-3. Optionally set the repository variable `OPENCODE_MODEL` to use a different
-   review model. If omitted, the reusable workflow defaults to
-   `opencode/deepseek-v4-flash-free`. Optionally set
-   `OPENCODE_MODEL_FALLBACK` to change the third-attempt fallback from MiniMax
-   M3, and `OPENCODE_GATE_MODEL` to use a different gate model.
-4. Copy `examples/singular-code-review.yml` into the target repository as
-   `.github/workflows/singular-code-review.yml`.
-5. Open a non-draft same-repository pull request, mark a same-repository draft
-   pull request ready for review, or have a human `OWNER`, `MEMBER`, or
-   `COLLABORATOR` comment `@singular-code-review` on a same-repository pull
-   request.
+Optional repository variables:
 
-For one repository, secrets can be added directly:
+- `OPENCODE_MODEL` selects the primary reviewer model and supports an OpenCode
+  reasoning variant suffix such as `:high`.
+- `OPENCODE_MODEL_FALLBACK` selects attempt three and defaults to
+  `opencode-go/minimax-m3`. It follows the same variant rule.
+- `OPENCODE_GATE_MODEL` selects the cheaper gate model.
 
-```bash
-gh secret set --repo OWNER/REPO SINGULAR_CODE_REVIEW_PRIVATE_KEY < app-private-key.pem
-gh secret set --repo OWNER/REPO OPENCODE_API_KEY --body "$OPENCODE_API_KEY"
-gh secret set --repo OWNER/REPO CONTEXT7_API_KEY --body "$CONTEXT7_API_KEY" # optional
-```
+Dependency installation is disabled by default. Set the reusable workflow's
+`npm_install` input only for repositories whose review requires installed
+dependencies.
 
-For multiple trusted repositories, prefer organization secrets scoped to the
-selected repositories instead of copying values manually into each repository.
+Start a PR title with `[skip]` or add `@singular-code-review skip` to the PR
+body to stop the workflow before checkout and model execution.
 
-The target repository does not receive a long-lived GitHub token. During each
-workflow run, `actions/create-github-app-token` uses the private key to mint a
-short-lived installation token for the App installation on that repository.
-That token is used for checkout, GitHub context reads, review comment replies,
-and the final batched review submission.
+## Security boundary
 
-## Security model
+The reviewer runs inside the consuming repository's Actions environment. The
+example and reusable workflows block fork heads before secrets, checkout, or
+dependency installation. Mention triggers are limited to trusted repository
+roles and remain blocked for forks.
 
-The reviewer checks out pull-request code and can optionally run dependency
-installation, so it must treat fork pull requests as untrusted code. The example
-trigger workflow avoids calling the reusable workflow for fork `pull_request`
-events, and the reusable workflow has its own preflight guard that blocks fork
-pull requests before creating the GitHub App token, checking out code,
-installing dependencies, or starting OpenCode.
+Keep the workflow on `pull_request` and `issue_comment`. Moving it to
+`pull_request_target` would put trusted credentials next to untrusted fork
+code. Enabling dependency installation assumes branches and write
+collaborators are trusted to run install scripts with repository Actions
+secrets available.
 
-Mention-triggered reviews are restricted to human `OWNER`, `MEMBER`, or
-`COLLABORATOR` comments and are still denied when the pull request head is a
-fork. A PR title starting with `[skip]` or a PR body line containing
-`@singular-code-review skip` skips the workflow before checkout, provisioning,
-or OpenCode startup. The caller job also cancels older in-progress review runs
-for the same pull request, and the reusable workflow has the same PR-scoped
-concurrency guard for older copied client workflows. Repeated commands should
-not run paid reviews in parallel.
+The App private key remains in the consuming repository or organization. Each
+run mints a short-lived installation token for checkout, GitHub reads, replies,
+and final review submission.
 
-This still assumes the consuming repository's branches and write collaborators
-are trusted enough to run code with the repository's Actions secrets. For public
-repositories that accept arbitrary fork PRs, keep this workflow on the normal
-`pull_request`/`issue_comment` model and do not convert it to
-`pull_request_target`.
+## Image and repository entry points
 
-## Repository map
-
-- `Dockerfile` defines the reviewer image.
-- `bin/provision.sh` prepares OpenCode config, trusts the checkout directory,
-  and installs target-repository dependencies.
-- `review_runner` runs the TypeScript review pipeline.
-- `review_extract` writes the post-run transcript, final comments JSON, gate
-  issue-comment outcomes, and OpenCode telemetry stats used by GitHub summaries
-  and eval capture.
-- `review_context` prints the compact review model context by default.
-  `review_context --full` prints the deterministic validation context used by
-  `review_comments`, without raw GitHub REST payload noise.
-- `review_model_context.json` is the compact context attached to the reviewer. It
-  strips raw GitHub REST payload fields and compresses commentable line arrays
-  into compact `"line"` and `"start-end"` ranges so the model sees only
-  review-relevant context.
-- `gate_model_context.json`, `gate_delta.diff`, and `gate_result.json` are gate
-  artifacts used by live synchronize or mention triggers.
-- `audit_model_context.json` is a compact runtime artifact for audit and
-  synthesis prompts.
-- `review_comments` is the staging interface used by OpenCode and the
-  runner for comments, suggestions, multiline findings, replies, listing, and
-  status checks.
-- `review_guard` and `review_ack` are typed GitHub Actions preflight
-  helpers for trigger authorization and idempotent request acknowledgment.
-- `bin/review_dry_run` checks out a real GitHub pull request into a disposable
-  workspace and runs the normal runner with GitHub writes blocked.
-- `src/review/workflow.ts` owns the named gathering, gate, review, audit, and
-  synthesis phases.
-- `src/review/` contains gate routing, queue, diff, context, body, and shared review
-  contracts.
-- `src/prompts/` contains versioned Markdown prompt assets plus the prompt
-  loader/interpolator.
-- `src/lib/` contains shared runtime helpers for artifacts, logging, JSON,
-  CLI entrypoints, and errors.
-- `opencode/opencode.json` configures OpenCode and reads secrets through
-  environment placeholders.
-- `opencode/agents/gate.md` contains durable gate-agent instructions.
-- `opencode/agents/reviewer.md` contains durable reviewer-agent instructions.
-- `opencode/agents/auditor.md` contains durable audit/synthesis-agent
-  instructions.
-- `opencode/skills/` contains vendored reviewer skills used inside the image.
-- `.github/workflows/publish-image.yml` builds and publishes the image to GHCR.
-- `.github/workflows/review.yml` is the reusable workflow consumed by target
-  repositories.
-- `examples/singular-code-review.yml` is an example trigger workflow for a
-  consuming repository.
-- `test/` contains Node test suites for the stable production contracts.
-
-## Published image
-
-Pushes to `main` publish the reviewer image to GitHub Container Registry as:
+Pushes to `main` publish:
 
 ```text
 ghcr.io/we-are-singular/singular-code-review-agent:latest
 ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
 ```
 
-Pull requests build the image without publishing it. The source repository can
-be public while the GitHub App private key remains private in the trusted
-consuming repositories that run the workflow.
+Useful entry points:
 
-## Runtime Inputs
+- [`.github/workflows/review.yml`](.github/workflows/review.yml): reusable
+  workflow and runtime defaults
+- [`src/review/workflow.ts`](src/review/workflow.ts): review orchestration
+- [`src/clients/opencode.ts`](src/clients/opencode.ts): OpenCode process and
+  JSONL boundary
+- [`opencode/agents`](opencode/agents): durable agent roles
+- [`src/prompts`](src/prompts): phase-specific prompts
+- [`opencode/skills`](opencode/skills): vendored reviewer skills
+- [`eval`](eval/README.md): real-PR model evaluation framework
 
-The reusable workflow exposes the pull request/comment identifiers and the
-dependency-install opt-in as inputs. It owns the GitHub App client ID, command
-trigger, container image, OpenCode model, and OpenCode agents.
-
-The runner receives these required runtime environment variables from the
-reusable workflow:
-
-- `GH_TOKEN`: token used by Octokit for GitHub context reads and writes.
-- `GITHUB_REPOSITORY`: repository in `owner/name` form.
-- `PR_NUMBER`: pull request number to review.
-- `OPENCODE_API_KEY`: OpenCode Go API key consumed by the bundled provider
-  configuration.
-
-Optional runtime environment variables:
-
-- `OPENCODE_MODEL`: model id used by the bundled `reviewer` and `auditor`
-  agents; defaults to `opencode/deepseek-v4-flash-free`. An optional
-  `:variant` suffix (e.g. `opencode/deepseek-v4-flash:high`) selects the
-  OpenCode reasoning-effort variant via the `--variant` flag.
-- `OPENCODE_MODEL_FALLBACK`: model id used by the third review attempt;
-  defaults to `opencode-go/minimax-m3` and supports the same optional
-  `:variant` suffix as `OPENCODE_MODEL`.
-- `CONTEXT7_API_KEY`: optional Context7 key for higher rate limits.
-- `SINGULAR_CODE_REVIEW_INSTALL_DEPS=true`: opt in to dependency installation
-  during provisioning. The reusable workflow sets this from `npm_install`.
-- `DRY_RUN=true`: local development override that bypasses the gate and prints
-  the final review payload instead of submitting it.
-
-Dependency installation is skipped by default. When explicitly enabled,
-`bin/provision.sh` chooses `pnpm`, `yarn`, or `npm` based on the lockfile
-present in the workspace. For npm workspaces, provisioning passes
-`--dangerously-allow-all-scripts` so required install-time builds such as native
-modules and generated clients run inside the reviewer sandbox.
-
-## Reviewer behavior
-
-The bundled `opencode/agents/reviewer.md` and `opencode/agents/auditor.md`
-files are copied into the image as static OpenCode agent instructions. Target
-repositories can still provide their own `AGENTS.md` files for project-specific
-context, but the bundled agent instructions remain authoritative for the
-reviewer and auditor workflow.
-
-In this repository, OpenCode agent files are the durable role instructions,
-while files under `src/prompts/` are phase prompts passed to a specific
-`opencode run` invocation.
-
-Review text should be passed with stdin or files rather than shell-quoted inline
-arguments, for example:
-
-```bash
-review_comments add --path "src/app.js" --line "42" --body-stdin <<'REVIEW_COMMENT'
-This preserves Markdown like `code`, "$values", and code snippets without shell escaping.
-REVIEW_COMMENT
-```
-
-When GitHub review thread data is available, validation drops new inline
-comments that exactly match unresolved bot thread comments. If thread state is
-unavailable, validation still uses the REST review-comment list to drop exact
-repeated bot comments. Broader semantic cleanup, such as merging overlapping
-same-line comments while preserving genuinely distinct issues, is handled by the
-queue audit pass before final validation.
-
-## Vendored skills
-
-The image vendors these skills from `we-are-singular/skills` at commit
-`fc5dbad9c36df9f133a1c2221ef8d1212f0c36b1`:
-
-- `backend-architecture`
-- `frontend-architecture`
-- `singular-code-review`
-
-Vendoring keeps image builds reproducible and avoids pulling skill content with
-`npx` or GitHub during the Docker build. Update the snapshot by replacing the skill
-directories under `opencode/skills/` and updating `opencode/skills/VENDORED_SKILLS.md`.
+Target repositories can supply `AGENTS.md` for project context. Bundled agent
+roles remain authoritative for review, audit, and synthesis behavior.
 
 ## Local development
 
-The local test suite builds the TypeScript runner and uses Node's built-in test
-runner with mocked external clients:
-
 ```bash
 npm test
-```
-
-Lint and format checks use Oxlint and Oxfmt:
-
-```bash
 npm run lint
 npm run format:check
-```
-
-Use `npm run format` to apply formatting.
-
-For local image validation, build the container with:
-
-```bash
 docker build -t singular-code-review:local .
 ```
 
-The base image defaults to the known working OpenCode sandbox image and can be
-overridden with the `BASE_IMAGE` build argument when validating a newer sandbox
-release.
-
-To inspect the review that would be posted for a real pull request without
-posting anything to GitHub, run:
+Run a real PR through the production pipeline without GitHub writes:
 
 ```bash
-OPENCODE_API_KEY=... bin/review_dry_run owner/repo 123
+OPENCODE_API_KEY=... bin/review_dry_run owner/repository 123
 ```
 
-The command clones the target repository into `/tmp/singular-code-review-dry-run`,
-checks out the PR head, sets `DRY_RUN=true`, bypasses the gate, and puts a
-read-only `gh` wrapper in front of OpenCode investigation. The runner prints the
-final review payload to stdout and keeps artifacts under
-`/tmp/.singular-code-review/`, including `review_payload.json`,
-`review_validated.json`, `review_validation_context.json`,
-`review_model_context.json`, `audit_model_context.json`, `review_transcript.md`,
-`review_comments.json`, `review_stats.json`, `pr.diff`, and the OpenCode output
-logs.
+The dry run clones the PR into a disposable workspace, blocks GitHub writes,
+prints the review payload, and keeps diagnostic artifacts under
+`/tmp/.singular-code-review/`.
 
-For Docker/eval captures, keep the live runtime under
-`/tmp/.singular-code-review/` and pass `--out-dir <path>` to copy the three
-portable extractor outputs (`review_transcript.md`, `review_comments.json`, and
-`review_stats.json`) into a mounted or persistent directory. Use
-`--runtime-dir <path>` only when the alternate path is also allowed by the
-OpenCode sandbox configuration.
+For model comparisons and reports, follow the [eval guide](eval/README.md).
+
+## Vendored skills
+
+The image vendors `backend-architecture`, `frontend-architecture`, and
+`singular-code-review` from `we-are-singular/skills`. The pinned source commit
+and update instructions live in
+[`opencode/skills/VENDORED_SKILLS.md`](opencode/skills/VENDORED_SKILLS.md).
