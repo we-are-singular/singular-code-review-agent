@@ -1,4 +1,5 @@
 export const PRICES_USD_PER_MILLION = {
+  "opencode-go/ox-alpha-free": [0, 0, 0],
   "opencode/deepseek-v4-flash-free": [0.09, 0.18, 0.018],
   "opencode/mimo-v2.5-free": [0.105, 0.28, 0.028],
   "openrouter/tencent/hy3:free": [0.14, 0.58, 0.035],
@@ -10,15 +11,13 @@ export const PRICES_USD_PER_MILLION = {
   "opencode/north-mini-code-free": [1, 3, 1],
 };
 
-const FALLBACK_PRICE_USD_PER_MILLION = [1, 3, 1];
-
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
 }
 
 export function formatCost(value) {
-  return `$${toNumber(value).toFixed(4)}`;
+  return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(4)}` : "n/a";
 }
 
 export function priceUsage({ model, usage, reportedCostUsd = 0 }) {
@@ -28,11 +27,23 @@ export function priceUsage({ model, usage, reportedCostUsd = 0 }) {
       costUsd: reported,
       label: formatCost(reported),
       rawReportedCostUsd: reported,
+      source: "provider",
     };
   }
 
-  const [inputPrice, outputPrice, cachePrice] =
-    PRICES_USD_PER_MILLION[String(model || "").toLowerCase()] || FALLBACK_PRICE_USD_PER_MILLION;
+  const prices = PRICES_USD_PER_MILLION[String(model || "").toLowerCase()];
+  if (!prices) {
+    // Subscription-backed ACPs and newly added provider models do not share a
+    // reliable token price. An unavailable cost is safer than a fake fallback.
+    return {
+      costUsd: null,
+      label: "n/a",
+      rawReportedCostUsd: 0,
+      source: "unavailable",
+    };
+  }
+
+  const [inputPrice, outputPrice, cachePrice] = prices;
   const inputTokens = toNumber(usage?.inputTokens);
   const outputTokens = toNumber(usage?.outputTokens);
   const cacheReadTokens = Math.min(toNumber(usage?.cacheReadTokens), inputTokens);
@@ -46,5 +57,6 @@ export function priceUsage({ model, usage, reportedCostUsd = 0 }) {
     costUsd,
     label: formatCost(costUsd),
     rawReportedCostUsd: 0,
+    source: "price-table",
   };
 }

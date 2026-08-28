@@ -15,7 +15,9 @@ import { buildJudgePrompt } from "./lib/judge-prompt.mjs"
 import { JUDGE_RUBRIC } from "./lib/judge-rubric.mjs"
 import { normalizeEvalModel } from "./lib/models.mjs"
 import { extractRenderedText, cleanupScratch } from "./lib/opencode-runner.mjs"
-import { slugify } from "./lib/pr-input.mjs"
+import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
+import { evalJobKey } from "./lib/job-key.mjs"
+import { completedJobArtifacts } from "./lib/job-artifacts.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -237,6 +239,7 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
     mkdirSync(cacheHome, { recursive: true })
     mkdirSync(stateHome, { recursive: true })
     writeText(join(configHome, "opencode", "opencode.json"), "{}\n")
+    stageOpenCodeAuth(dataHome)
 
     const rawFile = join(jobDir, "judge.raw.jsonl")
     const stderrFile = join(jobDir, "judge.stderr.log")
@@ -276,7 +279,10 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
     let stderr = ""
     let settled = false
     const child = spawn("opencode", args, {
-      cwd: repoRoot,
+      // Every judge attachment lives under this directory. Keeping it as cwd
+      // lets OpenCode continue reading long files without granting arbitrary
+      // external-directory access to the source checkout or /tmp.
+      cwd: jobDir,
       env: {
         ...process.env,
         HOME: home,
@@ -290,6 +296,7 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
         OPENCODE_DISABLE_CLAUDE_CODE: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     })
 
     const finish = (result) => {
@@ -298,6 +305,9 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
       }
       settled = true
       clearTimeout(timer)
+      if (killTimer) {
+        clearTimeout(killTimer)
+      }
       writeText(rawFile, stdout)
       writeText(stderrFile, stderr)
       cleanupScratch(scratchRoot, false)
@@ -310,9 +320,27 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
       })
     }
 
+    let killTimer = null
+    const killGroup = (signal) => {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, signal)
+        } catch (error) {
+          if (error?.code !== "ESRCH") {
+            child.kill(signal)
+          }
+        }
+      }
+    }
     const timer = setTimeout(() => {
-      child.kill("SIGTERM")
-      finish({ status: "failed", error: `judge timed out after ${timeoutMs}ms` })
+      killGroup("SIGTERM")
+      // OpenCode can leave provider children behind. Bound cleanup so a judge
+      // timeout cannot hold the sequential evaluator forever.
+      killTimer = setTimeout(() => {
+        killGroup("SIGKILL")
+        finish({ status: "failed", error: `judge timed out after ${timeoutMs}ms` })
+      }, 5_000)
+      killTimer.unref()
     }, timeoutMs).unref()
 
     child.stdout.on("data", (chunk) => {
@@ -364,19 +392,19 @@ async function main() {
   const judgments = []
 
   for (const job of run.jobs || []) {
-    const jobKey = `${job.input.slug}__${slugify(job.model)}`
+    const jobKey = evalJobKey(job)
     const jobDir = join(options.runDir, "jobs", jobKey)
-    if (job.status !== "completed" || !existsSync(join(jobDir, "review.md"))) {
+    if (job.status !== "completed" || !completedJobArtifacts(jobDir)) {
       judgments.push({ jobKey, status: "skipped", error: "capture did not complete" })
       continue
     }
+    const cacheKey = judgeCacheKey({ repoRoot, model, jobDir, job })
     const existing = existingByJob.get(jobKey)
-    if (!options.force && existing?.status === "completed" && existing.model === model) {
+    if (!options.force && existing?.status === "completed" && existing.model === model && existing.cache?.key === cacheKey) {
       judgments.push(existing)
       console.log(`skipping existing judgment ${jobKey}`)
       continue
     }
-    const cacheKey = judgeCacheKey({ repoRoot, model, jobDir, job })
     if (!options.force) {
       const cached = restoreJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, jobKey, model })
       if (cached) {

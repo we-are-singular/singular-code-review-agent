@@ -32,12 +32,22 @@ export async function loadPullRequestInput(input, token) {
     userAgent: "singular-code-review-eval",
   });
 
-  const [prResponse, diffResponse, commits] = await Promise.all([
-    octokit.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: input.number,
-    }),
+  const prResponse = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: input.number,
+  });
+  const pr = prResponse.data;
+  if (input.baseSha && input.baseSha !== pr.base.sha) {
+    throw new Error(`configured base SHA ${input.baseSha} does not match live PR base ${pr.base.sha}`);
+  }
+  if (input.headSha && input.headSha !== pr.head.sha) {
+    throw new Error(`configured head SHA ${input.headSha} does not match live PR head ${pr.head.sha}`);
+  }
+
+  // Fetch review evidence only after the immutable manifest matches. This
+  // avoids caching a live diff under a configured revision that already drifted.
+  const [diffResponse, commits] = await Promise.all([
     octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
       owner,
       repo,
@@ -52,7 +62,6 @@ export async function loadPullRequestInput(input, token) {
     }),
   ]);
 
-  const pr = prResponse.data;
   const filteredDiff = filterUnifiedDiff(String(diffResponse.data || ""));
   const context = {
     repository: input.repository,
@@ -113,4 +122,8 @@ export async function preparePullRequestWorkspace(input, workspace) {
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
   });
+  const { stdout } = await execFileAsync("git", ["-C", workspace, "rev-parse", "HEAD"], { encoding: "utf8" });
+  if (input.headSha && stdout.trim() !== input.headSha) {
+    throw new Error(`checked out head ${stdout.trim()} does not match requested ${input.headSha}`);
+  }
 }

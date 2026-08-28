@@ -9,16 +9,35 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 test("Dockerfile builds and packages the TypeScript runner surface", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8")
 
-  assert.match(dockerfile, /^ARG BASE_IMAGE=docker\.io\/cloudflare\/sandbox:0\.13\.0-next\.709\.1-opencode$/m)
+  assert.match(
+    dockerfile,
+    /^ARG BASE_IMAGE=docker\.io\/wearesingular\/aml-agent-sandbox@sha256:5b9724161e815b67d2bde72f9157d651b763c1b39e535b287bede8d90a874f9f$/m
+  )
+  assert.match(dockerfile, /^FROM \$\{BASE_IMAGE\} AS review-build$/m)
   assert.match(dockerfile, /^ARG CONTEXT7_MCP_VERSION=3\.2\.4$/m)
-  assert.match(dockerfile, /^ARG NODE_VERSION=26\.5\.0$/m)
-  assert.match(dockerfile, /^ARG NPM_VERSION=12\.0\.1$/m)
   assert.match(dockerfile, /\bbuild-essential\b/)
-  assert.match(dockerfile, /\bpython3\b/)
-  assert.match(dockerfile, /\bripgrep\b/)
-  assert.match(dockerfile, /\bsqlite3\b/)
-  assert.match(dockerfile, /npm ci/)
+  assert.match(dockerfile, /apt-get install[\s\S]*\bgh\b/)
+  assert.match(dockerfile, /npm ci --include=dev/)
   assert.match(dockerfile, /npm run build/)
+  assert.match(dockerfile, /npm prune --omit=dev/)
+  assert.doesNotMatch(dockerfile, /\/node_modules\/@aml-jsx\/sdk\/package\.json/u)
+  assert.doesNotMatch(dockerfile, /typeof sdk\.Parallel/u)
+  assert.doesNotMatch(dockerfile, /npm uninstall/u)
+  assert.doesNotMatch(dockerfile, /rm -rf node_modules\/@aml-jsx\/sdk/u)
+  assert.match(dockerfile, /COPY --from=review-build \/opt\/singular-code-review\//)
+  assert.match(dockerfile, /COPY package\.json package-lock\.json tsconfig\.json tsconfig\.aml\.json \.\//)
+  assert.match(dockerfile, /COPY aml\/ \.\/aml\//)
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"))
+  assert.equal(packageJson.dependencies["@aml-jsx/sdk"], "0.7.1")
+  assert.equal(Object.hasOwn(packageJson.dependencies, "@earendil-works/pi-coding-agent"), false)
+  assert.equal(Object.hasOwn(packageJson.dependencies, "pi-acp"), false)
+  assert.equal(Object.hasOwn(packageJson.dependencies, "pi-mcp-adapter"), false)
+  assert.doesNotMatch(dockerfile, /NODE_VERSION|NPM_VERSION|nodejs\.org\/dist/)
+  const runtimeStage = dockerfile.split(/^FROM \$\{BASE_IMAGE\}$/m)[1]
+  assert.ok(runtimeStage)
+  assert.doesNotMatch(runtimeStage, /\bbuild-essential\b/)
+  assert.match(runtimeStage, /apt-get purge -y --auto-remove gnupg/)
+  assert.match(dockerfile, /USER aml\s*\nCMD/)
   assert.match(dockerfile, /\/usr\/local\/lib\/singular-code-review/)
   assert.match(dockerfile, /review_runner/)
   assert.match(dockerfile, /review_extract/)
@@ -29,6 +48,10 @@ test("Dockerfile builds and packages the TypeScript runner surface", () => {
   assert.match(
     dockerfile,
     /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-extract\.js \/usr\/local\/bin\/review_extract/
+  )
+  assert.match(
+    dockerfile,
+    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/aml\/cli\.js \/usr\/local\/bin\/aml_review/
   )
   assert.match(dockerfile, /COPY opencode\/agents\/ \/usr\/local\/share\/singular-code-review\/agents\//)
   assert.match(dockerfile, /COPY opencode\/skills\/ \/usr\/local\/share\/singular-code-review\/skills\//)
@@ -116,6 +139,9 @@ test("example trigger workflow runs gate-capable reviews on new pull request hea
 test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "publish-image.yml"), "utf8")
 
+  assert.doesNotMatch(workflow, /AML_SANDBOX_REVISION|\.aml-sandbox-source/u)
+  assert.doesNotMatch(workflow, /use-local-aml-sdk|build-local-aml-base/u)
+  assert.doesNotMatch(workflow, /build-args: BASE_IMAGE|driver: docker/u)
   assert.match(workflow, /uses: actions\/checkout@v7/)
   assert.match(workflow, /uses: actions\/setup-node@v7/)
   assert.match(workflow, /node-version: 26/)
@@ -127,6 +153,12 @@ test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
   assert.doesNotMatch(workflow, /uses: docker\/(?:setup-buildx-action|login-action)@v3/)
   assert.doesNotMatch(workflow, /uses: docker\/metadata-action@v5/)
   assert.doesNotMatch(workflow, /uses: docker\/build-push-action@v6/)
+})
+
+test("published AML releases replace the temporary source-overlay path", () => {
+  assert.equal(fs.existsSync(path.join(repoRoot, "aml", "Dockerfile.local-base")), false)
+  assert.equal(fs.existsSync(path.join(repoRoot, "scripts", "build-local-aml-base.sh")), false)
+  assert.equal(fs.existsSync(path.join(repoRoot, "scripts", "use-local-aml-sdk.sh")), false)
 })
 
 test("reusable workflow runs guard, ack, provisioning, and the new runner", () => {

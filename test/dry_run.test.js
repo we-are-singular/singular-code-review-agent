@@ -17,6 +17,16 @@ function makeExecutable(file, body) {
   fs.writeFileSync(file, body, { mode: 0o755 })
 }
 
+test("review_dry_run rejects a non-immutable revision argument", () => {
+  const result = spawnSync("bash", [dryRun, "owner/repo", "42", "--head-sha", "latest"], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /--head-sha must be a 40-character Git SHA/u)
+})
+
 test("dry-run GitHub client writes payload and replies to artifacts instead of delegate writes", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "dry-client-"))
   fs.mkdirSync(path.join(workspace, ".git"))
@@ -212,7 +222,7 @@ fi
   assert.equal(stats.model, "opencode-go/minimax-m2.7")
 })
 
-test("review_dry_run keeps its default workspace under the runtime permission root", () => {
+test("review_dry_run keeps its workspace under the runtime permission root", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-dry-run-workspace-"))
   const mockbin = path.join(dir, "mockbin")
   const runtimeDir = path.join(dir, "runtime")
@@ -229,21 +239,25 @@ exit 1
 `
   )
   makeExecutable(path.join(mockbin, "git"), "#!/usr/bin/env bash\nexit 0\n")
-  const runner = path.join(dir, "runner")
+  const runner = path.join(dir, "aml_review")
   makeExecutable(runner, `#!/usr/bin/env bash\nprintf '%s' "$WORKSPACE" > "${workspaceFile}"\n`)
 
-  execFileSync("bash", [dryRun, "owner/repo", "42", "--runtime-dir", runtimeDir], {
+  const result = spawnSync("bash", [dryRun, "owner/repo", "42", "--runtime-dir", runtimeDir], {
     cwd: repoRoot,
     env: {
       ...process.env,
       PATH: `${mockbin}:${process.env.PATH}`,
       REVIEW_PROVISION: "/bin/true",
       REVIEW_RUNNER: runner,
-      OPENCODE_API_KEY: "test-opencode-key"
+      OPENAI_API_KEY: "test-openai-key",
+      OPENCODE_API_KEY: ""
     },
-    stdio: ["ignore", "pipe", "pipe"]
+    encoding: "utf8"
   })
 
+  assert.equal(result.status, 0)
+  assert.match(result.stderr, /AML result emitted on stdout; no workflow artifacts to extract/u)
+  assert.doesNotMatch(result.stderr, /review extraction|review_transcript\.md/u)
   assert.equal(fs.readFileSync(workspaceFile, "utf8"), path.join(runtimeDir, "workspace"))
 })
 
@@ -320,7 +334,7 @@ touch "${runnerMarker}"
   assert.equal(result.status, 7)
   assert.match(result.stderr, new RegExp(`dry-run runtime dir: ${runtimeDir.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`))
   assert.match(result.stderr, /provision step failed with status 7; review runner was not started/u)
-  assert.match(result.stderr, /review payload: .+review_payload\.json \(missing\)/u)
+  assert.match(result.stderr, /review: .+review\.md \(missing\)/u)
   assert.match(result.stderr, /review extraction finished/u)
   assert.equal(fs.existsSync(path.join(runtimeDir, "dry-run-bin", "gh")), true)
   assert.equal(fs.existsSync(path.join(runtimeDir, "review_transcript.md")), true)

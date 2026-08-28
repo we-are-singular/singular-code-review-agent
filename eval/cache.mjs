@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cacheEntryDir, copyExistingFile, readJsonFile, writeJsonFile } from "./lib/cache.mjs";
 import { judgeCacheKey } from "./lib/judge-cache-key.mjs";
-import { slugify } from "./lib/pr-input.mjs";
+import { evalJobKey } from "./lib/job-key.mjs";
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -90,7 +90,7 @@ function findRunFiles(root) {
 }
 
 function jobKey(job) {
-  return `${job.input.slug}__${slugify(job.model)}`;
+  return evalJobKey(job);
 }
 
 function artifactPath(runDir, file) {
@@ -119,7 +119,7 @@ function copyReviewArtifacts({ entryDir, runDir, job }) {
   }
 }
 
-function seedReviewCache({ runDir, job, cacheDir, force }) {
+function seedReviewCache({ runDir, run, job, cacheDir, force }) {
   const key = jobKey(job);
   const jobDir = join(runDir, "jobs", key);
   const contextFile = artifactPath(runDir, job.files?.context) || join(jobDir, "artifacts", "review_model_context.json");
@@ -140,7 +140,17 @@ function seedReviewCache({ runDir, job, cacheDir, force }) {
 
   const context = readJson(contextFile);
   const diffText = readFileSync(diffFile, "utf8");
-  const cacheKey = reviewCacheKey({ model: job.model, input: job.input, context, diffText });
+  const cacheKey = reviewCacheKey({
+    runner: job.runner,
+    provider: job.provider,
+    model: job.model,
+    // Legacy runs without an image ID remain seedable, but their cache keys
+    // cannot collide with a live capture from an inspected reviewer image.
+    reviewerImageId: run.imageId || null,
+    input: job.input,
+    context,
+    diffText,
+  });
   const entryDir = cacheEntryDir(cacheDir, cacheKey);
   if (!force && existsSync(join(entryDir, "cache.json"))) {
     return "existing";
@@ -149,10 +159,13 @@ function seedReviewCache({ runDir, job, cacheDir, force }) {
   copyReviewArtifacts({ entryDir, runDir, job });
   writeJsonFile(join(entryDir, "cache.json"), {
     version: REVIEW_CACHE_VERSION,
-    capture: "docker-review-dry-run",
+    capture: "review-dry-run",
     status: "completed",
     key: cacheKey,
     model: job.model,
+    runner: job.runner || "src",
+    provider: job.runner === "aml" ? job.provider || "opencode" : null,
+    reviewerImageId: run.imageId || null,
     input: job.input,
     outputBytes: job.outputBytes || statSync(reviewFile).size,
     sourceRun: relative(repoRoot, runDir).split("\\").join("/"),
@@ -223,7 +236,7 @@ async function main() {
       increment(
         counts,
         "review",
-        seedReviewCache({ runDir, job, cacheDir: options.reviewCacheDir, force: options.force }),
+        seedReviewCache({ runDir, run, job, cacheDir: options.reviewCacheDir, force: options.force }),
       );
       increment(
         counts,

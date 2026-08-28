@@ -144,6 +144,9 @@ function detailPanel(result) {
           <dt>Inline</dt><dd>${formatTokens(result.commentCounts?.inline)}</dd>
           <dt>Replies</dt><dd>${formatTokens(result.commentCounts?.replies)}</dd>
           <dt>Dropped</dt><dd>${formatTokens(result.commentCounts?.dropped)}</dd>
+          <dt>Capture wall time</dt><dd>${escapeHtml(result.captureDurationLabel || "n/a")}</dd>
+          <dt>Reviewer timing</dt><dd>${escapeHtml(result.reviewerDurationLabel || result.durationLabel || "n/a")}</dd>
+          <dt>Reviewer boundary</dt><dd>${escapeHtml(result.reviewerDurationBoundary || "legacy")}</dd>
         </dl>
       </section>
       <section>
@@ -177,13 +180,14 @@ function rows(results) {
         <td data-sort="${escapeHtml(sortValue(result.status))}"><span class="pill ${statusClass(result.status)}">${escapeHtml(result.status)}</span></td>
         <td data-sort="${result.scorePercent ?? -1}">${scoreCell(result)}</td>
         <td data-sort="${escapeHtml(sortValue(result.verdictKey))}">${escapeHtml(result.verdictLabel || "n/a")}</td>
-        <td data-sort="${result.durationMs || -1}">${escapeHtml(result.durationLabel)}</td>
+        <td data-sort="${result.captureDurationMs ?? -1}">${escapeHtml(result.captureDurationLabel || "n/a")}</td>
+        <td data-sort="${result.reviewerDurationMs ?? result.durationMs ?? -1}">${escapeHtml(result.reviewerDurationLabel || result.durationLabel || "n/a")}</td>
         <td data-sort="${result.usage.totalTokens}">${formatTokens(result.usage.totalTokens)}</td>
         <td data-sort="${result.costUsd ?? result.reportedCostUsd}">${escapeHtml(result.costLabel || result.reportedCostLabel)}</td>
         <td data-sort="${failures.length}">${escapeHtml(failures.join(", "))}</td>
       </tr>
       <tr class="detail-row">
-        <td colspan="9">${detailPanel(result)}</td>
+        <td colspan="10">${detailPanel(result)}</td>
       </tr>`;
     })
     .join("\n");
@@ -252,12 +256,12 @@ export function renderReport(summary) {
 <body>
   <main>
     <h1>Singular Review Eval</h1>
-    <p class="subtitle">Run ${escapeHtml(summary.run.startedAt || "")} to ${escapeHtml(summary.run.endedAt || "")}</p>
+    <p class="subtitle">Run ${escapeHtml(summary.run.startedAt || "")} to ${escapeHtml(summary.run.endedAt || "")}. Capture wall time excludes cache hits; reviewer timing follows each implementation's own internal boundary.</p>
     <section class="kpis">
       ${kpi("Run OK", `${totals.passed}/${totals.jobs}`, `${totals.hardFailed} hard failed`)}
       ${kpi("Average score", totals.averageScoreLabel)}
       ${kpi("Comments", String(totals.producedComments))}
-      ${kpi("Duration", summary.run.durationLabel)}
+      ${kpi("Run wall time", summary.run.durationLabel)}
       ${kpi("Tokens", totals.usageLabels.totalTokens, `${totals.usageLabels.inputTokens} input / ${totals.usageLabels.outputTokens} output`)}
       ${kpi("Reasoning", totals.usageLabels.reasoningTokens, `${totals.usageLabels.cacheReadTokens} cache read`)}
       ${kpi("Review Cost", totals.usageLabels.reportedCostUsd, `${totals.usageLabels.judgeReportedCostUsd} judge`)}
@@ -271,7 +275,8 @@ export function renderReport(summary) {
           <th>Status</th>
           <th>Score</th>
           <th>Verdict</th>
-          <th>Time</th>
+          <th>Capture wall</th>
+          <th>Reviewer timing</th>
           <th>Tokens</th>
           <th>Cost</th>
           <th>Failures</th>

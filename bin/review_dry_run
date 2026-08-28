@@ -7,8 +7,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 usage() {
   cat >&2 <<'EOF'
 usage:
-  review_dry_run <owner/repo> <pr-number> [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
-  review_dry_run --repo <owner/repo> --pr <pr-number> [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
+  review_dry_run <owner/repo> <pr-number> [--base-sha <sha>] [--head-sha <sha>] [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
+  review_dry_run --repo <owner/repo> --pr <pr-number> [--base-sha <sha>] [--head-sha <sha>] [--workspace <path>] [--runtime-dir <path>] [--out-dir <path>]
 
 Runs the Singular Code Review runner against a real GitHub pull request, but
 sets DRY_RUN=true, bypasses the gate, and installs a read-only gh wrapper for
@@ -54,6 +54,8 @@ parse_args() {
   workspace=""
   runtime_dir=""
   output_dir=""
+  base_sha=""
+  head_sha=""
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -82,6 +84,16 @@ parse_args() {
         output_dir="$2"
         shift 2
         ;;
+      --base-sha)
+        [[ "$#" -ge 2 ]] || die "--base-sha requires a value"
+        base_sha="$2"
+        shift 2
+        ;;
+      --head-sha)
+        [[ "$#" -ge 2 ]] || die "--head-sha requires a value"
+        head_sha="$2"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -106,6 +118,8 @@ parse_args() {
   [[ "$repo" == */* ]] || die "repository must use owner/name format"
   [[ -n "$pr_number" ]] || die "pull request number is required"
   [[ "$pr_number" =~ ^[0-9]+$ ]] || die "pull request number must be numeric"
+  [[ -z "$base_sha" || "$base_sha" =~ ^[0-9a-fA-F]{40}$ ]] || die "--base-sha must be a 40-character Git SHA"
+  [[ -z "$head_sha" || "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || die "--head-sha must be a 40-character Git SHA"
 }
 
 prepare_workspace() {
@@ -115,6 +129,15 @@ prepare_workspace() {
   local real_gh="$4"
   local github_token="$5"
   local dry_run_home="$6"
+
+  if [[ -n "$base_sha" || -n "$head_sha" ]]; then
+    local live_shas
+    live_shas="$(HOME="$dry_run_home" GH_TOKEN="$github_token" "$real_gh" api "repos/${repo}/pulls/${pr_number}" --jq '.base.sha + "\n" + .head.sha')" || die "could not read live pull request SHAs"
+    local live_base_sha="${live_shas%%$'\n'*}"
+    local live_head_sha="${live_shas#*$'\n'}"
+    [[ -z "$base_sha" || "$base_sha" == "$live_base_sha" ]] || die "configured base SHA ${base_sha} does not match live PR base ${live_base_sha}"
+    [[ -z "$head_sha" || "$head_sha" == "$live_head_sha" ]] || die "configured head SHA ${head_sha} does not match live PR head ${live_head_sha}"
+  fi
 
   if [[ -e "$workspace" ]]; then
     if [[ ! -d "$workspace" ]]; then
@@ -137,7 +160,11 @@ prepare_workspace() {
   HOME="$dry_run_home" git \
     -c "url.https://x-access-token:${github_token}@github.com/.insteadOf=https://github.com/" \
     -C "$workspace" \
-    checkout --detach "refs/remotes/singular-code-review/pr-${pr_number}"
+    checkout --detach "${head_sha:-refs/remotes/singular-code-review/pr-${pr_number}}"
+
+  local checked_out_sha
+  checked_out_sha="$(HOME="$dry_run_home" git -C "$workspace" rev-parse HEAD)"
+  [[ -z "$head_sha" || "$checked_out_sha" == "$head_sha" ]] || die "checked out head ${checked_out_sha} does not match requested ${head_sha}"
 }
 
 install_read_only_gh_wrapper() {
@@ -266,17 +293,31 @@ report_artifacts() {
   local runtime_dir="$1"
 
   log "dry-run artifacts:"
-  artifact_line "review payload" "${runtime_dir}/review_payload.json"
-  artifact_line "validated queue" "${runtime_dir}/review_validated.json"
-  artifact_line "review model context" "${runtime_dir}/review_model_context.json"
-  artifact_line "validation context" "${runtime_dir}/review_validation_context.json"
+  artifact_line "review" "${runtime_dir}/review.md"
   artifact_line "review transcript" "${runtime_dir}/review_transcript.md"
   artifact_line "review comments" "${runtime_dir}/review_comments.json"
   artifact_line "review stats" "${runtime_dir}/review_stats.json"
-  artifact_line "PR diff" "${runtime_dir}/pr.diff"
-  artifact_line "reviewer output" "${runtime_dir}/opencode_review.log"
-  artifact_line "audit output" "${runtime_dir}/opencode_audit.log"
-  artifact_line "synthesis output" "${runtime_dir}/opencode_synthesis.log"
+
+  # Source-runner diagnostics are optional; AML intentionally never creates
+  # these workflow artifacts, so absent files should not look like failures.
+  local diagnostic
+  for diagnostic in \
+    review_payload.json \
+    review_validated.json \
+    review_model_context.json \
+    review_validation_context.json \
+    pr.diff \
+    opencode_review.log \
+    opencode_audit.log \
+    opencode_synthesis.log; do
+    if [[ -e "${runtime_dir}/${diagnostic}" ]]; then
+      artifact_line "source diagnostic" "${runtime_dir}/${diagnostic}"
+    fi
+  done
+}
+
+is_aml_runner() {
+  [[ "${REVIEW_RUNNER:-}" == *aml_review* ]]
 }
 
 run_extractor() {
@@ -303,17 +344,29 @@ run_extractor() {
     review_extract --runtime-dir "$runtime_dir" >/dev/null
 }
 
+has_canonical_outputs() {
+  local runtime_dir="$1"
+
+  [[ -s "${runtime_dir}/review.md" ]] &&
+    [[ -s "${runtime_dir}/review_transcript.md" ]] &&
+    [[ -s "${runtime_dir}/review_comments.json" ]] &&
+    [[ -s "${runtime_dir}/review_stats.json" ]]
+}
+
 export_extracted_outputs() {
   local runtime_dir="$1"
   local output_dir="$2"
 
   [[ -n "$output_dir" ]] || return 0
   mkdir -p "$output_dir"
-  cp -f \
-    "${runtime_dir}/review_transcript.md" \
-    "${runtime_dir}/review_comments.json" \
-    "${runtime_dir}/review_stats.json" \
-    "$output_dir"
+  local canonical=(review_transcript.md review_comments.json review_stats.json)
+  if [[ -s "${runtime_dir}/review.md" ]]; then
+    canonical+=(review.md)
+  fi
+  local file
+  for file in "${canonical[@]}"; do
+    cp -f "${runtime_dir}/${file}" "$output_dir"
+  done
   log "copied extracted outputs to ${output_dir}"
 }
 
@@ -354,7 +407,8 @@ main() {
   real_gh="$(command -v gh)"
 
   "$real_gh" auth status >/dev/null 2>&1 || die "gh auth status failed; authenticate with gh before running a dry run"
-  [[ -n "${OPENCODE_API_KEY:-}" ]] || die "OPENCODE_API_KEY is required for the OpenCode review pass"
+  # Model authentication belongs to the selected reviewer/provider. This
+  # wrapper deliberately has no OpenCode- or Pi-specific credential policy.
   local github_token
   github_token="${GH_TOKEN:-$("$real_gh" auth token)}"
 
@@ -448,16 +502,28 @@ main() {
   fi
   set -e
 
+  if is_aml_runner; then
+    # AML has no runtime artifact directory to extract or copy. Its one typed
+    # stdout value is the complete handoff; eval converts that value later.
+    log "AML result emitted on stdout; no workflow artifacts to extract"
+    exit "$status"
+  fi
+
   set +e
-  run_extractor \
-    "$runtime_dir" \
-    "$wrapper_dir" \
-    "$dry_run_home" \
-    "$dry_run_config_home" \
-    "$dry_run_data_home" \
-    "$dry_run_cache_home" \
-    "$dry_run_state_home"
-  local extract_status=$?
+  local extract_status=0
+  if has_canonical_outputs "$runtime_dir"; then
+    log "using reviewer-provided canonical outputs"
+  else
+    run_extractor \
+      "$runtime_dir" \
+      "$wrapper_dir" \
+      "$dry_run_home" \
+      "$dry_run_config_home" \
+      "$dry_run_data_home" \
+      "$dry_run_cache_home" \
+      "$dry_run_state_home"
+    extract_status=$?
+  fi
   if [[ "$extract_status" -eq 0 ]]; then
     export_extracted_outputs "$runtime_dir" "$output_dir"
     extract_status=$?

@@ -7,15 +7,13 @@ export function buildJudgePrompt({ repoRoot, job }) {
   return `${instructions}
 
 Attached files:
-- review_model_context.json: production reviewer model context
-- pr.diff: production reviewed diff, after reviewer-side filtering
-- review_queue.json, review_payload.json, review_validated.json: queued, synthesized, and validated review artifacts
-- review_validation_context.json, audit_model_context.json: production validation and audit contexts
-- opencode_*.log and opencode_*.jsonl: rendered and raw phase output, including tool calls and results
+- review_model_context.json: eval-owned pull request context
+- pr.diff: reviewed diff after reviewer-side filtering
 - review.md: candidate final review body plus exported inline/reply/dropped comments
-- review_comments.json: production dry-run comment export
-- review_stats.json: production dry-run phase, token, and cost telemetry
-- review_transcript.md: production dry-run transcript, including phase outputs
+- review_comments.json: canonical dry-run comment export
+- review_stats.json: canonical phase, attempt, token, and cost telemetry
+- review_transcript.md: canonical gate, specialist, audit, validation, and publication transcript
+- source-runner queue, validation, and opencode files may also be attached when that implementation produces them
 
 Rubric questions:
 
