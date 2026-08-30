@@ -1,121 +1,232 @@
-# Model evaluations
+# Evaluating reviewer changes
 
-The eval harness builds the production reviewer image, captures dry-run reviews for exact pull-request revisions, judges the output, renders reports, and aggregates repeated runs. Capture, judgment, reporting, and aggregation remain separate so raw model output is inspectable.
+The eval framework runs the production reviewer against exact pull-request revisions without publishing to GitHub. Our working corpus mixes private Singular pull requests with public pull requests from projects such as Next.js, TanStack Query, and tRPC. We choose changes with review history we can inspect and enough variety to exercise different review paths.
 
-Runs may call paid or rate-limited providers. Start with one PR, one model, and concurrency 1. `eval/runs/` and `eval/cache/` are ignored because they may contain source, PR metadata, provider telemetry, local paths, and credentials.
+The framework measures this reviewer, with this rubric, on the code we selected. It is not a foolproof benchmark or a general model leaderboard. An LLM judge produces the score. It can miss subtle errors, reward a plausible false finding, or disagree with a human reviewer. We use it as a ruler for before-and-after changes, then read the generated reviews and compare their findings with the diff and real pull-request history.
+
+Capture, judgment, reporting, and comparison stay separate so every score can be traced back to the review, diff, model, image, rubric, and judge that produced it.
+
+Real runs may send private source to an external model provider and may cost money. Start with one PR, one model, and concurrency 1. Get explicit approval before sending a private corpus to a provider that has not already been approved for that run.
+
+`eval/runs/` and `eval/cache/` are ignored. They may contain source, pull-request metadata, review text, provider telemetry, local paths, and credentials.
+
+## How the framework works
+
+Each matrix cell is one exact pull-request revision reviewed by one model through one reviewer image.
+
+| Stage | Input | Result |
+| --- | --- | --- |
+| Capture | Pinned PR revision, reviewer image, model, and history mode | A production dry-run review plus its diff, context, transcript, findings, telemetry, and completion evidence |
+| Judge | Captured review, transcript, diff, normalized PR context, and fixed rubric | A score and written assessment for each rubric question |
+| Report | One completed capture run and its judgments | An HTML report and `summary.json` with scores, verdicts, findings, failures, time, tokens, and separate reviewer and judge costs |
+| Compare | Completed summaries from one or more runs | A cross-run HTML report and JSON summary grouped by model, reasoning variant, or reviewer version |
+
+The capture uses the same Docker image and `review_runner` boundary as production, but never passes `--publish`. The judge is a separate model call. Keeping those steps apart lets us inspect a weak review before deciding whether the reviewer, rubric, judge, or corpus caused the score.
+
+## Reading the score
+
+The judge scores 20 questions from 0 to 10. The framework averages those answers and presents the result on a 0-100 scale. The rubric covers verdict calibration, actionability, coverage, behavioral edge cases, public contracts, testing, documentation and migration surfaces, severity, hallucination control, research diligence, structure, and tone.
+
+A corpus score is the mean across its completed pull requests. Read it alongside completion rate, material misses, false positives, finding count, review time, and reviewer cost. We treat a higher score as an improvement only when the underlying reviews contain fewer false positives and material misses and give authors better next steps.
+
+The judge does not see the real human review thread. We inspect that history afterward to check which findings were supported, which material issues were missed, and whether the verdict was sensible. This prevents the historical answer from steering the score, but manual comparison remains part of every serious eval.
+
+Small score changes are not proof on their own. Model output varies between attempts, the corpus reflects our work rather than every codebase, and changing the judge or rubric breaks direct comparability. Pin the corpus, keep the judge fixed, retain every attempt, and read the artifacts before claiming an improvement.
 
 ## Requirements
 
-- Docker and installed repository dependencies;
-- `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI;
+- Docker;
+- installed repository dependencies;
+- `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI with read access to every input PR;
 - credentials for the selected Agent provider.
 
-The GitHub token needs read access to every input PR.
+OpenCode prefers `OPENCODE_API_KEY`. If it is absent, the framework stages disposable copies of the host OpenCode auth files in an isolated data directory and removes them before retaining scratch output.
 
-## Configure
+Codex uses the host ChatGPT login. The framework copies `auth.json` into a disposable writable `REVIEW_CODEX_HOME`, allows Codex to refresh that copy, and deletes it in `finally`. It does not forward `OPENAI_API_KEY` or `CODEX_API_KEY` to a Codex run.
 
-Edit [config.ts](config.ts):
+## Configure a corpus
+
+The committed [config.ts](config.ts) contains a small public example. Private and long-lived local corpora belong in `eval/config.local.ts`, which is ignored by Git.
 
 ```ts
 export default {
   concurrency: 1,
   provider: "opencode",
   models: ["opencode-go/deepseek-v4-flash"],
-  input: [{ pr: "trpc/trpc/7262", ignoreHistory: true }],
+  input: [
+    {
+      pr: "owner/repository/123",
+      base: "full-40-character-base-sha",
+      head: "full-40-character-head-sha",
+      ignoreHistory: true,
+      label: "short description of the change"
+    }
+  ],
   judge: {
     model: "opencode-go/deepseek-v4-flash",
-    timeoutMs: 120_000
+    timeoutMs: 300_000
   }
 }
 ```
 
-`ignoreHistory: true` removes issue comments, reviews, review comments, and threads from model context while retaining PR metadata, commits, the filtered diff, and valid comment ranges. Use it for a fresh-review measurement. Optional paired `base` and `head` SHAs pin the expected pull-request revision; capture fails if either SHA no longer matches the live pull request.
+`ignoreHistory: true` removes issue comments, reviews, review comments, and threads from the reviewer context. PR metadata, commits, the filtered diff, and valid comment ranges remain. Use this for a fresh-review measurement.
 
-OpenCode production uses `opencode-go/deepseek-v4-flash`. Codex comparison runs use provider `codex` with `gpt-5.6-luna`; the runtime sets maximum reasoning once at provider construction.
+Always pin `base` and `head` for a benchmark. Capture fails when the live PR no longer matches either SHA, which prevents a moved PR head from silently changing the corpus.
 
-## Capture
+## Start with a canary
 
-```bash
-npm run eval -- --out eval/runs/smoke
-```
-
-One-off input:
+Run one known PR through the current image before spending a full corpus:
 
 ```bash
 npm run eval -- \
   --no-config-input \
   --pr trpc/trpc/7262 \
   --model opencode-go/deepseek-v4-flash \
-  --out eval/runs/smoke
+  --concurrency 1 \
+  --out eval/runs/canary \
+  --force
 ```
 
-Codex/Luna:
+The capture builds the current Dockerfile, prepares the exact checkout on the host, mounts it at the review workspace, and invokes the production `review_runner` without `--publish`.
+
+Inspect the generated review and completion evidence before starting a matrix. A canary should prove that the expected model ran, every phase completed, findings reached the typed queue, required artifacts exist, and no GitHub write occurred.
+
+## Run a benchmark
+
+### 1. Capture reviews
 
 ```bash
 npm run eval -- \
-  --provider codex \
-  --model gpt-5.6-luna \
-  --out eval/runs/codex-luna
+  --config eval/config.local.ts \
+  --model opencode-go/deepseek-v4-flash \
+  --out eval/runs/current-deepseek \
+  --force
 ```
 
-The capture builds the current Dockerfile, prepares the exact pull-request checkout on the host, mounts it into the reviewer container, invokes the production `review_runner` without `--publish`, and records its single typed JSON result. The eval-only adapter renders:
+One capture writes:
 
 - `review.md`;
 - `review_comments.json`;
 - `review_stats.json`;
 - `provider_completions.jsonl` with content-free ACP run, session, model, and stop-reason evidence;
-- `review_transcript.md`.
+- `review_transcript.md`;
+- the exact filtered diff and normalized PR context supplied to the judge.
 
-The eval boundary also preserves the exact filtered diff and normalized PR context supplied to the judge. Those artifacts are observability and scoring inputs, not production workflow state.
+`targetDurationMs` is an advisory performance target. `reviewTimeoutMs` is a larger stuck-provider ceiling. A provider may remain silent while producing a complete result, so there is no short no-output timeout.
 
-The default `targetDurationMs` is advisory. `reviewTimeoutMs` is the larger stuck-provider safety ceiling and must not be interpreted as the expected review duration. There is no short no-output timeout because providers may be silent while producing a complete result.
+Use `--append` to add missing matrix cells. Use `--force` when the purpose is to measure the current reviewer rather than reuse a prior capture. Cache promotion requires a completed typed result and every canonical artifact; exit zero is insufficient.
 
-Use `--skip-build` only when the exact reviewer image already exists. Use `--base-image` to test another AML Agent Sandbox explicitly. The run manifest records both image IDs so rebuilding cannot silently restore a result captured from another implementation revision.
-
-Use `--append` to add missing matrix cells and `--force` to bypass the global review cache. Cache promotion requires a completed typed result and every canonical artifact; exit zero alone is insufficient.
-
-### Credentials
-
-OpenCode prefers `OPENCODE_API_KEY`. When it is absent, the harness stages disposable copies of the host OpenCode auth files into the isolated XDG data directory and removes them before retaining scratch.
-
-Codex uses the host ChatGPT login. The harness copies `auth.json` into a disposable writable `REVIEW_CODEX_HOME` because Codex may refresh it, then deletes that copy in `finally`. It does not forward `OPENAI_API_KEY` or `CODEX_API_KEY` to a Codex run.
-
-## Judge and report
+### 2. Judge the captured reviews
 
 ```bash
-npm run eval:judge -- --run eval/runs/smoke
-npm run eval:report -- --run eval/runs/smoke
+npm run eval:judge -- --run eval/runs/current-deepseek
 ```
 
-The judge receives the captured review, filtered diff, normalized PR context, and review telemetry. Human review threads remain outside the scoring prompt. Reports require a completed capture by default; `--allow-partial` renders only a diagnostic report and remains ineligible for benchmark aggregation.
+The judge receives the generated review, filtered diff, normalized PR context, and review telemetry. Human review history stays outside the scoring prompt.
 
-The judge reuses the eval config recorded in `run.json` so the capture's judge model and timeout remain stable. Pass `--config`, `--model`, or `--timeout-ms` only when intentionally overriding those defaults.
+The judge reuses the config recorded in `run.json`, including its model and timeout. Pass `--config`, `--model`, or `--timeout-ms` only for an intentional override. Every paid attempt is retained under `judge-attempts/`; the canonical judge files point at the selected result, while reports account for all retained attempts.
 
-Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity. Every paid judge invocation is retained under `judge-attempts/`; the canonical judge files represent the latest result, while reports include usage and cost from all retained attempts.
-
-## Compare
+### 3. Render the report
 
 ```bash
-npm run eval:benchmark
+npm run eval:report -- --run eval/runs/current-deepseek
 ```
 
-[`benchmark.mjs`](benchmark.mjs) aggregates completed `summary.json` files into an HTML report and JSON dataset. Keep the PR head, provider model, judge, `ignoreHistory`, and reviewer image stable when comparing revisions.
+Reports require a complete capture by default. `--allow-partial` renders diagnostics for a running or interrupted capture, but that report remains ineligible for benchmark aggregation.
 
-Repeated captures:
+### 4. Compare runs
 
 ```bash
 npm run eval:benchmark -- \
-  --runs eval/runs/reviewer-v1 \
-  --runs eval/runs/reviewer-v2 \
+  --runs eval/runs/current-deepseek \
+  --runs eval/runs/current-glm \
   --compare-runs \
-  --out eval/runs/reviewer-compare.html \
-  --json eval/runs/reviewer-compare-summary.json
+  --out eval/runs/model-comparison.html \
+  --json eval/runs/model-comparison.json
 ```
 
-`--avg` aggregates repeats by exact model and reasoning variant. Completed judged evidence ranks ahead of newer failed diagnostics. The benchmark aggregator can still read historical source and AML summaries, while all new captures execute the canonical production reviewer.
+`--avg` groups repeated captures by exact model and reasoning variant. Completed judged evidence ranks ahead of newer failed diagnostics.
+
+## Compare models fairly
+
+Build the reviewer image once, then reuse that exact image for every model in the comparison:
+
+```bash
+npm run eval -- \
+  --config eval/config.local.ts \
+  --model opencode-go/deepseek-v4-flash \
+  --out eval/runs/current-deepseek \
+  --force
+
+npm run eval -- \
+  --config eval/config.local.ts \
+  --model opencode-go/glm-5.3-flash \
+  --out eval/runs/current-glm \
+  --force \
+  --skip-build \
+  --image singular-code-review:eval
+```
+
+Keep these fixed across the runs:
+
+- base and head SHAs;
+- `ignoreHistory` mode;
+- reviewer image ID and base image ID;
+- judge model, prompt, rubric, and timeout;
+- concurrency unless concurrency itself is under test.
+
+The run manifest records both image IDs. `--skip-build` is safe only after verifying that the local tag still points at the image recorded by the first run.
+
+OpenCode production uses `opencode-go/deepseek-v4-flash`. Codex comparisons use provider `codex` with `gpt-5.6-luna`; maximum reasoning is set once at provider construction.
+
+## What counts as a completed run
+
+Do not accept a process exit code or a generated HTML file as proof by itself. Before quoting a score, verify:
+
+- `run.json` marks the run complete;
+- the expected number of jobs completed and none failed;
+- every job has a complete typed `result.json`;
+- every job has non-empty `provider_completions.jsonl` with the requested provider, model, and terminal stop reason;
+- every judged job has a completed `judge.json` and retained attempt evidence;
+- `summary.json` contains only completed capture and judgment results;
+- the image ID in `run.json` matches the image that was intended for the run;
+- no eval containers remain active.
+
+Keep raw evidence for failed attempts. A retry can produce the selected result, but it does not erase the failed attempt's time, cost, model identity, or diagnostic value.
+
+## Maintain the private benchmark
+
+The ignored `eval/config.local.ts` is the local tracker for private fixed-revision corpora and known baselines. Keep it useful to the next reviewer agent:
+
+- retain the full 40-character base and head SHAs;
+- give each PR a short label that explains why it is in the corpus;
+- keep old corpus arrays intact when adding a new check cohort;
+- record the reviewer commit, image, sandbox version, provider model, judge model, completion count, score, time, cost, and finding count in comments;
+- state whether the score predates or follows a reviewer change;
+- identify the one-PR canary used before the batch;
+- never move a historical pin to the PR's latest head.
+
+When changing review behavior:
+
+1. Read the generated review, findings, transcript, diff, and real GitHub history for each PR.
+2. Classify each failure at the owner that could have prevented it: lane scope, finding text, audit calibration, deterministic validation, synthesis, judge, or missing Tool access.
+3. Change prompts or code only for failure patterns demonstrated across the corpus or for one clear critical miss.
+4. Run a high-signal canary that exercises the changed boundary.
+5. Rerun the frozen corpus with `--force` and a new output directory.
+6. Record the new result beside the old baseline instead of overwriting history.
+
+Human history is evidence for retrospective analysis, not reviewer input. Keep it out of history-blind captures and out of the model judge. Use it afterward to measure supported findings, false positives, severity, resolved-feedback recognition, and material recall.
+
+Do not add a skill or Tool because a reviewer mentioned it once. First prove that missing access caused the miss and that the existing filesystem, Context7, or GitHub tools could not answer the question.
 
 ## Publication boundary
 
-Commit harness code, rubric, public example configuration, documentation, and ignore files. Keep captures, caches, generated reports, Docker logs, scratch workspaces, private identifiers, human review exports, credentials, and provider tokens local.
+Commit the eval code, rubric, public example config, documentation, and ignore rules. Keep these local:
 
-Tracked documentation may include anonymized model-level aggregates. It must not include repository names, pull-request numbers or titles, review text, finding excerpts, artifact links, or local paths from non-public runs.
+- private repository names, PR numbers, titles, and pinned revisions;
+- captures, caches, generated reports, and Docker logs;
+- generated review text and finding excerpts;
+- human review exports;
+- local paths, credentials, auth files, and provider tokens.
+
+Tracked documentation may publish anonymized model-level aggregates. Label reconstructed values as reconstructed and directional. Never describe an interrupted, partially judged, or historical run as a fresh result from the current reviewer.
