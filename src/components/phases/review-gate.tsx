@@ -3,7 +3,7 @@ import { z } from "zod"
 
 import { prepareGate } from "../../lib/review-gate.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { ReviewContext, useReview } from "../review-context.js"
+import { ReviewContext, useReviewContext } from "../review-context.js"
 import type { ReviewDraft } from "../../types/review.js"
 
 const GateDecisionSchema = z.discriminatedUnion("decision", [
@@ -52,7 +52,7 @@ function gateBody(gate: Extract<ReviewGateResult, { decision: "answer" | "no-rev
 
 /** Uses deterministic event/history rules before paying for an Agent decision. */
 async function decideGate(): Promise<ReviewGateResult> {
-  const { github, snapshot } = useReview()
+  const { github, snapshot } = useReviewContext()
   const prepared = prepareGate(snapshot, github.request.workspace)
 
   if (prepared.action === "post") {
@@ -73,9 +73,14 @@ async function decideGate(): Promise<ReviewGateResult> {
   return { ...decision, source: "agent" }
 }
 
-/** Stops cheap events at the gate or exposes a typed review decision downstream. */
+/**
+ * Routes cheap events to a final response or evaluates the full-review subtree.
+ *
+ * This component is the workflow's intentional router/orchestrator: it owns the
+ * conditional evaluation boundary while Agents below it retain post-order flow.
+ */
 export async function ReviewGate({ children }: { children: AmlRenderable }) {
-  const review = useReview()
+  const review = useReviewContext()
   const gate = await decideGate()
   if (gate.decision !== "review") {
     const result: ReviewDraft = {
@@ -87,5 +92,6 @@ export async function ReviewGate({ children }: { children: AmlRenderable }) {
     return ""
   }
 
-  return <ReviewContext.Provider value={{ ...review, gate }}>{children}</ReviewContext.Provider>
+  await evaluate(<ReviewContext.Provider value={{ ...review, gate }}>{children}</ReviewContext.Provider>)
+  return ""
 }

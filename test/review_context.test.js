@@ -5,13 +5,12 @@ import { AmlRuntime } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContext, ReviewOutcome, useReview } from "../dist/components/review-context.js"
+import { ReviewContext, ReviewOutcome, useReviewContext } from "../dist/components/review-context.js"
 
 function runtime() {
   return new AmlRuntime({
     agentProvider: new DeterministicAgentProvider(),
-    maxConcurrentAgents: 2,
-    maxTurnsPerAgent: 1
+    maxConcurrentAgents: 2
   })
 }
 
@@ -29,20 +28,28 @@ function reviewValue(id) {
 }
 
 function ReadReview() {
-  const review = useReview()
+  const review = useReviewContext()
   return JSON.stringify({
     github: review.github.id,
     model: review.model,
     gate: review.gate,
-    audit: review.audit
+    audit: review.audit,
+    validated: review.validated
   })
+}
+
+function RecordReviewResults() {
+  const review = useReviewContext()
+  review.audit = { findings: [] }
+  review.validated = { findings: [], queue: { version: 1 } }
+  return ""
 }
 
 function provided(value, children) {
   return jsx(ReviewContext.Provider, { value, children })
 }
 
-test("nested phase Providers preserve the flat request-scoped review context", async () => {
+test("nested Context Providers preserve the flat request-scoped review context", async () => {
   const initial = reviewValue("request-1")
   const audit = { summary: "audit" }
   const value = await runtime().evaluate(provided(initial, provided({ ...initial, audit }, jsx(ReadReview, {}))))
@@ -63,6 +70,19 @@ test("simultaneous evaluations isolate review context values", async () => {
 
   assert.equal(JSON.parse(first).github, "first")
   assert.equal(JSON.parse(second).github, "second")
+})
+
+test("authored phases share structured results through the request-scoped Context", async () => {
+  const initial = reviewValue("request-1")
+  const value = await runtime().evaluate(provided(initial, [jsx(RecordReviewResults, {}), jsx(ReadReview, {})]))
+
+  assert.deepEqual(JSON.parse(value), {
+    github: "request-1",
+    model: "request-1",
+    gate: { decision: "review", reason: "request-1", source: "deterministic" },
+    audit: { findings: [] },
+    validated: { findings: [], queue: { version: 1 } }
+  })
 })
 
 test("ReviewOutcome selects and publishes exactly once", () => {

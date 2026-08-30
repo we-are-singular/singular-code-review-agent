@@ -33,6 +33,23 @@ The judge does not see the real human review thread. We inspect that history aft
 
 Small score changes are not proof on their own. Model output varies between attempts, the corpus reflects our work rather than every codebase, and changing the judge or rubric breaks direct comparability. Pin the corpus, keep the judge fixed, retain every attempt, and read the artifacts before claiming an improvement.
 
+## Latest reviewer-change snapshot
+
+On 2026-08-30, the leaf-first AML tree and gate-scoped shared Context implementation ran against the same ten pinned, history-blind private pull-request revisions as the previous DeepSeek reviewer baseline. Both snapshots used `opencode-go/deepseek-v4-flash` for review and judgment with the same rubric.
+
+| Metric | Previous reviewer | Leaf-first AML tree | Change |
+| --- | ---: | ---: | ---: |
+| Completed captures | 10/10 | 10/10 | unchanged |
+| Judge score | 86.9 | 88.0 | +1.1 points |
+| Mean reviewer time | 5m 32s | 3m 49s | 1m 43s faster (31%) |
+| Reviewer cost per PR | $0.0096 | $0.0088 | about 8% lower |
+
+The fresh run completed every capture on its first attempt, produced 30 retained comments, and recorded no hard failures. Every review completed the six parallel lanes, audit, validation, synthesis, and dry-run publication path; audit and validation finding counts agreed for all ten reviews.
+
+One judgment exceeded the private corpus's older 180-second judge timeout. The initial failed attempt was retained, and a targeted retry with a 360-second ceiling completed the tenth judgment. The score above uses ten completed judgments; the reviewer time and cost columns remain reviewer-only and are unaffected by that judge retry.
+
+This is one directly comparable before-and-after run, not a repeated-run confidence interval. Treat it as evidence that the tree rewrite preserved quality and improved observed speed, then use repeated runs when a smaller regression or improvement would affect a release decision.
+
 ## Requirements
 
 - Docker;

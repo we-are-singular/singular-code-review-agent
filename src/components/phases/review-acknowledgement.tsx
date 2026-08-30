@@ -1,9 +1,9 @@
-import { useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 import { createGitHubAcknowledgementTools } from "../../tools/github-write.js"
 
 /** Adds the courteous eyes reaction when needed without blocking the review. */
 export async function ReviewAcknowledgement() {
-  const { actions, github, snapshot } = useReview()
+  const { actions, github, snapshot } = useReviewContext()
   const trigger = snapshot.trigger.comment
 
   if (trigger) {

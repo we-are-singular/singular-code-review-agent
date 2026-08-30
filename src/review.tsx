@@ -1,7 +1,7 @@
 import { Parallel, Workspace } from "@aml-jsx/sdk"
 
 import { ReviewContextFiles } from "./components/review-context-files.js"
-import { useReview } from "./components/review-context.js"
+import { useReviewContext } from "./components/review-context.js"
 import { CodePathBugHunterLane } from "./components/lanes/code-path-bug-hunter.js"
 import { CorrectnessRiskTestingLane } from "./components/lanes/correctness-risk-testing.js"
 import { DocumentationCommentaryLane } from "./components/lanes/documentation-commentary.js"
@@ -17,7 +17,7 @@ import { ReviewValidation } from "./components/phases/review-validation.js"
 
 /** The complete review workflow, including its deterministic publication edge. */
 export function Review() {
-  const { github } = useReview()
+  const { github } = useReviewContext()
   const workspaceId = `${github.request.repository.replaceAll("/", "-")}-pr-${github.request.prNumber}`
 
   return (
@@ -25,22 +25,20 @@ export function Review() {
       <ReviewContextFiles />
       <ReviewAcknowledgement />
       <ReviewGate>
-        <>
-          <Parallel>
-            <IntentContractLane />
-            <StandardsArchitectureLane />
-            <CodePathBugHunterLane />
-            <CorrectnessRiskTestingLane />
-            <DocumentationCommentaryLane />
-            <MaintainabilityEleganceLane />
-          </Parallel>
-
-          <ReviewAudit>
-            <ReviewValidation>
-              <ReviewSynthesis />
-            </ReviewValidation>
-          </ReviewAudit>
-        </>
+        <ReviewSynthesis>
+          <ReviewValidation>
+            <ReviewAudit>
+              <Parallel>
+                <IntentContractLane />
+                <StandardsArchitectureLane />
+                <CodePathBugHunterLane />
+                <CorrectnessRiskTestingLane />
+                <DocumentationCommentaryLane />
+                <MaintainabilityEleganceLane />
+              </Parallel>
+            </ReviewAudit>
+          </ReviewValidation>
+        </ReviewSynthesis>
       </ReviewGate>
       <ReviewPublication />
     </Workspace>

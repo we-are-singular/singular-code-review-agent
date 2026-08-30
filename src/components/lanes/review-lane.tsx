@@ -2,7 +2,7 @@ import { Agent, evaluate, Skill, Tool } from "@aml-jsx/sdk"
 
 import { Context7 } from "../context7.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 import type { ReviewLaneName } from "../../lib/review-queue.js"
 import { createGitHubReadTools } from "../../tools/github-read.js"
 import { createReviewTools } from "../../tools/review.js"
@@ -13,9 +13,9 @@ export type ReviewLaneProps = {
   prompt: string
 }
 
-/** Runs one focused specialist and suppresses its non-canonical terminal prose. */
+/** Runs one focused specialist and hands its non-canonical assessment to audit. */
 export async function ReviewLane({ lane, system, prompt }: ReviewLaneProps) {
-  const { github, queue, snapshot } = useReview()
+  const { github, queue, snapshot } = useReviewContext()
   const tools = createReviewTools(queue, lane)
   const githubTools = createGitHubReadTools(github)
   const changedFiles = snapshot.diff.files.map(path => `- ${path}`).join("\n") || "- (none)"
@@ -54,5 +54,5 @@ ${prompt}`}
   )
 
   queue.complete(lane, assessment)
-  return ""
+  return `\n\n## ${lane} specialist handoff\n\n${assessment}\n`
 }

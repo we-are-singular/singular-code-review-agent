@@ -48,7 +48,7 @@ export class ReviewOutcome {
   }
 }
 
-/** Request-scoped dependencies and typed phase results for one reviewed PR head. */
+/** Request-scoped dependencies and post-order phase results for one reviewed PR head. */
 export type ReviewContextValue = {
   github: GitHubReviewSession
   actions: ReviewGitHubActions
@@ -64,6 +64,6 @@ export type ReviewContextValue = {
 export const ReviewContext = createContext<ReviewContextValue>("SingularReview")
 
 /** Reads the single request-scoped dependency and phase-result context. */
-export function useReview(): ReviewContextValue {
+export function useReviewContext(): ReviewContextValue {
   return useContext(ReviewContext)
 }

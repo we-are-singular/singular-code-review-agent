@@ -40,6 +40,7 @@ flowchart TB
       gate -->|Answer or safe follow-up| outcome["Select answer or LGTM"]
       gate -->|Full review| parallel["Parallel: six specialist lanes"]
       parallel --> queue["ReviewQueue: typed findings"]
+      parallel --> audit
       queue --> audit["ReviewAudit: merge, demote, drop"]
       audit --> validation["ReviewValidation: anchors,<br/>reply targets, duplicates"]
       validation --> synthesis["ReviewSynthesis: summary<br/>and optional next steps"]
@@ -58,31 +59,32 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
   <ReviewContextFiles />
   <ReviewAcknowledgement />
   <ReviewGate>
-    <Parallel>
-      <IntentContractLane />
-      <StandardsArchitectureLane />
-      <CodePathBugHunterLane />
-      <CorrectnessRiskTestingLane />
-      <DocumentationCommentaryLane />
-      <MaintainabilityEleganceLane />
-    </Parallel>
-
-    <ReviewAudit>
+    <ReviewSynthesis>
       <ReviewValidation>
-        <ReviewSynthesis />
+        <ReviewAudit>
+          <Parallel>
+            <IntentContractLane />
+            <StandardsArchitectureLane />
+            <CodePathBugHunterLane />
+            <CorrectnessRiskTestingLane />
+            <DocumentationCommentaryLane />
+            <MaintainabilityEleganceLane />
+          </Parallel>
+        </ReviewAudit>
       </ReviewValidation>
-    </ReviewAudit>
+    </ReviewSynthesis>
   </ReviewGate>
   <ReviewPublication />
 </Workspace>
 ```
 
-The nesting defines the review and publication boundaries:
+AML reads the model tree from the leaves back to the trunk. The nesting defines the review and publication boundaries:
 
-- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails.
-- `<ReviewGate>` wraps only the expensive full-review path. A direct answer and a full review still reach the same publication boundary.
-- `<ReviewAudit>` can merge, demote, or drop staged findings. It cannot invent a new finding or rewrite one.
-- `<ReviewValidation>` is ordinary TypeScript. It checks anchors, reply targets, duplicate feedback, and the final queue shape.
+- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails. Each lane records its typed findings through Tools and returns a short terminal handoff.
+- `<ReviewAudit>` is the parent Agent for those lanes. It starts only after all six settle, receives their handoffs in authored order, and can mutate only the application-owned staged finding queue. A full review still runs this parent when the queue is empty, but grants it no finding Tools.
+- `<ReviewValidation>` evaluates the nested audit subtree, stores the audited and validated structures in the shared review Context, and returns the audit handoff as synthesis input. Anchor, reply-target, duplicate, and final queue validation remain ordinary TypeScript.
+- `<ReviewSynthesis>` is the trunk Agent. It starts after validation and is collected directly through `evaluate(agent, schema)`; TypeScript derives the verdict and publication draft from the validated Context state.
+- `<ReviewGate>` is the intentional router/orchestrator. It resolves the deterministic or typed gate decision, selects a cheap terminal response when possible, and otherwise evaluates the full-review route inside one gate-scoped review Context.
 - `<ReviewPublication>` sits outside the gate and verifies that GitHub still points to the reviewed commit before it writes anything.
 
 The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Parallel`, `Skill`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
@@ -182,17 +184,19 @@ We maintain an eval framework that runs the reviewer against a corpus of private
 
 It is not a foolproof benchmark. The corpus reflects the code and review problems we care about, and LLM-as-judge has its own blind spots. It gives us a useful ruler for checking whether changes to the reviewer improve review quality without making reviews slower or more expensive.
 
-Time and cost are averages per review.
+Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed snapshot, not a same-revision model comparison.
 
 | Model                | Score |    Time |    Cost |
 | -------------------- | ----: | ------: | ------: |
+| DeepSeek V4 Flash    |  88.0 |  3m 49s | $0.0088 |
 | GLM 5.3 Flash        |  87.8 |  5m 43s | $0.0108 |
-| DeepSeek V4 Flash    |  86.9 |  5m 32s | $0.0096 |
 | MiMo V2.5            |  86.0 |  7m 32s | $0.0128 |
 | HY3                  |  83.0 |  3m 23s | $0.0307 |
 | Qwen 3.7 Max         |  83.0 | 18m 41s | $0.9504 |
 | GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s | $0.0838 |
 | MiniMax M3           |  74.7 |  9m 42s | $0.6012 |
+
+The DeepSeek row was refreshed on 2026-08-30 after moving the review phases into AML's leaf-first tree and sharing structured review state through a gate-scoped Context. On the same pinned, history-blind ten-PR corpus and unchanged rubric, the score moved from 86.9 to 88.0 while mean reviewer time fell from 5m 32s to 3m 49s. That is one directly comparable run, not a repeated-run confidence interval.
 
 See [eval/README.md](eval/README.md) for the capture, judgment, reporting, comparison, and private-corpus rules.
 

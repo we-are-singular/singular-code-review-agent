@@ -1,20 +1,16 @@
-import type { AmlRenderable } from "@aml-jsx/sdk"
+import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
 
 import type { FinalizedReview } from "../../lib/review-queue.js"
-import { ReviewContext, useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 
 export type ValidatedReview = FinalizedReview
 
-/** Freezes audit's active findings into the exact GitHub publication queue. */
-export function ReviewValidation({ children }: { children: AmlRenderable }) {
-  const review = useReview()
-  if (!review.audit) {
-    throw new Error("ReviewValidation requires ReviewAudit")
-  }
+/** Resolves audit, records its structured results in Context, then hands its text to synthesis. */
+export async function ReviewValidation({ children }: { children: AmlRenderable }) {
+  const review = useReviewContext()
+  const auditHandoff = await evaluate(children)
 
-  return (
-    <ReviewContext.Provider value={{ ...review, validated: review.queue.finalize() }}>
-      {children}
-    </ReviewContext.Provider>
-  )
+  review.audit = { findings: review.queue.audited() }
+  review.validated = review.queue.finalize()
+  return auditHandoff
 }

@@ -99,7 +99,9 @@ export async function runReview(
       // remains pinned to the repository under review.
       cwd: fileURLToPath(new URL(".", import.meta.url)),
       maxConcurrentAgents: options.maximumConcurrency,
-      maxTurnsPerAgent: 1,
+      // The post-order review tree nests lane Agents beneath audit, validation,
+      // synthesis, gate, and Workspace while retaining a finite depth budget.
+      maxDepth: 24,
       workspaceProvider: localWorkspace({ directory: options.request.workspace }),
       trace: telemetry.trace
     })

@@ -367,12 +367,23 @@ test("the declarative tree carries Tool findings through audit, validation, synt
   assert.match(audit.request.prompt, /Treat factuality and merge action separately/u)
   assert.match(audit.request.prompt, /undocumented older or third-party compatibility/u)
   assert.match(audit.request.prompt, /An anchorless blocker can only remain `critical` or be dropped/u)
+  assert.match(audit.request.prompt, /Prefer retaining no more than 24 findings/u)
+  assert.match(audit.request.prompt, /Do not discard distinct material feedback merely to reach this preference/u)
+  assert.doesNotMatch(audit.request.prompt, /hard safety ceiling/u)
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
   assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)
+  let previousHandoff = -1
+  for (const lane of laneNames) {
+    const handoff = audit.request.prompt.indexOf(`## ${lane} specialist handoff`)
+    assert.ok(handoff > previousHandoff, `${lane} handoff did not reach audit in authored order`)
+    previousHandoff = handoff
+  }
+  assert.match(audit.request.prompt, /The stale-state branch remains reachable and was queued for audit\./u)
 
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
   assert.ok(synthesis)
   assert.deepEqual(synthesis.request.tools, [])
+  assert.match(synthesis.request.prompt, /The staged findings were consolidated\./u)
   assert.match(synthesis.request.prompt, /lane_assessments/u)
   assert.match(synthesis.request.prompt, /"final_review"/u)
   assert.match(synthesis.request.prompt, /"verdict": "⚠️ Request changes"/u)
@@ -383,6 +394,15 @@ test("the declarative tree carries Tool findings through audit, validation, synt
   assert.doesNotMatch(synthesis.request.prompt, /retained_findings/u)
   assert.doesNotMatch(synthesis.request.prompt, /inline_comments/u)
   assert.doesNotMatch(synthesis.request.prompt, /const changed = true/u)
+
+  const auditIndex = provider.calls.indexOf(audit)
+  const synthesisIndex = provider.calls.indexOf(synthesis)
+  assert.ok(
+    provider.calls
+      .filter(call => Boolean(laneName(call.request.prompt)))
+      .every(call => provider.calls.indexOf(call) < auditIndex)
+  )
+  assert.ok(auditIndex < synthesisIndex)
 })
 
 test("native Parallel starts all six specialists concurrently", { timeout: 2_000 }, async t => {
@@ -411,6 +431,9 @@ test("native Parallel starts all six specialists concurrently", { timeout: 2_000
         await release
         active -= 1
         return { text: `${lane} completed.` }
+      }
+      if (request.system.includes("calibrate pull-request findings")) {
+        return { text: "The empty typed queue was audited." }
       }
       if (request.system.includes("concise pull-request review summary")) {
         return {
@@ -710,7 +733,7 @@ test("an audit failure is terminal and never falls back to unaudited lane findin
   assert.deepEqual(github.writes, [])
 })
 
-test("zero-finding reviews skip semantic audit and synthesize a compact LGTM", async t => {
+test("zero-finding reviews still pass specialist handoffs through the audit parent", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     laneInputs: {},
@@ -722,10 +745,11 @@ test("zero-finding reviews skip semantic audit and synthesize a compact LGTM", a
   })
   const result = await runReview(reviewOptions(t, github.client), () => provider)
 
-  assert.equal(
-    provider.calls.some(call => call.request.system.includes("calibrate pull-request findings")),
-    false
-  )
+  const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
+  assert.ok(audit)
+  assert.deepEqual(audit.request.tools, [])
+  assert.match(audit.request.prompt, /No specialist staged a typed finding/u)
+  assert.match(audit.request.prompt, /## intent-contract specialist handoff/u)
   assert.equal(provider.calls.filter(call => Boolean(laneName(call.request.prompt))).length, 6)
   assert.equal(
     provider.calls.filter(call => call.request.system.includes("concise pull-request review summary")).length,
@@ -737,7 +761,27 @@ test("zero-finding reviews skip semantic audit and synthesize a compact LGTM", a
   assert.equal(result.validated.inlineComments.length, 0)
 })
 
-test("lane terminal prose is never promoted into the canonical findings queue", async t => {
+test("the audit count preference never discards or rejects distinct retained findings", async t => {
+  const github = fakeGitHub()
+  const findings = Array.from({ length: 25 }, (_, index) =>
+    commentInput({
+      ...finding,
+      body: `Distinct supported concern ${index + 1} remains material and should reach the author.`,
+      evidence: `Independent evidence ${index + 1} supports this concern.`
+    })
+  )
+  const provider = reviewProvider({
+    laneInputs: { "code-path-bug-hunter": findings }
+  })
+
+  const result = await runReview(reviewOptions(t, github.client), () => provider)
+
+  assert.equal(result.audit.findings.length, 25)
+  assert.equal(result.validated.inlineComments.length, 25)
+  assert.match(result.body, /## Verdict\n\n⚠️ Request changes$/u)
+})
+
+test("lane terminal prose reaches audit but is never promoted into the canonical findings queue", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     laneInputs: {},
@@ -756,10 +800,11 @@ test("lane terminal prose is never promoted into the canonical findings queue", 
   assert.equal(result.audit.findings.length, 0)
   assert.equal(result.validated.inlineComments.length, 0)
   assert.match(result.body, /## Verdict\n\n✅ LGTM$/u)
-  assert.equal(
-    provider.calls.some(call => call.request.system.includes("calibrate pull-request findings")),
-    false
-  )
+  const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
+  assert.ok(audit)
+  assert.deepEqual(audit.request.tools, [])
+  assert.match(audit.request.prompt, /A possible regression was observed but was not staged through a review Tool\./u)
+  assert.match(audit.request.prompt, /Do not invent one from terminal prose/u)
 })
 
 test("typed retained severity owns the verdict instead of synthesis prose", async t => {

@@ -89,4 +89,4 @@ Reply only when the normalized context identifies an existing top-level review c
 
 If the lane has little relevant scope, inspect enough evidence to establish that and finish without manufacturing work.
 
-Return only one or two short, conclusion-first sentences describing what you checked and whether anything material remains. This terminal handoff is internal synthesis context, not a fallback finding channel. Stage every author-visible concern through `add_review_comment`, `add_review_reply`, or `add_review_blocker`; do not repeat staged findings or return JSON.
+Return only one or two short, conclusion-first sentences describing what you checked and whether anything material remains. This terminal handoff is internal audit and synthesis context, not a fallback finding channel. Stage every author-visible concern through `add_review_comment`, `add_review_reply`, or `add_review_blocker`; do not repeat staged findings or return JSON.

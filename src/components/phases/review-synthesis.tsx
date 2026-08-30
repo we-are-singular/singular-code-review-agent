@@ -1,8 +1,8 @@
-import { Agent, evaluate, Skill } from "@aml-jsx/sdk"
+import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 import type { ReviewDraft } from "../../types/review.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 
@@ -14,7 +14,40 @@ const SynthesisSchema = z
   })
   .strict()
 
-function SynthesisAgent({ evidence }: { evidence: unknown }) {
+function SynthesisEvidence() {
+  const review = useReviewContext()
+  if (!review.gate || !review.audit || !review.validated) {
+    throw new Error("ReviewSynthesis requires gate, audit, and validation results")
+  }
+
+  const lanes = review.queue.completed()
+  const finalVerdict = verdict(review.validated.findings)
+  const topLevelActionItems = review.snapshot.actionItems.filter(
+    item => item.kind === "trigger_request" || item.kind === "mentioned"
+  )
+
+  return `\n\nWrite the author-facing main review body from this application-owned final evidence:
+
+${JSON.stringify(
+  {
+    lane_assessments: lanes,
+    final_review: {
+      findings: review.validated.findings,
+      verdict: finalVerdict
+    },
+    conversation: {
+      participants: review.snapshot.participants,
+      top_level_action_items: topLevelActionItems
+    }
+  },
+  null,
+  2
+)}
+
+Use ${REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and ${REVIEW_CONTEXT_PATHS.history} when the trigger or prior discussion matters.`
+}
+
+function SynthesisAgent({ children }: { children: AmlRenderable }) {
   return (
     <Agent
       name="review-synthesis"
@@ -22,11 +55,9 @@ function SynthesisAgent({ evidence }: { evidence: unknown }) {
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
       <Skill name="Review synthesis policy" src="./skills/synthesis.md" />
-      {`Write the author-facing main review body for this final review:
-
-${JSON.stringify(evidence, null, 2)}
-
-Use ${REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and ${REVIEW_CONTEXT_PATHS.history} when the trigger or prior discussion matters.`}
+      {`\n\nThe validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the application-owned final evidence that follows is authoritative.`}
+      {children}
+      <SynthesisEvidence />
     </Agent>
   )
 }
@@ -45,35 +76,26 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
   return "✅ LGTM"
 }
 
-/** Selects the final draft after one small, typed prose pass. */
-export async function ReviewSynthesis() {
-  const review = useReview()
-  if (!review.gate || !review.audit || !review.validated) {
-    throw new Error("ReviewSynthesis requires gate, audit, and validation results")
+/** Collects one typed synthesis result after validation resolves the nested audit tree. */
+export async function ReviewSynthesis({ children }: { children: AmlRenderable }) {
+  const review = useReviewContext()
+  if (!review.gate) {
+    throw new Error("ReviewSynthesis requires a full-review gate decision")
+  }
+
+  const synthesis = await evaluate(<SynthesisAgent>{children}</SynthesisAgent>, SynthesisSchema)
+  if (!review.audit || !review.validated) {
+    throw new Error("ReviewSynthesis completed without audit and validation results")
   }
 
   const lanes = review.queue.completed()
-  const finalVerdict = verdict(review.validated.findings)
+  const audit = review.audit
+  const validated = review.validated
+  const finalVerdict = verdict(validated.findings)
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
   )
-  const synthesis = await evaluate(
-    <SynthesisAgent
-      evidence={{
-        lane_assessments: lanes,
-        final_review: {
-          findings: review.validated.findings,
-          verdict: finalVerdict
-        },
-        conversation: {
-          participants: review.snapshot.participants,
-          top_level_action_items: topLevelActionItems
-        }
-      }}
-    />,
-    SynthesisSchema
-  )
-  const blockers = review.validated.findings.filter(finding => finding.kind === "blocker")
+  const blockers = validated.findings.filter(finding => finding.kind === "blocker")
   // Thread replies are published beside their original comment. Even if a
   // provider ignores the prompt, they must never leak into the top-level body.
   const directAnswer = topLevelActionItems.length > 0 ? synthesis.direct_answer : null
@@ -101,8 +123,8 @@ export async function ReviewSynthesis() {
     status: "reviewed",
     gate: review.gate,
     lanes,
-    audit: review.audit,
-    validated: review.validated.queue,
+    audit,
+    validated: validated.queue,
     body: body.join("\n")
   }
 

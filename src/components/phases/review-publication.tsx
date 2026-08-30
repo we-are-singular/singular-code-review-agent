@@ -2,11 +2,11 @@ import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from ".
 import type { PublishedReview } from "../../types/review.js"
 import type { PublicationExpectation } from "../../services/github-actions.js"
 import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/github-write.js"
-import { useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 
 /** Publishes the selected draft through application-invoked, traced AML Tools. */
 export async function ReviewPublication() {
-  const { actions, github, model, outcome } = useReview()
+  const { actions, github, model, outcome } = useReviewContext()
   const draft = outcome.selected()
   let published: PublishedReview
   let plan: ReviewPublicationPlan

@@ -2,7 +2,7 @@ import { File } from "@aml-jsx/sdk"
 
 import type { ReviewThread } from "../services/github-client.js"
 import type { ReviewSnapshot } from "../types/review.js"
-import { useReview } from "./review-context.js"
+import { useReviewContext } from "./review-context.js"
 
 export const REVIEW_CONTEXT_PATHS = {
   pullRequest: ".singular-code-review/pr.md",
@@ -159,7 +159,7 @@ function historyDocument(snapshot: ReviewSnapshot) {
 
 /** Materializes durable PR evidence before any investigative Agent starts. */
 export function ReviewContextFiles() {
-  const { snapshot } = useReview()
+  const { snapshot } = useReviewContext()
 
   return (
     <>
