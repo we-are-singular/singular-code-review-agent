@@ -104,7 +104,7 @@ export async function loadPullRequestInput(input, token) {
         }
       : {
           ignored: false,
-          note: "History capture is intentionally not implemented in the new eval runner yet.",
+          note: "The production reviewer receives history; human discussion remains outside the eval-owned judge context.",
           issueComments: [],
           reviewComments: [],
           reviews: [],
