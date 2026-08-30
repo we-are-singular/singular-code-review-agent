@@ -172,6 +172,78 @@ test("eval analysis takes the published verdict from the captured review", t => 
   assert.equal(summary.results[0].verdictLabel, "⚠ request changes")
 })
 
+test("eval analysis includes every retained judge attempt in usage and cost", t => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "judge-attempt-analysis-"))
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }))
+  const reviewFile = path.join(runDir, "review.md")
+  const commentsFile = path.join(runDir, "review_comments.json")
+  const firstRaw = path.join(runDir, "judge-attempts", "attempt-1", "judge.raw.jsonl")
+  const secondRaw = path.join(runDir, "judge-attempts", "attempt-2", "judge.raw.jsonl")
+  fs.mkdirSync(path.dirname(firstRaw), { recursive: true })
+  fs.mkdirSync(path.dirname(secondRaw), { recursive: true })
+  fs.writeFileSync(reviewFile, "# Final Review Body\n\n✅ LGTM")
+  fs.writeFileSync(
+    commentsFile,
+    JSON.stringify({ review: { body: "✅ LGTM" }, issueComments: [], inlineComments: [], replies: [], dropped: [] })
+  )
+  fs.writeFileSync(firstRaw, '{"part":{"tokens":{"total":100,"input":80,"output":20},"cost":0.01}}\n')
+  fs.writeFileSync(secondRaw, '{"part":{"tokens":{"total":200,"input":150,"output":50},"cost":0.02}}\n')
+
+  const job = {
+    runner: "aml",
+    provider: "opencode",
+    model: "opencode-go/deepseek-v4-flash",
+    status: "completed",
+    outputBytes: fs.statSync(reviewFile).size,
+    startedAt: "2026-08-30T10:00:00.000Z",
+    endedAt: "2026-08-30T10:01:00.000Z",
+    input: { slug: "owner-repository-pr-42", ref: "owner/repository#42" },
+    files: { review: reviewFile, comments: commentsFile }
+  }
+  const judgment = {
+    jobKey: evalJobKey(job),
+    model: "opencode-go/deepseek-v4-flash",
+    status: "completed",
+    score: 9,
+    verdict: "lgtm",
+    questions: [],
+    files: { raw: secondRaw },
+    attempts: [
+      {
+        attempt: 1,
+        model: "opencode-go/deepseek-v4-flash",
+        status: "failed",
+        startedAt: "2026-08-30T10:01:00.000Z",
+        files: { raw: firstRaw }
+      },
+      {
+        attempt: 2,
+        model: "opencode-go/deepseek-v4-flash",
+        status: "completed",
+        startedAt: "2026-08-30T10:02:00.000Z",
+        files: { raw: secondRaw }
+      }
+    ]
+  }
+
+  const summary = buildEvalSummary({
+    runDir,
+    run: {
+      status: "completed",
+      startedAt: job.startedAt,
+      endedAt: job.endedAt,
+      inputs: [job.input],
+      models: [job.model],
+      jobs: [job]
+    },
+    judgments: [judgment]
+  })
+
+  assert.equal(summary.results[0].judgeUsage.totalTokens, 300)
+  assert.equal(summary.results[0].judgeReportedCostUsd, 0.03)
+  assert.equal(summary.results[0].judgeCostSource, "all-attempts:provider")
+})
+
 test("eval report requires an explicit diagnostic flag for partial runs", t => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "partial-eval-report-"))
   t.after(() => fs.rmSync(runDir, { recursive: true, force: true }))

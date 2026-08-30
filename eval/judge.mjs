@@ -5,12 +5,12 @@ import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import {
   cacheEntryDir,
-  copyExistingFile,
   readJsonFile,
   writeJsonFile,
 } from "./lib/cache.mjs"
 import { loadEvalConfig } from "./lib/config.mjs"
 import { judgeCacheKey } from "./lib/judge-cache-key.mjs"
+import { JudgeAttemptStore } from "./lib/judge-attempts.mjs"
 import { buildJudgePrompt } from "./lib/judge-prompt.mjs"
 import { JUDGE_RUBRIC } from "./lib/judge-rubric.mjs"
 import { normalizeEvalModel } from "./lib/models.mjs"
@@ -98,18 +98,11 @@ function restoreJudgeCache({ cacheDir, key, jobDir, jobKey, model }) {
     return null
   }
 
-  const rawFile = join(jobDir, "judge.raw.jsonl")
-  const stderrFile = join(jobDir, "judge.stderr.log")
-  copyExistingFile(join(entryDir, "judge.raw.jsonl"), rawFile)
-  copyExistingFile(join(entryDir, "judge.stderr.log"), stderrFile)
+  const restored = new JudgeAttemptStore(jobDir).restoreCache(entryDir, cached)
   const judgment = {
-    ...cached,
+    ...restored,
     jobKey,
     model,
-    files: {
-      raw: existsSync(rawFile) ? rawFile : "",
-      stderr: existsSync(stderrFile) ? stderrFile : "",
-    },
     cache: {
       hit: true,
       key,
@@ -125,14 +118,9 @@ function saveJudgeCache({ cacheDir, key, jobDir, judgment }) {
     return
   }
   const entryDir = cacheEntryDir(cacheDir, key)
-  copyExistingFile(join(jobDir, "judge.raw.jsonl"), join(entryDir, "judge.raw.jsonl"))
-  copyExistingFile(join(jobDir, "judge.stderr.log"), join(entryDir, "judge.stderr.log"))
+  const cached = new JudgeAttemptStore(jobDir).writeCache(entryDir, judgment)
   writeJsonFile(join(entryDir, "judge.json"), {
-    ...judgment,
-    files: {
-      raw: "judge.raw.jsonl",
-      stderr: "judge.stderr.log",
-    },
+    ...cached,
     cache: {
       hit: false,
       key,
@@ -228,7 +216,7 @@ function normalizeJudgeOutput(value) {
   }
 }
 
-function runJudge({ model, jobDir, job, timeoutMs }) {
+function runJudge({ model, jobDir, job, timeoutMs, files }) {
   return new Promise((resolveJudge) => {
     const scratchRoot = join(tmpdir(), "singular-code-review-eval-judge", `${Date.now()}-${job.input.slug}`)
     const home = join(scratchRoot, "home")
@@ -245,8 +233,8 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
     writeText(join(configHome, "opencode", "opencode.json"), "{}\n")
     stageOpenCodeAuth(dataHome)
 
-    const rawFile = join(jobDir, "judge.raw.jsonl")
-    const stderrFile = join(jobDir, "judge.stderr.log")
+    const rawFile = files.raw
+    const stderrFile = files.stderr
     const prompt = buildJudgePrompt({ repoRoot, job })
     const attachedFiles = [
       join(jobDir, "artifacts", "review_model_context.json"),
@@ -420,8 +408,10 @@ async function main() {
       }
     }
     console.log(`judging ${jobKey} with ${model}`)
+    const attemptStore = new JudgeAttemptStore(jobDir)
+    const attempt = attemptStore.start()
     const startedAt = new Date().toISOString()
-    const result = await runJudge({ model, jobDir, job, timeoutMs })
+    const result = await runJudge({ model, jobDir, job, timeoutMs, files: attempt.files })
     const endedAt = new Date().toISOString()
     const judgment = {
       jobKey,
@@ -438,9 +428,9 @@ async function main() {
         dir: cacheEntryDir(options.cacheDir, cacheKey),
       },
     }
-    judgments.push(judgment)
-    writeJson(join(jobDir, "judge.json"), judgment)
-    saveJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, judgment })
+    const recordedJudgment = attemptStore.record(attempt, judgment)
+    judgments.push(recordedJudgment)
+    saveJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, judgment: recordedJudgment })
   }
 
   writeJson(join(options.runDir, "judgments.json"), {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cacheEntryDir, copyExistingFile, readJsonFile, writeJsonFile } from "./lib/cache.mjs";
+import { JudgeAttemptStore } from "./lib/judge-attempts.mjs";
 import { judgeCacheKey } from "./lib/judge-cache-key.mjs";
 import { evalJobKey } from "./lib/job-key.mjs";
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs";
@@ -194,14 +195,9 @@ function seedJudgmentCache({ runDir, job, judgment, cacheDir, force }) {
     return "existing";
   }
 
-  copyExistingFile(join(jobDir, "judge.raw.jsonl"), join(entryDir, "judge.raw.jsonl"));
-  copyExistingFile(join(jobDir, "judge.stderr.log"), join(entryDir, "judge.stderr.log"));
+  const cached = new JudgeAttemptStore(jobDir).writeCache(entryDir, readJson(judgeFile));
   writeJsonFile(join(entryDir, "judge.json"), {
-    ...readJson(judgeFile),
-    files: {
-      raw: "judge.raw.jsonl",
-      stderr: "judge.stderr.log",
-    },
+    ...cached,
     cache: {
       hit: false,
       key: cacheKey,

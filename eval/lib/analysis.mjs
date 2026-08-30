@@ -160,6 +160,34 @@ function combineUsage(...items) {
   );
 }
 
+function judgeAttempts(judgment) {
+  const attempts = Array.isArray(judgment?.attempts) ? judgment.attempts : [];
+  const retained = attempts.filter((attempt) => attempt?.files?.raw && existsSync(attempt.files.raw));
+  return retained.length > 0 ? retained : judgment ? [judgment] : [];
+}
+
+function priceJudgeAttempts(attempts, usageByAttempt) {
+  if (attempts.length === 0) {
+    return { costUsd: 0, label: formatCost(0), rawReportedCostUsd: 0, source: "not-run" };
+  }
+  const prices = attempts.map((attempt, index) =>
+    priceUsage({
+      model: attempt.model || "",
+      usage: usageByAttempt[index],
+      reportedCostUsd: usageByAttempt[index].costUsd,
+      startedAt: attempt.startedAt,
+    }),
+  );
+  const costUsd = sumKnownCosts(prices.map((price) => price.costUsd));
+  const sources = [...new Set(prices.map((price) => price.source))];
+  return {
+    costUsd,
+    label: formatCost(costUsd),
+    rawReportedCostUsd: prices.reduce((sum, price) => sum + price.rawReportedCostUsd, 0),
+    source: attempts.length > 1 ? `all-attempts:${sources.join("+")}` : sources[0],
+  };
+}
+
 function countProducedComments(reviewText) {
   const text = String(reviewText || "");
   const findingsStart = text.search(/^##\s+Findings\b/imu);
@@ -348,21 +376,16 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const jobKey = evalJobKey(job);
   const reviewStats = job.files?.stats ? readReviewStats(job.files.stats) : null;
   const captureUsage = reviewStats?.usage || readOpenCodeUsage(job.files?.raw);
-  const judgeUsage = readOpenCodeUsage(judgment?.files?.raw);
+  const retainedJudgeAttempts = judgeAttempts(judgment);
+  const judgeUsageByAttempt = retainedJudgeAttempts.map(attempt => readOpenCodeUsage(attempt.files?.raw));
+  const judgeUsage = combineUsage(...judgeUsageByAttempt);
   const captureCost = priceUsage({
     model: job.model,
     usage: captureUsage,
     reportedCostUsd: captureUsage.costUsd,
     startedAt: job.startedAt,
   });
-  const judgeCost = judgment
-    ? priceUsage({
-        model: judgment.model || "",
-        usage: judgeUsage,
-        reportedCostUsd: judgeUsage.costUsd,
-        startedAt: judgment.startedAt,
-      })
-    : { costUsd: 0, label: formatCost(0), rawReportedCostUsd: 0, source: "not-run" };
+  const judgeCost = priceJudgeAttempts(retainedJudgeAttempts, judgeUsageByAttempt);
   const usage = combineUsage(captureUsage, judgeUsage);
   usage.costUsd = sumKnownCosts([captureCost.costUsd, judgeCost.costUsd]);
   const judgeModel = judgment?.model || "";

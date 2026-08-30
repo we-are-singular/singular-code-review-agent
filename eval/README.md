@@ -91,7 +91,7 @@ The judge receives the captured review, filtered diff, normalized PR context, an
 
 The judge reuses the eval config recorded in run.json so the capture's judge model and timeout remain stable. Pass --config, --model, or --timeout-ms only when intentionally overriding those defaults.
 
-Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity.
+Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity. Every paid judge invocation is retained under `judge-attempts/`; the canonical judge files represent the latest result, while reports include usage and cost from all retained attempts.
 
 ## Compare
 

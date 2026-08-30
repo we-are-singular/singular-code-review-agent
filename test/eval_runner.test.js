@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
 import { evalJobKey } from "../eval/lib/job-key.mjs"
+import { JudgeAttemptStore } from "../eval/lib/judge-attempts.mjs"
 import { normalizeEvalModel } from "../eval/lib/models.mjs"
 import { reviewCacheKey } from "../eval/lib/review-cache-key.mjs"
 import { normalizeReviewProvider, reviewerContainerConfig } from "../eval/lib/reviewer-runner.mjs"
@@ -54,6 +55,65 @@ test("judge config follows the capture unless explicitly overridden", () => {
   assert.equal(resolveJudgeConfigFile("", { configFile: capturedConfig }), capturedConfig)
   assert.equal(resolveJudgeConfigFile(explicitConfig, { configFile: capturedConfig }), explicitConfig)
   assert.match(resolveJudgeConfigFile("", {}), /eval\/config\.ts$/)
+})
+
+test("judge retries preserve prior raw evidence and update canonical aliases", t => {
+  const directory = mkdtempSync(join(tmpdir(), "singular-eval-judge-attempts-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  writeFileSync(join(directory, "judge.raw.jsonl"), "first raw\n")
+  writeFileSync(join(directory, "judge.stderr.log"), "first stderr\n")
+  writeFileSync(
+    join(directory, "judge.json"),
+    JSON.stringify({
+      model: "opencode-go/deepseek-v4-flash",
+      status: "failed",
+      startedAt: "2026-08-30T10:00:00.000Z",
+      endedAt: "2026-08-30T10:01:00.000Z",
+      error: "invalid JSON",
+      cache: { hit: false }
+    })
+  )
+
+  const store = new JudgeAttemptStore(directory)
+  const retry = store.start()
+  assert.equal(retry.number, 2)
+  assert.equal(readFileSync(join(directory, "judge-attempts", "attempt-1", "judge.raw.jsonl"), "utf8"), "first raw\n")
+  assert.equal(
+    readFileSync(join(directory, "judge-attempts", "attempt-1", "judge.stderr.log"), "utf8"),
+    "first stderr\n"
+  )
+
+  writeFileSync(retry.files.raw, "second raw\n")
+  writeFileSync(retry.files.stderr, "second stderr\n")
+  const judgment = store.record(retry, {
+    model: "opencode-go/deepseek-v4-flash",
+    status: "completed",
+    startedAt: "2026-08-30T10:02:00.000Z",
+    endedAt: "2026-08-30T10:03:00.000Z",
+    error: null
+  })
+
+  assert.equal(readFileSync(join(directory, "judge.raw.jsonl"), "utf8"), "second raw\n")
+  assert.equal(judgment.attempt, 2)
+  assert.deepEqual(
+    judgment.attempts.map(attempt => [attempt.attempt, attempt.status]),
+    [
+      [1, "failed"],
+      [2, "completed"]
+    ]
+  )
+
+  const cacheDirectory = join(directory, "cache-entry")
+  const cached = store.writeCache(cacheDirectory, judgment)
+  assert.equal(cached.attempts[0].files.raw, join("judge-attempts", "attempt-1", "judge.raw.jsonl"))
+  assert.equal(readFileSync(join(cacheDirectory, cached.attempts[0].files.raw), "utf8"), "first raw\n")
+
+  const restoredDirectory = join(directory, "restored-job")
+  const restoredStore = new JudgeAttemptStore(restoredDirectory)
+  const restored = restoredStore.restoreCache(cacheDirectory, cached)
+  assert.equal(readFileSync(restored.files.raw, "utf8"), "second raw\n")
+  assert.equal(readFileSync(restored.attempts[0].files.raw, "utf8"), "first raw\n")
+  assert.equal(restoredStore.start().number, 3)
 })
 
 test("stale cleanup ignores fresh and unowned evaluator leases", () => {
