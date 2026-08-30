@@ -30,6 +30,16 @@ function normalizeStringArray(value, name) {
   return value;
 }
 
+function optionalString(value, name) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`eval config ${name} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
 function normalizeInput(value) {
   if (value === undefined) {
     return [];
@@ -45,10 +55,12 @@ function normalizeConfig(value) {
   const judge = config.judge && typeof config.judge === "object" ? config.judge : {};
   return {
     models: normalizeStringArray(config.models, "models"),
+    provider: config.provider === undefined ? "opencode" : String(config.provider),
+    baseImage: optionalString(config.baseImage, "baseImage"),
     input: normalizeInput(config.input),
     concurrency: positiveInteger(config.concurrency, "concurrency") ?? 1,
-    reviewTimeoutMs: positiveInteger(config.reviewTimeoutMs, "reviewTimeoutMs") ?? 600_000,
-    bootTimeoutMs: positiveInteger(config.bootTimeoutMs, "bootTimeoutMs") ?? 90_000,
+    targetDurationMs: positiveInteger(config.targetDurationMs, "targetDurationMs") ?? 600_000,
+    reviewTimeoutMs: positiveInteger(config.reviewTimeoutMs, "reviewTimeoutMs") ?? 1_800_000,
     keepScratch: config.keepScratch === true,
     judge: {
       model: typeof judge.model === "string" ? judge.model : "",

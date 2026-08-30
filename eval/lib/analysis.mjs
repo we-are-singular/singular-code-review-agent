@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { formatCost, priceUsage } from "./pricing.mjs";
-import { slugify } from "./pr-input.mjs";
+import { evalJobKey } from "./job-key.mjs";
 
 function readText(file) {
   if (!file || !existsSync(file)) {
@@ -33,6 +33,21 @@ function durationMs(startedAt, endedAt) {
     return null;
   }
   return end - start;
+}
+
+/** Resolves current and legacy run completion without accepting partial matrices. */
+export function evalRunStatus(run) {
+  if (typeof run?.status === "string" && run.status) {
+    return run.status;
+  }
+  const expectedJobs = (run?.inputs?.length || 0) * (run?.models?.length || 0);
+  const jobs = Array.isArray(run?.jobs) ? run.jobs : [];
+  const legacyComplete =
+    Boolean(run?.endedAt) &&
+    expectedJobs > 0 &&
+    jobs.length === expectedJobs &&
+    jobs.every((job) => job?.status === "completed" || job?.status === "failed");
+  return legacyComplete ? "completed" : "unknown";
 }
 
 function formatDuration(ms) {
@@ -108,18 +123,24 @@ function readOpenCodeUsage(file) {
   return usage;
 }
 
-function readReviewStatsUsage(file) {
+function readReviewStats(file) {
   const stats = readJson(file, null);
   const totals = stats && typeof stats === "object" ? stats.totals || {} : {};
   return {
-    steps: Array.isArray(stats?.phases) ? stats.phases.length : 0,
-    totalTokens: toNumber(totals.totalTokens),
-    inputTokens: toNumber(totals.inputTokens),
-    outputTokens: toNumber(totals.outputTokens),
-    reasoningTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    costUsd: toNumber(totals.costUsd),
+    durationMs:
+      totals.durationMs !== null && totals.durationMs !== undefined && Number.isFinite(Number(totals.durationMs))
+        ? Number(totals.durationMs)
+        : null,
+    usage: {
+      steps: toNumber(totals.turns) || (Array.isArray(stats?.phases) ? stats.phases.length : 0),
+      totalTokens: toNumber(totals.totalTokens),
+      inputTokens: toNumber(totals.inputTokens),
+      outputTokens: toNumber(totals.outputTokens),
+      reasoningTokens: toNumber(totals.reasoningTokens),
+      cacheReadTokens: toNumber(totals.cacheReadTokens),
+      cacheWriteTokens: toNumber(totals.cacheWriteTokens),
+      costUsd: toNumber(totals.costUsd),
+    },
   };
 }
 
@@ -137,6 +158,34 @@ function combineUsage(...items) {
     }),
     readOpenCodeUsage(""),
   );
+}
+
+function judgeAttempts(judgment) {
+  const attempts = Array.isArray(judgment?.attempts) ? judgment.attempts : [];
+  const retained = attempts.filter((attempt) => attempt?.files?.raw && existsSync(attempt.files.raw));
+  return retained.length > 0 ? retained : judgment ? [judgment] : [];
+}
+
+function priceJudgeAttempts(attempts, usageByAttempt) {
+  if (attempts.length === 0) {
+    return { costUsd: 0, label: formatCost(0), rawReportedCostUsd: 0, source: "not-run" };
+  }
+  const prices = attempts.map((attempt, index) =>
+    priceUsage({
+      model: attempt.model || "",
+      usage: usageByAttempt[index],
+      reportedCostUsd: usageByAttempt[index].costUsd,
+      startedAt: attempt.startedAt,
+    }),
+  );
+  const costUsd = sumKnownCosts(prices.map((price) => price.costUsd));
+  const sources = [...new Set(prices.map((price) => price.source))];
+  return {
+    costUsd,
+    label: formatCost(costUsd),
+    rawReportedCostUsd: prices.reduce((sum, price) => sum + price.rawReportedCostUsd, 0),
+    source: attempts.length > 1 ? `all-attempts:${sources.join("+")}` : sources[0],
+  };
 }
 
 function countProducedComments(reviewText) {
@@ -237,9 +286,28 @@ function scorePercent(judgment) {
   return Math.max(0, Math.min(100, Math.round(judgment.score * 10)));
 }
 
-function normalizeVerdict({ job, judgment }) {
+function capturedReviewVerdict(reviewBody) {
+  const terminalVerdict = String(reviewBody || "").match(
+    /(?:^|\n)\s*(⛔\s*Block|⚠️?\s*Request changes|✅\s*LGTM)(?::[^\n]*)?\.?\s*$/iu,
+  );
+  if (!terminalVerdict) {
+    return null;
+  }
+  return /LGTM/iu.test(terminalVerdict[1])
+    ? { key: "lgtm", label: "✓ LGTM" }
+    : { key: "request_changes", label: "⚠ request changes" };
+}
+
+function normalizeVerdict({ job, judgment, reviewBody }) {
   if (job.status !== "completed" || judgment?.status === "failed" || judgment?.status === "skipped") {
     return { key: "error", label: "? error" };
+  }
+
+  // The captured body owns the publication decision. A quality judge may call
+  // a good blocking review "lgtm", so its verdict is only a legacy fallback.
+  const captured = capturedReviewVerdict(reviewBody);
+  if (captured) {
+    return captured;
   }
   const value = String(judgment?.verdict || "").toLowerCase().replace(/[\s-]+/gu, "_");
   if (["lgtm", "good", "pass", "passed", "approve"].includes(value)) {
@@ -305,20 +373,32 @@ function resultStatus({ job, judgment, hasJudgments, hardFailures }) {
 }
 
 function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs }) {
-  const jobKey = `${job.input.slug}__${slugify(job.model)}`;
-  const captureUsage = job.files?.stats ? readReviewStatsUsage(job.files.stats) : readOpenCodeUsage(job.files?.raw);
-  const judgeUsage = readOpenCodeUsage(judgment?.files?.raw);
-  const captureCost = priceUsage({ model: job.model, usage: captureUsage, reportedCostUsd: captureUsage.costUsd });
-  const judgeCost = priceUsage({ model: judgment?.model || "", usage: judgeUsage, reportedCostUsd: judgeUsage.costUsd });
+  const jobKey = evalJobKey(job);
+  const reviewStats = job.files?.stats ? readReviewStats(job.files.stats) : null;
+  const captureUsage = reviewStats?.usage || readOpenCodeUsage(job.files?.raw);
+  const retainedJudgeAttempts = judgeAttempts(judgment);
+  const judgeUsageByAttempt = retainedJudgeAttempts.map(attempt => readOpenCodeUsage(attempt.files?.raw));
+  const judgeUsage = combineUsage(...judgeUsageByAttempt);
+  const captureCost = priceUsage({
+    model: job.model,
+    usage: captureUsage,
+    reportedCostUsd: captureUsage.costUsd,
+    startedAt: job.startedAt,
+  });
+  const judgeCost = priceJudgeAttempts(retainedJudgeAttempts, judgeUsageByAttempt);
   const usage = combineUsage(captureUsage, judgeUsage);
-  usage.costUsd = captureCost.costUsd + judgeCost.costUsd;
+  usage.costUsd = sumKnownCosts([captureCost.costUsd, judgeCost.costUsd]);
   const judgeModel = judgment?.model || "";
-  const duration = durationMs(job.startedAt, job.endedAt);
+  const reviewerDuration = reviewStats?.durationMs;
+  // Cached jobs preserve reviewer telemetry, but their job timestamps only
+  // measure artifact restoration and must not enter wall-clock comparisons.
+  const captureDuration = job.cache?.hit ? null : durationMs(job.startedAt, job.endedAt);
+  const performanceDuration = captureDuration ?? reviewerDuration;
   const heuristics = buildHeuristics({
     job,
     judgment,
     hasJudgments,
-    duration,
+    duration: performanceDuration,
     usage,
     captureCost,
     maxDurationMs,
@@ -329,13 +409,15 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const commentExport = readCommentExport(job.files?.comments);
   const exportedCommentCount = commentExport.issueComments.length + commentExport.inlineComments.length + commentExport.replies.length;
   const producedComments = job.files?.comments && existsSync(job.files.comments) ? exportedCommentCount : countProducedComments(reviewText);
-  const verdict = normalizeVerdict({ job, judgment });
+  const verdict = normalizeVerdict({ job, judgment, reviewBody: commentExport.body || reviewText });
   const judgeQuestions = normalizeJudgeQuestions(judgment);
 
   return {
     jobKey,
     pr: job.input.ref,
     label: job.input.label || "",
+    runner: job.runner || "src",
+    provider: job.provider || job.amlProvider || (job.runner === "aml" ? "" : "opencode"),
     model: job.model,
     judgeModel,
     status: resultStatus({ job, judgment, hasJudgments, hardFailures }),
@@ -354,8 +436,16 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
     error: job.error || judgment?.error || "",
     startedAt: job.startedAt,
     endedAt: job.endedAt,
-    durationMs: duration,
-    durationLabel: formatDuration(duration),
+    cacheHit: Boolean(job.cache?.hit),
+    captureDurationMs: captureDuration,
+    captureDurationLabel: formatDuration(captureDuration),
+    reviewerDurationMs: reviewerDuration,
+    reviewerDurationLabel: formatDuration(reviewerDuration),
+    reviewerDurationBoundary: job.runner === "aml" ? "aml-workflow" : "model-phases",
+    // Retain the original field for report consumers written before the two
+    // timing boundaries became explicit.
+    durationMs: reviewerDuration ?? captureDuration,
+    durationLabel: formatDuration(reviewerDuration ?? captureDuration),
     outputBytes: toNumber(job.outputBytes),
     producedComments,
     commentCounts: {
@@ -372,16 +462,18 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
     judgeUsage,
     costUsd: captureCost.costUsd,
     costLabel: captureCost.label,
+    costSource: captureCost.source,
     rawReportedCostUsd: captureCost.rawReportedCostUsd,
     reportedCostUsd: captureCost.costUsd,
     reportedCostLabel: captureCost.label,
     judgeCostUsd: judgeCost.costUsd,
     judgeCostLabel: judgeCost.label,
+    judgeCostSource: judgeCost.source,
     rawJudgeReportedCostUsd: judgeCost.rawReportedCostUsd,
     judgeReportedCostUsd: judgeCost.costUsd,
     judgeReportedCostLabel: judgeCost.label,
     totalReportedCostUsd: usage.costUsd,
-    totalReportedCostLabel: `${formatCost(usage.costUsd)} total`,
+    totalReportedCostLabel: formatCost(usage.costUsd),
     reviewText,
     reviewExcerpt: reviewText.split(/\r?\n/u).slice(0, 12).join("\n"),
     files: {
@@ -419,6 +511,13 @@ function average(values) {
   return Math.round(numbers.reduce((sum, value) => sum + value, 0) / numbers.length);
 }
 
+function sumKnownCosts(values) {
+  if (values.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+    return null;
+  }
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
 function sortResults(left, right) {
   const leftScore = left.scorePercent ?? -1;
   const rightScore = right.scorePercent ?? -1;
@@ -431,12 +530,13 @@ function sortResults(left, right) {
 export function buildEvalSummary({ run, judgments = [], runDir, generatedAt = new Date().toISOString() }) {
   const judgmentByJob = new Map(judgments.map((judgment) => [judgment.jobKey, judgment]));
   const hasJudgments = judgments.length > 0;
-  const maxDurationMs = run.reviewTimeoutMs || 600_000;
+  // Keep the advisory performance target separate from the hard capture kill.
+  const maxDurationMs = run.targetDurationMs || run.reviewTimeoutMs || 600_000;
   const results = (run.jobs || [])
     .map((job) =>
       summarizeResult({
         job,
-        judgment: judgmentByJob.get(`${job.input.slug}__${slugify(job.model)}`),
+        judgment: judgmentByJob.get(evalJobKey(job)),
         hasJudgments,
         runDir,
         maxDurationMs,
@@ -445,9 +545,10 @@ export function buildEvalSummary({ run, judgments = [], runDir, generatedAt = ne
     .sort(sortResults);
 
   const usage = combineUsage(...results.map((result) => result.usage));
-  const reportedCostUsd = results.reduce((sum, result) => sum + result.reportedCostUsd, 0);
-  const judgeReportedCostUsd = results.reduce((sum, result) => sum + result.judgeReportedCostUsd, 0);
-  const totalReportedCostUsd = results.reduce((sum, result) => sum + result.totalReportedCostUsd, 0);
+  const reportedCostUsd = sumKnownCosts(results.map((result) => result.reportedCostUsd));
+  const judgeReportedCostUsd = sumKnownCosts(results.map((result) => result.judgeReportedCostUsd));
+  const totalReportedCostUsd = sumKnownCosts(results.map((result) => result.totalReportedCostUsd));
+  usage.costUsd = totalReportedCostUsd;
   const rawReportedCostUsd = results.reduce((sum, result) => sum + result.rawReportedCostUsd, 0);
   const rawJudgeReportedCostUsd = results.reduce((sum, result) => sum + result.rawJudgeReportedCostUsd, 0);
   const completed = results.filter((result) => result.captureStatus === "completed").length;
@@ -459,16 +560,21 @@ export function buildEvalSummary({ run, judgments = [], runDir, generatedAt = ne
   return {
     generatedAt,
     run: {
+      status: evalRunStatus(run),
       startedAt: run.startedAt,
       endedAt: run.endedAt,
+      updatedAt: run.updatedAt,
       durationMs: runDuration,
       durationLabel: formatDuration(runDuration),
       configFile: run.configFile,
+      runner: run.runner || "src",
+      provider:
+        (run.runner || "src") === "aml" ? run.provider || run.amlProvider || "" : "opencode",
       models: run.models || [],
       inputs: run.inputs || [],
       concurrency: run.concurrency,
+      targetDurationMs: run.targetDurationMs,
       reviewTimeoutMs: run.reviewTimeoutMs,
-      bootTimeoutMs: run.bootTimeoutMs,
       keepScratch: run.keepScratch,
     },
     totals: {

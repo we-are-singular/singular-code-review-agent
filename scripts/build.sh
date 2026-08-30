@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -f dist/prompts/*.md
+rm -rf dist
 tsc -p tsconfig.json
-
-mkdir -p dist/prompts
-cp src/prompts/*.md dist/prompts/
+cp -R src/skills dist/skills

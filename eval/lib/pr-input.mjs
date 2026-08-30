@@ -97,9 +97,6 @@ export function normalizeEvalInput(value, index = 0) {
   if ((baseSha && !headSha) || (!baseSha && headSha)) {
     throw new Error(`eval input[${index}] fixed revisions must include both base and head`);
   }
-  if (baseSha && headSha) {
-    throw new Error(`eval input[${index}] fixed revisions are not supported by this reviewer version`);
-  }
 
   const label = optionalString(source.label, `eval input[${index}].label`);
   const notes = optionalString(source.notes, `eval input[${index}].notes`);
@@ -108,10 +105,8 @@ export function normalizeEvalInput(value, index = 0) {
     `eval input[${index}].ignoreHistory`,
     true,
   );
-  if (!ignoreHistory) {
-    throw new Error(`eval input[${index}].ignoreHistory=false is not supported by this reviewer version`);
-  }
 
+  const revisionSlug = baseSha && headSha ? `-${baseSha.slice(0, 7)}-${headSha.slice(0, 7)}` : "";
   return {
     ...parsed,
     label,
@@ -119,7 +114,7 @@ export function normalizeEvalInput(value, index = 0) {
     ignoreHistory,
     baseSha,
     headSha,
-    slug: parsed.slug,
+    slug: `${parsed.slug}${revisionSlug}`,
   };
 }
 

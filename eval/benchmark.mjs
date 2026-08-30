@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { evalRunStatus } from "./lib/analysis.mjs";
 import { escapeHtml } from "./lib/text.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -38,6 +39,14 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function formatPercent(value) {
   return value === null || value === undefined ? "n/a" : `${Math.round(value)}%`;
 }
@@ -47,7 +56,7 @@ function formatTokens(value) {
 }
 
 function formatMoney(value) {
-  return `$${toNumber(value).toFixed(4)}`;
+  return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(4)}` : "n/a";
 }
 
 function formatCostLabel(value) {
@@ -91,6 +100,13 @@ function average(values) {
     return null;
   }
   return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+}
+
+function sumKnownCosts(values) {
+  if (values.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+    return null;
+  }
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 function sumUsage(results, key) {
@@ -223,9 +239,13 @@ function resultFailures(result) {
 function normalizeResult(summaryFile, summary, result, options = {}) {
   const runDir = dirname(summaryFile);
   const run = relative(repoRoot, runDir).split("\\").join("/");
+  const implementation = result.runner || summary.run?.runner || "unknown";
+  const provider = result.provider || summary.run?.provider || "unknown";
   const model = options.compareRuns ? `${result.model} @ ${run}` : result.model;
   const scorePercent = typeof result.scorePercent === "number" ? result.scorePercent : null;
-  const costUsd = toNumber(result.costUsd ?? result.reportedCostUsd ?? result.usage?.costUsd);
+  const costUsd = optionalNumber(result.costUsd ?? result.reportedCostUsd ?? result.usage?.costUsd);
+  const captureDurationMs = optionalNumber(result.captureDurationMs);
+  const reviewerDurationMs = optionalNumber(result.reviewerDurationMs) ?? optionalNumber(result.durationMs);
   const questionScores = {};
   for (const question of result.questions || []) {
     if (question?.id && typeof question.score === "number") {
@@ -233,17 +253,27 @@ function normalizeResult(summaryFile, summary, result, options = {}) {
     }
   }
   return {
-    key: `${result.pr}__${model}`,
+    key: `${result.pr}__${implementation}__${provider}__${model}`,
     pr: result.pr,
     label: result.label || "",
+    implementation,
+    provider,
     model,
     status: result.status,
+    captureStatus: result.captureStatus || "",
+    judgeStatus: result.judgeStatus || "",
     scorePercent,
     scoreLabel: result.scoreLabel || formatPercent(scorePercent),
     verdictKey: result.verdictKey || "",
     verdictLabel: result.verdictLabel || "n/a",
-    durationMs: toNumber(result.durationMs, NaN),
-    durationLabel: result.durationLabel || formatDuration(result.durationMs),
+    cacheHit: Boolean(result.cacheHit),
+    captureDurationMs,
+    captureDurationLabel: result.captureDurationLabel || formatDuration(captureDurationMs),
+    reviewerDurationMs,
+    reviewerDurationLabel: result.reviewerDurationLabel || result.durationLabel || formatDuration(reviewerDurationMs),
+    reviewerDurationBoundary: result.reviewerDurationBoundary || "legacy",
+    durationMs: reviewerDurationMs,
+    durationLabel: result.reviewerDurationLabel || result.durationLabel || formatDuration(reviewerDurationMs),
     producedComments: toNumber(result.producedComments),
     failures: resultFailures(result),
     usage: {
@@ -272,42 +302,24 @@ function normalizeResult(summaryFile, summary, result, options = {}) {
 }
 
 function loadResults(summaryFiles, options = {}) {
-  if (options.average) {
-    const results = [];
-    const ignored = [];
-    for (const summaryFile of summaryFiles) {
-      try {
-        const summary = readJson(summaryFile);
-        for (const result of summary.results || []) {
-          results.push(normalizeResult(summaryFile, summary, result, options));
-        }
-      } catch (error) {
-        ignored.push({
-          summaryFile: relative(repoRoot, summaryFile).split("\\").join("/"),
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    return { results: results.sort(sortResults), ignored };
-  }
-
-  const byPair = new Map();
+  const candidates = [];
   const ignored = [];
-
   for (const summaryFile of summaryFiles) {
     try {
       const summary = readJson(summaryFile);
+      const runStatus = evalRunStatus({
+        ...summary.run,
+        jobs: (summary.results || []).map((result) => ({ status: result.captureStatus })),
+      });
+      if (runStatus !== "completed") {
+        ignored.push({
+          summaryFile: relative(repoRoot, summaryFile).split("\\").join("/"),
+          error: `run status is ${runStatus}; only completed runs are benchmarkable`,
+        });
+        continue;
+      }
       for (const result of summary.results || []) {
-        const normalized = normalizeResult(summaryFile, summary, result, options);
-        const existing = byPair.get(normalized.key);
-        if (!existing || normalized.freshness > existing.freshness) {
-          if (existing) {
-            ignored.push(existing);
-          }
-          byPair.set(normalized.key, normalized);
-        } else {
-          ignored.push(normalized);
-        }
+        candidates.push(normalizeResult(summaryFile, summary, result, options));
       }
     } catch (error) {
       ignored.push({
@@ -317,10 +329,43 @@ function loadResults(summaryFiles, options = {}) {
     }
   }
 
+  if (options.average) {
+    return { results: candidates.sort(sortResults), ignored };
+  }
+
+  const byPair = new Map();
+  for (const candidate of candidates) {
+    const existing = byPair.get(candidate.key);
+    const candidateRank = resultEvidenceRank(candidate);
+    const existingRank = existing ? resultEvidenceRank(existing) : -1;
+    if (!existing || candidateRank > existingRank || (candidateRank === existingRank && candidate.freshness > existing.freshness)) {
+      if (existing) {
+        ignored.push(existing);
+      }
+      byPair.set(candidate.key, candidate);
+    } else {
+      ignored.push(candidate);
+    }
+  }
+
   return {
     results: Array.from(byPair.values()).sort(sortResults),
     ignored,
   };
+}
+
+/** Keeps completed judged evidence ahead of newer diagnostic failures. */
+function resultEvidenceRank(result) {
+  if (result.status === "passed" && typeof result.scorePercent === "number") {
+    return 3;
+  }
+  if (result.captureStatus === "completed" && result.status === "pending judge") {
+    return 2;
+  }
+  if (result.captureStatus === "completed") {
+    return 1;
+  }
+  return 0;
 }
 
 function sortResults(left, right) {
@@ -360,17 +405,25 @@ function buildModelRows(results) {
       return {
         model,
         family: modelFamily(model),
+        implementations: [...new Set(modelResults.map((result) => result.implementation))].sort().join(", "),
+        providers: [...new Set(modelResults.map((result) => result.provider))].sort().join(", "),
         runs: modelResults.length,
         passed: completed,
         averageScore,
         scoreVariance: variance,
         scoreVarianceLabel: formatVariance(variance),
-        avgDurationMs: average(modelResults.map((result) => result.durationMs)),
+        avgCaptureDurationMs: average(modelResults.map((result) => result.captureDurationMs)),
+        captureDurationSamples: modelResults.filter((result) => result.captureDurationMs !== null).length,
+        avgReviewerDurationMs: average(modelResults.map((result) => result.reviewerDurationMs)),
         avgComments: average(modelResults.map((result) => result.producedComments)),
         totalTokens: sumUsage(modelResults, "totalTokens"),
         avgTokens: average(modelResults.map((result) => result.usage.totalTokens)),
-        totalCostUsd: sumUsage(modelResults, "costUsd"),
-        avgCostUsd: average(modelResults.map((result) => result.usage.costUsd)),
+        totalCostUsd: sumKnownCosts(modelResults.map((result) => result.costUsd)),
+        avgCostUsd:
+          modelResults.every((result) => result.costUsd !== null)
+            ? average(modelResults.map((result) => result.costUsd))
+            : null,
+        costSamples: modelResults.filter((result) => result.costUsd !== null).length,
         verdicts,
         failures: modelResults.reduce((sum, result) => sum + result.failures.length, 0),
         questionCoverage: questionIds.size,
@@ -418,7 +471,7 @@ function buildBenchmarkSummary({ summaryFiles, results, ignored, generatedAt = n
     reasoningTokens: sumUsage(results, "reasoningTokens"),
     cacheReadTokens: sumUsage(results, "cacheReadTokens"),
     cacheWriteTokens: sumUsage(results, "cacheWriteTokens"),
-    costUsd: sumUsage(results, "costUsd"),
+    costUsd: sumKnownCosts(results.map((result) => result.costUsd)),
   };
   const modelRows = buildModelRows(results);
   const matrix = buildMatrix(results);
@@ -504,13 +557,16 @@ function modelRows(models) {
     .map(
       (model) => `<tr>
         <td data-sort="${escapeHtml(model.model)}">${modelName(model.model, model.family)}</td>
+        <td data-sort="${escapeHtml(model.implementations)}">${escapeHtml(model.implementations)}</td>
+        <td data-sort="${escapeHtml(model.providers)}">${escapeHtml(model.providers)}</td>
         <td data-sort="${model.runs}">${formatTokens(model.runs)}</td>
         <td data-sort="${model.averageScore ?? -1}">${formatPercent(model.averageScore)}</td>
         <td data-sort="${model.scoreVariance?.width ?? -1}">${escapeHtml(model.scoreVarianceLabel)}</td>
-        <td data-sort="${model.avgDurationMs ?? -1}">${formatDuration(model.avgDurationMs)}</td>
+        <td data-sort="${model.avgCaptureDurationMs ?? -1}">${formatDuration(model.avgCaptureDurationMs)} <span class="muted">(${model.captureDurationSamples}/${model.runs})</span></td>
+        <td data-sort="${model.avgReviewerDurationMs ?? -1}">${formatDuration(model.avgReviewerDurationMs)}</td>
         <td data-sort="${model.avgComments ?? -1}">${model.avgComments === null ? "n/a" : model.avgComments.toFixed(1)}</td>
         <td data-sort="${model.totalTokens}">${formatTokens(model.totalTokens)}</td>
-        <td data-sort="${model.totalCostUsd}">${formatCostLabel(model.totalCostUsd)}</td>
+        <td data-sort="${model.totalCostUsd ?? -1}">${formatCostLabel(model.totalCostUsd)} <span class="muted">(${model.costSamples}/${model.runs})</span></td>
         <td data-sort="${model.failures}">${formatTokens(model.failures)}</td>
         <td data-sort="${model.questionCoverage}">${formatTokens(model.questionCoverage)}</td>
       </tr>`,
@@ -553,7 +609,9 @@ function matrixTable(summary) {
 }
 
 function costScoreChartData(models) {
-  const scored = models.filter((model) => typeof model.averageScore === "number");
+  const scored = models.filter(
+    (model) => typeof model.averageScore === "number" && typeof model.totalCostUsd === "number",
+  );
   const byFamily = new Map();
 
   for (const model of scored) {
@@ -586,9 +644,11 @@ function costScoreChartData(models) {
 }
 
 function scatterPlot(models) {
-  const scored = models.filter((model) => typeof model.averageScore === "number");
+  const scored = models.filter(
+    (model) => typeof model.averageScore === "number" && typeof model.totalCostUsd === "number",
+  );
   if (scored.length === 0) {
-    return `<p class="muted">No scored models yet.</p>`;
+    return `<p class="muted">No model has both a score and a reliable reported or configured price.</p>`;
   }
   return `<div class="chart-canvas">
     <canvas id="costScoreChart" role="img" aria-label="Total cost versus average score"></canvas>
@@ -600,13 +660,16 @@ function resultRows(results) {
     .map(
       (result) => `<tr>
         <td data-sort="${escapeHtml(sortValue(result.pr))}">${escapeHtml(result.pr)}${result.label ? `<div class="muted">${escapeHtml(result.label)}</div>` : ""}</td>
+        <td data-sort="${escapeHtml(sortValue(result.implementation))}">${escapeHtml(result.implementation)}</td>
+        <td data-sort="${escapeHtml(sortValue(result.provider))}">${escapeHtml(result.provider)}</td>
         <td data-sort="${escapeHtml(sortValue(result.model))}">${modelName(result.model, result.family)}</td>
         <td data-sort="${escapeHtml(sortValue(result.status))}">${escapeHtml(result.status)}</td>
         <td data-sort="${result.scorePercent ?? -1}">${escapeHtml(result.scoreLabel)}</td>
         <td data-sort="${escapeHtml(sortValue(result.verdictKey))}">${escapeHtml(result.verdictLabel)}</td>
-        <td data-sort="${result.durationMs || -1}">${escapeHtml(result.durationLabel)}</td>
+        <td data-sort="${result.captureDurationMs ?? -1}">${escapeHtml(result.captureDurationLabel)}</td>
+        <td data-sort="${result.reviewerDurationMs ?? -1}">${escapeHtml(result.reviewerDurationLabel)}</td>
         <td data-sort="${result.usage.totalTokens}">${formatTokens(result.usage.totalTokens)}</td>
-        <td data-sort="${result.costUsd}">${escapeHtml(result.costLabel || result.reportedCostLabel)}</td>
+        <td data-sort="${result.costUsd ?? -1}">${escapeHtml(result.costLabel || result.reportedCostLabel)}</td>
         <td data-sort="${result.failures.length}">${escapeHtml(result.failures.join(", "))}</td>
         <td data-sort="${result.producedComments}">${formatTokens(result.producedComments)}</td>
         <td data-sort="${escapeHtml(sortValue(result.run))}">${escapeHtml(result.run)}</td>
@@ -639,6 +702,22 @@ function questionRows(summary) {
         .join("\n")}
     </tbody>
   </table>`;
+}
+
+function ignoredEvidence(items) {
+  if (items.length === 0) {
+    return "";
+  }
+  return `<details>
+    <summary>Excluded evidence (${formatTokens(items.length)})</summary>
+    <ul>${items
+      .map((item) => {
+        const label = item.summaryFile || [item.pr, item.model, item.status].filter(Boolean).join(" · ") || "result";
+        const reason = item.error || item.ignoredReason || "superseded by stronger or newer equivalent evidence";
+        return `<li><code>${escapeHtml(label)}</code>: ${escapeHtml(reason)}</li>`;
+      })
+      .join("")}</ul>
+  </details>`;
 }
 
 function renderBenchmark(summary) {
@@ -693,14 +772,16 @@ function renderBenchmark(summary) {
     <h1>Singular Review Eval Benchmark</h1>
     <p class="subtitle">${averageOnly
       ? `Generated ${escapeHtml(summary.generatedAt)} from ${summary.sourceSummaries.length} run summaries. Every capture is grouped by exact model and variant.`
-      : `Generated ${escapeHtml(summary.generatedAt)} from ${summary.sourceSummaries.length} run summaries. Duplicate PR/model pairs keep the newest result.`}</p>
+      : `Generated ${escapeHtml(summary.generatedAt)} from ${summary.sourceSummaries.length} run summaries. Duplicate PR/model pairs prefer completed judged evidence, then the newest equivalent result.`}</p>
+    <p class="subtitle">Capture wall time is the uncached job boundary from input loading through the reviewer container; cache hits are excluded. Reviewer timing is diagnostic only: AML records its full in-memory workflow, while <code>src/</code> sums model phases.</p>
     <section class="kpis">
       ${kpi("Results", formatTokens(summary.totals.results), `${summary.totals.prs} PRs / ${summary.totals.models} models`)}
       ${kpi("Average score", formatPercent(summary.totals.averageScore))}
       ${kpi("Comments", formatTokens(summary.totals.producedComments))}
       ${kpi("Tokens", summary.totals.usageLabels.totalTokens, `${summary.totals.usageLabels.inputTokens} input / ${summary.totals.usageLabels.outputTokens} output`)}
       ${kpi("Reasoning", summary.totals.usageLabels.reasoningTokens, `${summary.totals.usageLabels.cacheReadTokens} cache read`)}
-      ${kpi("Cost", summary.totals.usageLabels.reportedCostUsd)}
+      ${kpi("Known cost", summary.totals.usageLabels.reportedCostUsd)}
+      ${kpi("Excluded", formatTokens(summary.ignoredResults.length))}
     </section>
 
     <h2>Cost vs Score</h2>
@@ -711,10 +792,13 @@ function renderBenchmark(summary) {
       <thead>
         <tr>
           <th>Model</th>
+          <th>Implementation</th>
+          <th>Provider</th>
           <th>Runs</th>
           <th>Avg Score</th>
           <th>Variance</th>
-          <th>Avg time</th>
+          <th>Avg capture wall</th>
+          <th>Avg reviewer timing</th>
           <th>Avg comments</th>
           <th>Total tokens</th>
           <th>Total cost</th>
@@ -736,11 +820,14 @@ function renderBenchmark(summary) {
         <thead>
           <tr>
             <th>PR</th>
+            <th>Implementation</th>
+            <th>Provider</th>
             <th>Model</th>
             <th>Status</th>
             <th>Score</th>
             <th>Verdict</th>
-            <th>Time</th>
+            <th>Capture wall</th>
+            <th>Reviewer timing</th>
             <th>Tokens</th>
             <th>Cost</th>
             <th>Failures</th>
@@ -761,6 +848,7 @@ function renderBenchmark(summary) {
       <summary>Source Summaries</summary>
       <ul>${summary.sourceSummaries.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul>
     </details>
+    ${ignoredEvidence(summary.ignoredResults)}
   </main>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -908,6 +996,9 @@ async function main() {
   }
 
   const loaded = loadResults(summaryFiles, { compareRuns: options.compareRuns, average: options.average });
+  if (loaded.results.length === 0) {
+    throw new Error("no completed run summary contains benchmarkable results");
+  }
   const filteredResults =
     options.modelPrefixes.length === 0
       ? loaded.results

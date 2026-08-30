@@ -23,15 +23,22 @@ test("eval inputs accept public history-blind pull requests", () => {
   })
 })
 
-test("eval inputs reject unsupported revision and history modes", () => {
+test("eval inputs require paired fixed revisions and identify the exact capture", () => {
   assert.throws(
-    () => normalizeEvalInput({ pr: "trpc/trpc/7262", base: "1111111", head: "2222222" }),
-    /fixed revisions are not supported/u
+    () => normalizeEvalInput({ pr: "trpc/trpc/7262", base: "1111111" }),
+    /fixed revisions must include both base and head/u
   )
-  assert.throws(
-    () => normalizeEvalInput({ pr: "trpc/trpc/7262", ignoreHistory: false }),
-    /ignoreHistory=false is not supported/u
-  )
+
+  const input = normalizeEvalInput({
+    pr: "trpc/trpc/7262",
+    base: "1111111111111111111111111111111111111111",
+    head: "2222222222222222222222222222222222222222",
+    ignoreHistory: false
+  })
+  assert.equal(input.baseSha, "1111111111111111111111111111111111111111")
+  assert.equal(input.headSha, "2222222222222222222222222222222222222222")
+  assert.equal(input.ignoreHistory, false)
+  assert.equal(input.slug, "trpc-trpc-pr-7262-1111111-2222222")
 })
 
 test("committed eval inputs contain only the documented public examples", () => {

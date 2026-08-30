@@ -1,9 +1,15 @@
 export default {
   concurrency: 1,
-  reviewTimeoutMs: 600_000,
-  bootTimeoutMs: 90_000,
+  // This is a safety guard, not the performance target. Reviews are measured
+  // against targetDurationMs without killing useful output at that boundary.
+  targetDurationMs: 600_000,
+  // Hard stuck-provider ceiling; targetDurationMs above remains advisory.
+  reviewTimeoutMs: 1_800_000,
   keepScratch: false,
-  models: ["opencode-go/minimax-m3", "opencode/deepseek-v4-flash-free"],
+  provider: "opencode",
+  // Provider comparisons remain opt-in CLI runs so the committed matrix stays
+  // a small, predictable low-cost baseline.
+  models: ["opencode-go/deepseek-v4-flash"],
   input: [
     {
       pr: "https://github.com/vercel/next.js/pull/31936",

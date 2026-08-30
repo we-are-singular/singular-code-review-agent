@@ -1,12 +1,17 @@
 import { sha256Json, sha256Text } from "./cache.mjs";
 
-export const REVIEW_CACHE_VERSION = 6;
+export const REVIEW_CACHE_VERSION = 17;
 
-export function reviewCacheKey({ model, input, context, diffText }) {
+export function reviewCacheKey({ runner = "src", provider, model, reviewerImageId, input, context, diffText }) {
   return sha256Json({
     version: REVIEW_CACHE_VERSION,
-    capture: "docker-review-dry-run",
+    capture: "review-dry-run",
+    runner,
+    provider: runner === "aml" ? provider || "opencode" : null,
     model,
+    // The same PR and model can produce materially different evidence after a
+    // reviewer rebuild. Never restore a capture from another image revision.
+    reviewerImageId: reviewerImageId || null,
     input: {
       repository: input.repository,
       number: input.number,

@@ -32,12 +32,27 @@ export async function loadPullRequestInput(input, token) {
     userAgent: "singular-code-review-eval",
   });
 
-  const [prResponse, diffResponse, commits] = await Promise.all([
-    octokit.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: input.number,
-    }),
+  const prResponse = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: input.number,
+  });
+  const pr = prResponse.data;
+  const baseSha = String(pr.base.sha || "");
+  const headSha = String(pr.head.sha || "");
+  if (input.baseSha && !baseSha.toLowerCase().startsWith(input.baseSha.toLowerCase())) {
+    throw new Error(`configured base SHA ${input.baseSha} does not match live PR base ${pr.base.sha}`);
+  }
+  if (input.headSha && !headSha.toLowerCase().startsWith(input.headSha.toLowerCase())) {
+    throw new Error(`configured head SHA ${input.headSha} does not match live PR head ${pr.head.sha}`);
+  }
+  if (!/^[0-9a-f]{40}$/iu.test(baseSha) || !/^[0-9a-f]{40}$/iu.test(headSha)) {
+    throw new Error("GitHub did not return complete base and head commit SHAs");
+  }
+
+  // Fetch review evidence only after the immutable manifest matches. This
+  // avoids caching a live diff under a configured revision that already drifted.
+  const [diffResponse, commits] = await Promise.all([
     octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
       owner,
       repo,
@@ -52,7 +67,13 @@ export async function loadPullRequestInput(input, token) {
     }),
   ]);
 
-  const pr = prResponse.data;
+  // GitHub serves PR metadata and diff through separate requests. Reject a
+  // push between them instead of attaching judge evidence to the wrong head.
+  const verified = (await octokit.rest.pulls.get({ owner, repo, pull_number: input.number })).data;
+  if (verified.base.sha !== baseSha || verified.head.sha !== headSha) {
+    throw new Error("pull request revisions changed while capturing eval evidence");
+  }
+
   const filteredDiff = filterUnifiedDiff(String(diffResponse.data || ""));
   const context = {
     repository: input.repository,
@@ -61,8 +82,8 @@ export async function loadPullRequestInput(input, token) {
     label: input.label,
     notes: input.notes,
     ignoreHistory: input.ignoreHistory,
-    baseSha: input.baseSha || pr.base.sha || null,
-    headSha: input.headSha || pr.head.sha || null,
+    baseSha,
+    headSha,
     title: pr.title || "",
     body: pr.body || "",
     author: pr.user?.login || null,
@@ -83,7 +104,7 @@ export async function loadPullRequestInput(input, token) {
         }
       : {
           ignored: false,
-          note: "History capture is intentionally not implemented in the new eval runner yet.",
+          note: "The production reviewer receives history; human discussion remains outside the eval-owned judge context.",
           issueComments: [],
           reviewComments: [],
           reviews: [],
@@ -96,21 +117,42 @@ export async function loadPullRequestInput(input, token) {
   return {
     context,
     diffText: filteredDiff.text,
+    // Resolve optional short or omitted manifest revisions once. Every later
+    // checkout, cache, result, and reviewer assertion uses these exact SHAs.
+    input: { ...input, baseSha, headSha },
   };
 }
 
-export async function preparePullRequestWorkspace(input, workspace) {
+export async function preparePullRequestWorkspace(input, workspace, token) {
+  if (!/^[0-9a-f]{40}$/iu.test(input.headSha || "")) {
+    throw new Error("workspace preparation requires a resolved 40-character pull-request head SHA");
+  }
+  const githubEnvironment = { ...process.env, GH_TOKEN: token };
   await execFileAsync("gh", ["repo", "clone", input.repository, workspace, "--", "--filter=blob:none"], {
     encoding: "utf8",
+    env: githubEnvironment,
     maxBuffer: 10 * 1024 * 1024,
   });
-  await execFileAsync("git", ["-C", workspace, "fetch", "origin", `pull/${input.number}/head:refs/remotes/eval/pr-${input.number}`], {
+  await execFileAsync(
+    "git",
+    ["-C", workspace, "fetch", "origin", `pull/${input.number}/head:refs/remotes/eval/pr-${input.number}`],
+    {
+      encoding: "utf8",
+      env: {
+        ...githubEnvironment,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: `url.https://x-access-token:${token}@github.com/.insteadOf`,
+        GIT_CONFIG_VALUE_0: "https://github.com/",
+      },
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  await execFileAsync("git", ["-C", workspace, "checkout", "--detach", input.headSha], {
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
   });
-  const checkoutRef = input.headSha || `refs/remotes/eval/pr-${input.number}`;
-  await execFileAsync("git", ["-C", workspace, "checkout", "--detach", checkoutRef], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  const { stdout } = await execFileAsync("git", ["-C", workspace, "rev-parse", "HEAD"], { encoding: "utf8" });
+  if (stdout.trim() !== input.headSha) {
+    throw new Error(`checked out head ${stdout.trim()} does not match requested ${input.headSha}`);
+  }
 }

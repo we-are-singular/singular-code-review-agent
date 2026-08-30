@@ -2,18 +2,14 @@
   "name": "singular-code-review-agent",
   "version": "0.2.0",
   "private": true,
-  "description": "Production runner for Singular Code Review GitHub App reviews.",
+  "description": "AML-powered pull request review agent for the Singular Code Review GitHub App.",
   "bin": {
-    "review_ack": "dist/cli/review-ack.js",
-    "review_comments": "dist/cli/review-comments.js",
-    "review_context": "dist/cli/review-context.js",
-    "review_dry_run": "bin/review_dry_run",
-    "review_extract": "dist/cli/review-extract.js",
-    "review_guard": "dist/cli/review-guard.js",
-    "review_runner": "dist/cli/review-runner.js"
+    "review_preflight": "dist/cli/preflight.js",
+    "review_runner": "dist/cli/review.js"
   },
   "type": "module",
   "scripts": {
+    "review": "node dist/cli/review.js",
     "build": "bash scripts/build.sh",
     "test": "npm run build && node --test test/*.test.js",
     "eval": "node eval/run.mjs",
@@ -28,7 +24,9 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@octokit/rest": "^22.0.0"
+    "@aml-jsx/sdk": "0.7.1",
+    "@octokit/rest": "^22.0.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",
@@ -41,6 +39,6 @@
     "typescript": "^7.0.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=26"
   }
 }

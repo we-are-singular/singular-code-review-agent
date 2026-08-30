@@ -1,15 +1,15 @@
 import { join } from "node:path";
 import { sha256File, sha256Json, sha256Text } from "./cache.mjs";
 import { buildJudgePrompt } from "./judge-prompt.mjs";
-import { slugify } from "./pr-input.mjs";
+import { evalJobKey } from "./job-key.mjs";
 
-export const JUDGE_CACHE_VERSION = 3;
+export const JUDGE_CACHE_VERSION = 4;
 
 export function judgeCacheKey({ repoRoot, model, jobDir, job }) {
   return sha256Json({
     version: JUDGE_CACHE_VERSION,
     model,
-    jobKey: `${job.input.slug}__${slugify(job.model)}`,
+    jobKey: evalJobKey(job),
     candidateModel: job.model,
     promptHash: sha256Text(buildJudgePrompt({ repoRoot, job })),
     contextHash: sha256File(join(jobDir, "artifacts", "review_model_context.json")),

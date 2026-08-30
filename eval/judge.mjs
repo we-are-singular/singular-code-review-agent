@@ -5,17 +5,19 @@ import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import {
   cacheEntryDir,
-  copyExistingFile,
   readJsonFile,
   writeJsonFile,
 } from "./lib/cache.mjs"
 import { loadEvalConfig } from "./lib/config.mjs"
 import { judgeCacheKey } from "./lib/judge-cache-key.mjs"
+import { JudgeAttemptStore } from "./lib/judge-attempts.mjs"
 import { buildJudgePrompt } from "./lib/judge-prompt.mjs"
 import { JUDGE_RUBRIC } from "./lib/judge-rubric.mjs"
 import { normalizeEvalModel } from "./lib/models.mjs"
 import { extractRenderedText, cleanupScratch } from "./lib/opencode-runner.mjs"
-import { slugify } from "./lib/pr-input.mjs"
+import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
+import { evalJobKey } from "./lib/job-key.mjs"
+import { completedJobArtifacts } from "./lib/job-artifacts.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -43,7 +45,7 @@ function writeText(file, value) {
 function parseArgs(argv) {
   const options = {
     runDir: "",
-    configFile: resolve(repoRoot, "eval", "config.ts"),
+    configFile: "",
     model: "",
     timeoutMs: undefined,
     force: false,
@@ -77,12 +79,16 @@ function printHelp() {
 
 Options:
   --run <dir>         Eval run directory containing run.json
-  --config <file>     Config for default judge model. Default: eval/config.ts
+  --config <file>     Config for judge defaults. Default: run.json config, then eval/config.ts
   --model <model>     Judge model override
   --timeout-ms <ms>   Judge timeout override
   --force             Rejudge captures and bypass the global judgment cache
   --cache-dir <dir>   Global judgment cache. Default: eval/cache/judgments
 `)
+}
+
+function resolveJudgeConfigFile(explicitConfigFile, run) {
+  return resolve(explicitConfigFile || run?.configFile || join(repoRoot, "eval", "config.ts"))
 }
 
 function restoreJudgeCache({ cacheDir, key, jobDir, jobKey, model }) {
@@ -92,18 +98,11 @@ function restoreJudgeCache({ cacheDir, key, jobDir, jobKey, model }) {
     return null
   }
 
-  const rawFile = join(jobDir, "judge.raw.jsonl")
-  const stderrFile = join(jobDir, "judge.stderr.log")
-  copyExistingFile(join(entryDir, "judge.raw.jsonl"), rawFile)
-  copyExistingFile(join(entryDir, "judge.stderr.log"), stderrFile)
+  const restored = new JudgeAttemptStore(jobDir).restoreCache(entryDir, cached)
   const judgment = {
-    ...cached,
+    ...restored,
     jobKey,
     model,
-    files: {
-      raw: existsSync(rawFile) ? rawFile : "",
-      stderr: existsSync(stderrFile) ? stderrFile : "",
-    },
     cache: {
       hit: true,
       key,
@@ -119,14 +118,9 @@ function saveJudgeCache({ cacheDir, key, jobDir, judgment }) {
     return
   }
   const entryDir = cacheEntryDir(cacheDir, key)
-  copyExistingFile(join(jobDir, "judge.raw.jsonl"), join(entryDir, "judge.raw.jsonl"))
-  copyExistingFile(join(jobDir, "judge.stderr.log"), join(entryDir, "judge.stderr.log"))
+  const cached = new JudgeAttemptStore(jobDir).writeCache(entryDir, judgment)
   writeJsonFile(join(entryDir, "judge.json"), {
-    ...judgment,
-    files: {
-      raw: "judge.raw.jsonl",
-      stderr: "judge.stderr.log",
-    },
+    ...cached,
     cache: {
       hit: false,
       key,
@@ -222,7 +216,7 @@ function normalizeJudgeOutput(value) {
   }
 }
 
-function runJudge({ model, jobDir, job, timeoutMs }) {
+function runJudge({ model, jobDir, job, timeoutMs, files }) {
   return new Promise((resolveJudge) => {
     const scratchRoot = join(tmpdir(), "singular-code-review-eval-judge", `${Date.now()}-${job.input.slug}`)
     const home = join(scratchRoot, "home")
@@ -237,9 +231,10 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
     mkdirSync(cacheHome, { recursive: true })
     mkdirSync(stateHome, { recursive: true })
     writeText(join(configHome, "opencode", "opencode.json"), "{}\n")
+    stageOpenCodeAuth(dataHome)
 
-    const rawFile = join(jobDir, "judge.raw.jsonl")
-    const stderrFile = join(jobDir, "judge.stderr.log")
+    const rawFile = files.raw
+    const stderrFile = files.stderr
     const prompt = buildJudgePrompt({ repoRoot, job })
     const attachedFiles = [
       join(jobDir, "artifacts", "review_model_context.json"),
@@ -276,7 +271,10 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
     let stderr = ""
     let settled = false
     const child = spawn("opencode", args, {
-      cwd: repoRoot,
+      // Every judge attachment lives under this directory. Keeping it as cwd
+      // lets OpenCode continue reading long files without granting arbitrary
+      // external-directory access to the source checkout or /tmp.
+      cwd: jobDir,
       env: {
         ...process.env,
         HOME: home,
@@ -290,6 +288,7 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
         OPENCODE_DISABLE_CLAUDE_CODE: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     })
 
     const finish = (result) => {
@@ -298,6 +297,9 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
       }
       settled = true
       clearTimeout(timer)
+      if (killTimer) {
+        clearTimeout(killTimer)
+      }
       writeText(rawFile, stdout)
       writeText(stderrFile, stderr)
       cleanupScratch(scratchRoot, false)
@@ -310,9 +312,27 @@ function runJudge({ model, jobDir, job, timeoutMs }) {
       })
     }
 
+    let killTimer = null
+    const killGroup = (signal) => {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, signal)
+        } catch (error) {
+          if (error?.code !== "ESRCH") {
+            child.kill(signal)
+          }
+        }
+      }
+    }
     const timer = setTimeout(() => {
-      child.kill("SIGTERM")
-      finish({ status: "failed", error: `judge timed out after ${timeoutMs}ms` })
+      killGroup("SIGTERM")
+      // OpenCode can leave provider children behind. Bound cleanup so a judge
+      // timeout cannot hold the sequential evaluator forever.
+      killTimer = setTimeout(() => {
+        killGroup("SIGKILL")
+        finish({ status: "failed", error: `judge timed out after ${timeoutMs}ms` })
+      }, 5_000)
+      killTimer.unref()
     }, timeoutMs).unref()
 
     child.stdout.on("data", (chunk) => {
@@ -349,13 +369,15 @@ async function main() {
     throw new Error("--run is required")
   }
 
-  const config = await loadEvalConfig(options.configFile)
+  // Captures retain the config that defined their judge model and timeout. Reuse
+  // it by default so a later judge invocation cannot silently change semantics.
+  const run = readJson(join(options.runDir, "run.json"))
+  const config = await loadEvalConfig(resolveJudgeConfigFile(options.configFile, run))
   const model = normalizeEvalModel(options.model || config.judge.model, "judge model")
   if (!model) {
     throw new Error("judge model is required; set config.judge.model or pass --model")
   }
   const timeoutMs = options.timeoutMs || config.judge.timeoutMs
-  const run = readJson(join(options.runDir, "run.json"))
   const existingJudgments =
     readJsonOr(join(options.runDir, "judgments.json"), { judgments: [] }).judgments?.filter(
       (judgment) => judgment && typeof judgment === "object",
@@ -364,19 +386,19 @@ async function main() {
   const judgments = []
 
   for (const job of run.jobs || []) {
-    const jobKey = `${job.input.slug}__${slugify(job.model)}`
+    const jobKey = evalJobKey(job)
     const jobDir = join(options.runDir, "jobs", jobKey)
-    if (job.status !== "completed" || !existsSync(join(jobDir, "review.md"))) {
+    if (job.status !== "completed" || !completedJobArtifacts(jobDir)) {
       judgments.push({ jobKey, status: "skipped", error: "capture did not complete" })
       continue
     }
+    const cacheKey = judgeCacheKey({ repoRoot, model, jobDir, job })
     const existing = existingByJob.get(jobKey)
-    if (!options.force && existing?.status === "completed" && existing.model === model) {
+    if (!options.force && existing?.status === "completed" && existing.model === model && existing.cache?.key === cacheKey) {
       judgments.push(existing)
       console.log(`skipping existing judgment ${jobKey}`)
       continue
     }
-    const cacheKey = judgeCacheKey({ repoRoot, model, jobDir, job })
     if (!options.force) {
       const cached = restoreJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, jobKey, model })
       if (cached) {
@@ -386,11 +408,17 @@ async function main() {
       }
     }
     console.log(`judging ${jobKey} with ${model}`)
-    const result = await runJudge({ model, jobDir, job, timeoutMs })
+    const attemptStore = new JudgeAttemptStore(jobDir)
+    const attempt = attemptStore.start()
+    const startedAt = new Date().toISOString()
+    const result = await runJudge({ model, jobDir, job, timeoutMs, files: attempt.files })
+    const endedAt = new Date().toISOString()
     const judgment = {
       jobKey,
       model,
       status: result.status,
+      startedAt,
+      endedAt,
       error: result.error || null,
       ...(result.judgment || {}),
       files: result.files,
@@ -400,9 +428,9 @@ async function main() {
         dir: cacheEntryDir(options.cacheDir, cacheKey),
       },
     }
-    judgments.push(judgment)
-    writeJson(join(jobDir, "judge.json"), judgment)
-    saveJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, judgment })
+    const recordedJudgment = attemptStore.record(attempt, judgment)
+    judgments.push(recordedJudgment)
+    saveJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, judgment: recordedJudgment })
   }
 
   writeJson(join(options.runDir, "judgments.json"), {
@@ -415,7 +443,11 @@ async function main() {
   )
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error))
-  process.exitCode = 1
-})
+export { resolveJudgeConfigFile }
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error))
+    process.exitCode = 1
+  })
+}

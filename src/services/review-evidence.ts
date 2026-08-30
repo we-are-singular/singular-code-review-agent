@@ -1,0 +1,366 @@
+import { readFileSync } from "node:fs"
+
+import type {
+  IssueComment,
+  PullRequestCommit,
+  PullRequestReview,
+  PullRequestSummary,
+  ReviewComment,
+  ReviewThread
+} from "./github-client.js"
+import type { ReviewActionItem, ReviewRequest, ReviewSnapshot, ReviewTimeline, ReviewTrigger } from "../types/review.js"
+import type { ValidCommentRanges } from "../lib/review-diff.js"
+
+export const REVIEW_COMMAND = "@singular-code-review"
+export const DEFAULT_REVIEW_BOT_LOGIN = "singular-code-review[bot]"
+
+const HISTORY_ENTRY_LIMIT = 60
+const HISTORY_TEXT_LIMIT = 240
+const ACTION_TEXT_LIMIT = 1_600
+
+type GitHubEventPayload = {
+  action?: string
+  sender?: { login?: string | null } | null
+  comment?: {
+    id?: number
+    body?: string | null
+    user?: { login?: string | null } | null
+  } | null
+}
+
+type ReviewEvidenceInput = {
+  request: ReviewRequest
+  trigger: ReviewTrigger
+  pullRequest: PullRequestSummary
+  diff: {
+    text: string
+    files: string[]
+    ignoredFiles: string[]
+    commentRanges: ValidCommentRanges
+  }
+  issueComments: IssueComment[]
+  reviewComments: ReviewComment[]
+  reviews: PullRequestReview[]
+  commits: PullRequestCommit[]
+  reviewThreadsAvailable: boolean
+  reviewThreads: ReviewThread[]
+}
+
+/**
+ * Converts cached GitHub responses into the one immutable evidence snapshot
+ * shared by the AML tree, queue validation, and deterministic publication.
+ */
+export class ReviewEvidence {
+  readonly #input: ReviewEvidenceInput
+
+  constructor(input: ReviewEvidenceInput) {
+    this.#input = input
+  }
+
+  /** Reads the GitHub Actions event once and reduces it to review routing data. */
+  static trigger(request: Pick<ReviewRequest, "eventName" | "eventPath" | "actor">): ReviewTrigger {
+    let payload: GitHubEventPayload = {}
+    if (request.eventPath) {
+      payload = JSON.parse(readFileSync(request.eventPath, "utf8")) as GitHubEventPayload
+    }
+
+    const eventName = request.eventName
+    const action = payload.action
+    let reason: ReviewTrigger["reason"] = "manual"
+    if (eventName === "issue_comment") {
+      reason = "mention"
+    } else if (eventName === "pull_request" && action === "ready_for_review") {
+      reason = "ready_for_review"
+    } else if (eventName === "pull_request" && action === "opened") {
+      reason = "opened"
+    } else if (eventName === "pull_request" && action === "synchronize") {
+      reason = "synchronize"
+    } else if (eventName === "workflow_dispatch") {
+      reason = "workflow_dispatch"
+    }
+
+    const eventComment = payload.comment
+    return {
+      eventName,
+      reason,
+      actor: request.actor || payload.sender?.login || null,
+      comment:
+        eventComment?.id && eventComment.id > 0
+          ? {
+              id: eventComment.id,
+              author: eventComment.user?.login || null,
+              body: ReviewEvidence.#compact(eventComment.body, ACTION_TEXT_LIMIT)
+            }
+          : null
+    }
+  }
+
+  /** Builds all derived history once; no model-facing projection is maintained. */
+  snapshot(): ReviewSnapshot {
+    const unresolvedReviewThreads = this.#input.reviewThreads.filter(thread => !thread.is_resolved)
+    const unresolvedBotThreads = unresolvedReviewThreads.filter(
+      thread => thread.top_level_author === this.#input.request.botLogin
+    )
+    const actionItems = this.#actionItems()
+
+    return Object.freeze({
+      generatedAt: new Date().toISOString(),
+      botLogin: this.#input.request.botLogin,
+      command: REVIEW_COMMAND,
+      trigger: this.#input.trigger,
+      pullRequest: this.#input.pullRequest,
+      diff: this.#input.diff,
+      issueComments: this.#input.issueComments,
+      reviewComments: this.#input.reviewComments,
+      reviewThreadsAvailable: this.#input.reviewThreadsAvailable,
+      reviewThreads: this.#input.reviewThreads,
+      unresolvedReviewThreads,
+      unresolvedBotThreads,
+      reviews: this.#input.reviews,
+      commits: this.#input.commits,
+      timeline: this.#timeline(),
+      previousBotFindings: this.#input.reviewComments.filter(
+        comment => comment.user?.login === this.#input.request.botLogin && !comment.in_reply_to_id
+      ),
+      actionItems,
+      participants: this.#participants(actionItems)
+    })
+  }
+
+  /** Keeps history useful to models without copying full comments into summaries. */
+  static #compact(value: unknown, limit: number): string {
+    const text = String(value || "")
+      .replace(/\s+/gu, " ")
+      .trim()
+    return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`
+  }
+
+  /** Produces the ordered, bounded timeline written to history.md. */
+  #timeline(): ReviewTimeline {
+    const entries: Array<{ at: string; text: string }> = []
+
+    for (const commit of this.#input.commits) {
+      entries.push({
+        at: commit.commit?.committer?.date || commit.commit?.author?.date || "",
+        text: [
+          "commit",
+          commit.sha?.slice(0, 7),
+          commit.author?.login,
+          ReviewEvidence.#compact(commit.commit?.message, HISTORY_TEXT_LIMIT)
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      })
+    }
+    for (const comment of this.#input.issueComments) {
+      entries.push({
+        at: comment.created_at || comment.updated_at || "",
+        text: [
+          "issue comment",
+          `#${comment.id}`,
+          comment.user?.login,
+          ReviewEvidence.#compact(comment.body, HISTORY_TEXT_LIMIT)
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      })
+    }
+    for (const comment of this.#input.reviewComments) {
+      entries.push({
+        at: comment.created_at || comment.updated_at || "",
+        text: [
+          "review comment",
+          `#${comment.id}`,
+          comment.user?.login,
+          comment.path,
+          comment.line,
+          ReviewEvidence.#compact(comment.body, HISTORY_TEXT_LIMIT)
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      })
+    }
+    for (const review of this.#input.reviews) {
+      entries.push({
+        at: review.submitted_at || review.submittedAt || "",
+        text: [
+          "review",
+          review.user?.login,
+          review.state,
+          (review.commit_id || review.commitId)?.slice(0, 7),
+          ReviewEvidence.#compact(review.body, HISTORY_TEXT_LIMIT)
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      })
+    }
+
+    entries.sort((left, right) => left.at.localeCompare(right.at))
+    const visible = entries.slice(-HISTORY_ENTRY_LIMIT)
+    return {
+      olderEntriesOmitted: entries.length - visible.length,
+      entries: visible.map(entry => `${entry.at || "unknown-time"} | ${entry.text}`)
+    }
+  }
+
+  /** Finds direct requests that still require a top-level answer or thread reply. */
+  #actionItems(): ReviewActionItem[] {
+    const items: ReviewActionItem[] = []
+    const trigger = this.#input.trigger
+    const botLogin = this.#input.request.botLogin
+
+    if (trigger.comment) {
+      items.push({
+        id: `issue-comment:${trigger.comment.id}`,
+        kind: "trigger_request",
+        actor: trigger.comment.author,
+        body: ReviewEvidence.#compact(trigger.comment.body, ACTION_TEXT_LIMIT),
+        commentId: trigger.comment.id
+      })
+    }
+
+    const latestBotActivity = this.#latestBotActivity()
+    for (const comment of this.#input.issueComments) {
+      const createdAt = comment.created_at || comment.updated_at || null
+      if (
+        comment.id === trigger.comment?.id ||
+        comment.user?.login === botLogin ||
+        !this.#mentionsReviewer(comment.body) ||
+        (latestBotActivity !== null && createdAt && Date.parse(createdAt) <= latestBotActivity)
+      ) {
+        continue
+      }
+      items.push({
+        id: `issue-comment:${comment.id}`,
+        kind: "mentioned",
+        actor: comment.user?.login || null,
+        body: ReviewEvidence.#compact(comment.body, ACTION_TEXT_LIMIT),
+        commentId: comment.id,
+        createdAt
+      })
+    }
+
+    if (this.#input.reviewThreadsAvailable) {
+      // GraphQL thread grouping and resolution state are authoritative when available.
+      for (const thread of this.#input.reviewThreads) {
+        if (
+          thread.is_resolved ||
+          thread.top_level_author !== botLogin ||
+          thread.latest_author === botLogin ||
+          !thread.top_level_comment_id
+        ) {
+          continue
+        }
+        const latest = thread.comments[thread.comments.length - 1]
+        items.push({
+          id: `review-thread:${thread.id}`,
+          kind: "reply_requested",
+          actor: thread.latest_author,
+          body: ReviewEvidence.#compact(latest?.body, ACTION_TEXT_LIMIT),
+          replyToCommentId: thread.top_level_comment_id,
+          latestReplyId: thread.latest_comment_id,
+          reviewThreadId: thread.id,
+          path: thread.path,
+          line: thread.line
+        })
+      }
+      return items
+    }
+
+    // REST comments lack resolution state, but their parent ids still recover
+    // direct human replies when GraphQL review threads are unavailable.
+    const commentsByParent = new Map<number, ReviewComment[]>()
+    for (const comment of this.#input.reviewComments) {
+      const parent = comment.in_reply_to_id || comment.id
+      commentsByParent.set(parent, [...(commentsByParent.get(parent) || []), comment])
+    }
+    for (const [parent, comments] of commentsByParent) {
+      const topLevel = comments.find(comment => comment.id === parent)
+      if (topLevel?.user?.login !== botLogin) {
+        continue
+      }
+      const latest = comments.toSorted(
+        (left, right) => Date.parse(left.created_at || "1970-01-01") - Date.parse(right.created_at || "1970-01-01")
+      )[comments.length - 1]
+      if (latest?.user?.login && latest.user.login !== botLogin) {
+        items.push({
+          id: `review-comment:${parent}`,
+          kind: "reply_requested",
+          actor: latest.user.login,
+          body: ReviewEvidence.#compact(latest.body, ACTION_TEXT_LIMIT),
+          replyToCommentId: parent,
+          latestReplyId: latest.id
+        })
+      }
+    }
+    return items
+  }
+
+  #mentionsReviewer(body: unknown): boolean {
+    const text = String(body || "").toLowerCase()
+    const bot = this.#input.request.botLogin.toLowerCase()
+    return text.includes(REVIEW_COMMAND) || text.includes(`@${bot}`)
+  }
+
+  #latestBotActivity(): number | null {
+    const timestamps: number[] = []
+    for (const comment of this.#input.issueComments) {
+      if (comment.user?.login === this.#input.request.botLogin) {
+        timestamps.push(Date.parse(comment.created_at || comment.updated_at || ""))
+      }
+    }
+    for (const review of this.#input.reviews) {
+      if (review.user?.login === this.#input.request.botLogin) {
+        timestamps.push(Date.parse(review.submitted_at || review.submittedAt || ""))
+      }
+    }
+    const valid = timestamps.filter(Number.isFinite)
+    return valid.length > 0 ? Math.max(...valid) : null
+  }
+
+  /** Collects human handles once so synthesis can address the right participant. */
+  #participants(actionItems: ReviewActionItem[]): string[] {
+    const people = new Map<string, string>()
+    this.#addParticipant(people, this.#input.trigger.actor)
+    this.#addParticipant(people, this.#input.trigger.comment?.author)
+    this.#addParticipant(people, this.#input.pullRequest.author?.login || this.#input.pullRequest.user?.login)
+    for (const commit of this.#input.commits) {
+      this.#addParticipant(people, commit.author?.login, commit.commit?.author?.name)
+      this.#addParticipant(people, commit.committer?.login, commit.commit?.committer?.name)
+    }
+    for (const comment of this.#input.issueComments) {
+      this.#addParticipant(people, comment.user?.login)
+    }
+    for (const review of this.#input.reviews) {
+      this.#addParticipant(people, review.user?.login)
+    }
+    for (const thread of this.#input.reviewThreads) {
+      for (const comment of thread.comments) {
+        this.#addParticipant(people, comment.user.login)
+      }
+    }
+    for (const item of actionItems) {
+      this.#addParticipant(people, item.actor)
+    }
+    return [...people.values()]
+  }
+
+  /** Prefers a participant's human-readable name without ever retaining bots. */
+  #addParticipant(people: Map<string, string>, login?: string | null, name?: string | null): void {
+    if (!login) {
+      return
+    }
+    const normalized = login.toLowerCase()
+    const bot = this.#input.request.botLogin.toLowerCase()
+    if (normalized === bot || normalized === bot.replace(/\[bot\]$/u, "") || /\[bot\]$/u.test(normalized)) {
+      return
+    }
+
+    const named = name && name.toLowerCase() !== normalized
+    const label = named ? `${name} (@${login})` : `@${login}`
+    const existing = people.get(normalized)
+    if (!existing || (named && !existing.includes("("))) {
+      people.set(normalized, label)
+    }
+  }
+}

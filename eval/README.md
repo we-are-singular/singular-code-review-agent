@@ -1,81 +1,107 @@
 # Model evaluations
 
-This harness runs the production reviewer image against real pull requests, then judges and compares the captured reviews. Capture, judgment, reporting, and aggregation are separate steps so the original model output remains inspectable.
+The eval harness builds the production reviewer image, captures dry-run reviews for exact pull-request revisions, judges the output, renders reports, and aggregates repeated runs. Capture, judgment, reporting, and aggregation remain separate so raw model output is inspectable.
 
-Runs may call paid APIs. Start with one PR, one model, and concurrency 1. `eval/runs/` and `eval/cache/` can contain source, PR metadata, raw model transcripts, local paths, and provider telemetry. Both directories are ignored and remain local.
+Runs may call paid or rate-limited providers. Start with one PR, one model, and concurrency 1. `eval/runs/` and `eval/cache/` are ignored because they may contain source, PR metadata, provider telemetry, local paths, and credentials.
 
 ## Requirements
 
-- Docker and installed repository dependencies
-- `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI
-- Credentials required by the selected OpenCode provider
+- Docker and installed repository dependencies;
+- `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI;
+- credentials for the selected Agent provider.
 
-The GitHub token needs read access to every input PR. Keep any non-public repository identifiers in an uncommitted local config.
+The GitHub token needs read access to every input PR.
 
-## 1. Configure
+## Configure
 
-Edit [`config.ts`](config.ts). Its committed matrix contains only public pull requests and a small model set:
+Edit [config.ts](config.ts):
 
 ```ts
 export default {
   concurrency: 1,
-  models: ["opencode-go/minimax-m3"],
+  provider: "opencode",
+  models: ["opencode-go/deepseek-v4-flash"],
   input: [{ pr: "trpc/trpc/7262", ignoreHistory: true }],
   judge: {
     model: "opencode-go/deepseek-v4-flash",
-    timeoutMs: 120_000,
-  },
+    timeoutMs: 120_000
+  }
 }
 ```
 
-Use a separate ignored config for any non-public input. Do not replace the committed public examples with internal repository or pull-request identifiers.
+`ignoreHistory: true` removes issue comments, reviews, review comments, and threads from model context while retaining PR metadata, commits, the filtered diff, and valid comment ranges. Use it for a fresh-review measurement. Optional paired `base` and `head` SHAs pin the expected pull-request revision; capture fails if either SHA no longer matches the live pull request.
 
-This reviewer version supports only `ignoreHistory: true`. It removes issue comments, reviews, review comments, and threads from model context while retaining PR metadata, commits, the filtered diff, and valid comment ranges. It measures a fresh review rather than agreement with prior discussion.
+OpenCode production uses `opencode-go/deepseek-v4-flash`. Codex comparison runs use provider `codex` with `gpt-5.6-luna`; the runtime sets maximum reasoning once at provider construction.
 
-Model values are OpenCode IDs. Bare names such as `minimax-m3` normalize to `opencode-go/minimax-m3`. Check provider availability and pricing before a large matrix.
-
-## 2. Capture
+## Capture
 
 ```bash
 npm run eval -- --out eval/runs/smoke
 ```
 
-For a one-off public input without editing config:
+One-off input:
 
 ```bash
 npm run eval -- \
   --no-config-input \
   --pr trpc/trpc/7262 \
-  --model opencode-go/minimax-m3 \
+  --model opencode-go/deepseek-v4-flash \
   --out eval/runs/smoke
 ```
 
-Capture builds the current image and runs `review_dry_run`. It records the review, validated queue, filtered diff, model contexts, phase logs, raw JSONL, finish reason, duration, tokens, and provider-reported cost. GitHub writes stay disabled.
+Codex/Luna:
 
-Use `--append` to extend a run and `--force` to bypass cached captures. This version evaluates the pull request state available at capture time and rejects fixed `base` and `head` revisions rather than labeling a live review as historical. Keep the PR head stable during a comparison, and use `--force` or separate cache directories when the reviewer source or prompts change.
+```bash
+npm run eval -- \
+  --provider codex \
+  --model gpt-5.6-luna \
+  --out eval/runs/codex-luna
+```
 
-Run `npm run eval -- --help` for the complete capture interface.
+The capture builds the current Dockerfile, prepares the exact pull-request checkout on the host, mounts it into the reviewer container, invokes the production `review_runner` without `--publish`, and records its single typed JSON result. The eval-only adapter renders:
 
-## 3. Judge and report
+- `review.md`;
+- `review_comments.json`;
+- `review_stats.json`;
+- `provider_completions.jsonl` with content-free ACP run, session, model, and stop-reason evidence;
+- `review_transcript.md`.
+
+The eval boundary also preserves the exact filtered diff and normalized PR context supplied to the judge. Those artifacts are observability and scoring inputs, not production workflow state.
+
+The default `targetDurationMs` is advisory. `reviewTimeoutMs` is the larger stuck-provider safety ceiling and must not be interpreted as the expected review duration. There is no short no-output timeout because providers may be silent while producing a complete result.
+
+Use `--skip-build` only when the exact reviewer image already exists. Use `--base-image` to test another AML Agent Sandbox explicitly. The run manifest records both image IDs so rebuilding cannot silently restore a result captured from another implementation revision.
+
+Use `--append` to add missing matrix cells and `--force` to bypass the global review cache. Cache promotion requires a completed typed result and every canonical artifact; exit zero alone is insufficient.
+
+### Credentials
+
+OpenCode prefers `OPENCODE_API_KEY`. When it is absent, the harness stages disposable copies of the host OpenCode auth files into the isolated XDG data directory and removes them before retaining scratch.
+
+Codex uses the host ChatGPT login. The harness copies `auth.json` into a disposable writable `REVIEW_CODEX_HOME` because Codex may refresh it, then deletes that copy in `finally`. It does not forward `OPENAI_API_KEY` or `CODEX_API_KEY` to a Codex run.
+
+## Judge and report
 
 ```bash
 npm run eval:judge -- --run eval/runs/smoke
 npm run eval:report -- --run eval/runs/smoke
 ```
 
-The judge receives the captured review, filtered diff, and curated runtime evidence. Human review threads remain outside the scoring prompt. The report writes `summary.json` and `report.html` with scores, verdicts, comments, duration, tokens, costs, and failures.
+The judge receives the captured review, filtered diff, normalized PR context, and review telemetry. Human review threads remain outside the scoring prompt. Reports require a completed capture by default; `--allow-partial` renders only a diagnostic report and remains ineligible for benchmark aggregation.
 
-Judgments are cached. Use `npm run eval:judge -- --help` before changing the judge model, timeout, or cache behavior.
+The judge reuses the eval config recorded in `run.json` so the capture's judge model and timeout remain stable. Pass `--config`, `--model`, or `--timeout-ms` only when intentionally overriding those defaults.
 
-## 4. Compare
+Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity. Every paid judge invocation is retained under `judge-attempts/`; the canonical judge files represent the latest result, while reports include usage and cost from all retained attempts.
+
+## Compare
 
 ```bash
 npm run eval:benchmark
 ```
 
-[`benchmark.mjs`](benchmark.mjs) aggregates generated summaries into an HTML report and JSON dataset. Keep the PR head, model variant, judge, and `ignoreHistory` setting stable when comparing reviewer revisions.
+[`benchmark.mjs`](benchmark.mjs) aggregates completed `summary.json` files into an HTML report and JSON dataset. Keep the PR head, provider model, judge, `ignoreHistory`, and reviewer image stable when comparing revisions.
 
-For repeated captures of the same PR and model under different reviewer versions:
+Repeated captures:
 
 ```bash
 npm run eval:benchmark -- \
@@ -86,12 +112,10 @@ npm run eval:benchmark -- \
   --json eval/runs/reviewer-compare-summary.json
 ```
 
-`--avg` aggregates repeated captures by exact model and reasoning variant. Run `npm run eval:benchmark -- --help` for filters and output controls.
+`--avg` aggregates repeats by exact model and reasoning variant. Completed judged evidence ranks ahead of newer failed diagnostics. The benchmark aggregator can still read historical source and AML summaries, while all new captures execute the canonical production reviewer.
 
 ## Publication boundary
 
-Commit the harness, rubric, public example config, documentation, and ignore files. Keep captures, caches, reports, Docker logs, scratch workspaces, non-public identifiers, human review exports, credentials, and provider tokens local.
+Commit harness code, rubric, public example configuration, documentation, and ignore files. Keep captures, caches, generated reports, Docker logs, scratch workspaces, private identifiers, human review exports, credentials, and provider tokens local.
 
-Generated HTML and JSON reports contain pull-request references and review excerpts. They are diagnostic artifacts, not publication-ready summaries. Public comparisons must contain model-level aggregates only, with no repository names, pull-request numbers or titles, finding text, artifact links, or local paths.
-
-Public pull requests are suitable committed calibration inputs. Dated benchmark notes and one-off launch scripts belong outside the repository.
+Tracked documentation may include anonymized model-level aggregates. It must not include repository names, pull-request numbers or titles, review text, finding excerpts, artifact links, or local paths from non-public runs.

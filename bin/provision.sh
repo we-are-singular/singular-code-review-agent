@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
 log() {
   printf '[singular-code-review] %s\n' "$*" >&2
 }
@@ -26,59 +23,6 @@ resolve_workspace() {
     printf '%s\n' "/github/workspace"
   else
     pwd
-  fi
-}
-
-install_opencode_runtime_config() {
-  local home_dir="${HOME:-/root}"
-  local config_home="${XDG_CONFIG_HOME:-$home_dir/.config}"
-  local data_home="${XDG_DATA_HOME:-$home_dir/.local/share}"
-  local cache_home="${XDG_CACHE_HOME:-$home_dir/.cache}"
-  local state_home="${XDG_STATE_HOME:-$home_dir/.local/state}"
-  local config_dir="$config_home/opencode"
-  local config_file="$config_dir/opencode.json"
-  local agents_dir="$config_dir/agents"
-  local skills_dir="$config_dir/skills"
-  local template_file="/usr/local/share/singular-code-review/opencode.json"
-  local template_agents_dir="/usr/local/share/singular-code-review/agents"
-  local template_skills_dir="/usr/local/share/singular-code-review/skills"
-
-  mkdir -p \
-    "$config_dir" \
-    "$agents_dir" \
-    "$skills_dir" \
-    "$data_home/opencode" \
-    "$cache_home/opencode" \
-    "$state_home/opencode"
-
-  if [[ ! -f "$template_file" && -f "$REPO_ROOT/opencode/opencode.json" ]]; then
-    template_file="$REPO_ROOT/opencode/opencode.json"
-  fi
-
-  if [[ ! -d "$template_agents_dir" && -d "$REPO_ROOT/opencode/agents" ]]; then
-    template_agents_dir="$REPO_ROOT/opencode/agents"
-  fi
-
-  if [[ ! -d "$template_skills_dir" && -d "$REPO_ROOT/opencode/skills" ]]; then
-    template_skills_dir="$REPO_ROOT/opencode/skills"
-  fi
-
-  if [[ -f "$template_file" ]]; then
-    cp "$template_file" "$config_file"
-    log "installed OpenCode config template"
-  elif [[ ! -f "$config_file" ]]; then
-    printf '{}\n' > "$config_file"
-    log "no OpenCode config template found; wrote empty config"
-  fi
-
-  if [[ -d "$template_agents_dir" ]]; then
-    cp -R "$template_agents_dir"/. "$agents_dir"/
-    log "installed OpenCode agents"
-  fi
-
-  if [[ -d "$template_skills_dir" ]]; then
-    cp -R "$template_skills_dir"/. "$skills_dir"/
-    log "installed OpenCode skills"
   fi
 }
 
@@ -133,9 +77,7 @@ main() {
   [[ -d "$workspace" ]] || die "workspace does not exist: $workspace"
 
   log "provisioning workspace: $workspace"
-  mkdir -p "${HOME:-/root}"
   git config --global --add safe.directory "$workspace" || true
-  install_opencode_runtime_config
   install_dependencies "$workspace"
 }
 
