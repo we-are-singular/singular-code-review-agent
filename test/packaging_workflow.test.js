@@ -62,6 +62,8 @@ test("example trigger workflow reviews new heads and trusted mentions", () => {
     workflow,
     /concurrency:\s*\n\s+group: singular-code-review-\$\{\{ github\.event\.issue\.number \|\| github\.event\.pull_request\.number \|\| github\.event\.inputs\.pr_number \}\}/
   )
+  assert.match(workflow, /uses: we-are-singular\/singular-code-review-agent\/\.github\/workflows\/review\.yml@main/)
+  assert.doesNotMatch(workflow, /review-legacy\.yml/u)
 })
 
 test("publish workflow validates and builds the same reviewer image", () => {
@@ -80,6 +82,8 @@ test("publish workflow validates and builds the same reviewer image", () => {
 test("reusable workflow preflights once and publishes through the production review tree", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review.yml"), "utf8")
 
+  assert.match(workflow, /image: ghcr\.io\/we-are-singular\/singular-code-review-agent:latest/)
+  assert.doesNotMatch(workflow, /singular-code-review-agent:legacy/u)
   assert.match(workflow, /uses: actions\/create-github-app-token@v3/)
   assert.match(workflow, /uses: actions\/checkout@v7/)
   assert.match(workflow, /if \/usr\/local\/bin\/review_preflight; then/)
@@ -100,4 +104,18 @@ test("reusable workflow preflights once and publishes through the production rev
   assert.match(workflow, /REVIEW_BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
   assert.doesNotMatch(workflow, /^\s+BOT_LOGIN:/mu)
   assert.doesNotMatch(workflow, /review_ack|review_extract|OPENCODE_MODEL_FALLBACK|OPENCODE_GATE_MODEL/u)
+})
+
+test("legacy reusable workflow stays coupled to the frozen pre-AML image", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review-legacy.yml"), "utf8")
+
+  assert.match(workflow, /image: ghcr\.io\/we-are-singular\/singular-code-review-agent:legacy/)
+  assert.match(workflow, /\/usr\/local\/bin\/review_guard/)
+  assert.match(workflow, /\/usr\/local\/bin\/review_ack/)
+  assert.match(workflow, /run: timeout 40m \/usr\/local\/bin\/review_runner/)
+  assert.doesNotMatch(workflow, /review_runner --publish/u)
+  assert.match(workflow, /\/usr\/local\/bin\/review_extract --github-summary/)
+  assert.match(workflow, /OPENCODE_MODEL: \$\{\{ vars\.OPENCODE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/)
+  assert.doesNotMatch(workflow, /opencode\/deepseek-v4-flash-free/u)
+  assert.doesNotMatch(workflow, /review_preflight|REVIEW_MODEL|REVIEW_BOT_LOGIN/u)
 })
