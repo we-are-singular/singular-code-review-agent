@@ -123,6 +123,8 @@ function stats(result, generatedAt, runtimeDir) {
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       reasoningTokens: result.usage.reasoningTokens,
+      cacheReadTokens: result.usage.cacheReadTokens,
+      cacheWriteTokens: result.usage.cacheWriteTokens,
       totalTokens: result.usage.totalTokens,
       costUsd: result.usage.costUsd,
       jsonEvents: 0,

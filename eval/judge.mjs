@@ -414,11 +414,15 @@ async function main() {
       }
     }
     console.log(`judging ${jobKey} with ${model}`)
+    const startedAt = new Date().toISOString()
     const result = await runJudge({ model, jobDir, job, timeoutMs })
+    const endedAt = new Date().toISOString()
     const judgment = {
       jobKey,
       model,
       status: result.status,
+      startedAt,
+      endedAt,
       error: result.error || null,
       ...(result.judgment || {}),
       files: result.files,

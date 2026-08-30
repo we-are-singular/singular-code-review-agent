@@ -29,7 +29,9 @@ test("review telemetry derives usage and summaries from completed AML evaluation
           inputTokens: 100,
           outputTokens: 20,
           thoughtTokens: 8,
-          totalTokens: 128,
+          cachedReadTokens: 80,
+          cachedWriteTokens: 5,
+          totalTokens: 208,
           costUsd: 0.01
         })
       }
@@ -43,7 +45,9 @@ test("review telemetry derives usage and summaries from completed AML evaluation
     inputTokens: 100,
     outputTokens: 20,
     reasoningTokens: 8,
-    totalTokens: 128,
+    cacheReadTokens: 80,
+    cacheWriteTokens: 5,
+    totalTokens: 208,
     costUsd: 0.01
   })
   assert.equal(telemetry.summaries().length, 1)

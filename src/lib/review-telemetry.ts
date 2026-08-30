@@ -5,6 +5,8 @@ export type ReviewUsage = {
   inputTokens: number | null
   outputTokens: number | null
   reasoningTokens: number | null
+  cacheReadTokens: number | null
+  cacheWriteTokens: number | null
   totalTokens: number | null
   costUsd: number | null
 }
@@ -57,6 +59,8 @@ export class ReviewTelemetryCollector {
     let inputTokens: number | null = null
     let outputTokens: number | null = null
     let reasoningTokens: number | null = null
+    let cacheReadTokens: number | null = null
+    let cacheWriteTokens: number | null = null
     let totalTokens: number | null = null
     let costUsd: number | null = null
 
@@ -68,6 +72,8 @@ export class ReviewTelemetryCollector {
           inputTokens = this.#sum(inputTokens, usage.inputTokens)
           outputTokens = this.#sum(outputTokens, usage.outputTokens)
           reasoningTokens = this.#sum(reasoningTokens, usage.thoughtTokens)
+          cacheReadTokens = this.#sum(cacheReadTokens, usage.cachedReadTokens)
+          cacheWriteTokens = this.#sum(cacheWriteTokens, usage.cachedWriteTokens)
           totalTokens = this.#sum(totalTokens, usage.totalTokens)
           costUsd = this.#sum(costUsd, usage.costUsd)
         } catch {
@@ -81,6 +87,8 @@ export class ReviewTelemetryCollector {
       inputTokens,
       outputTokens,
       reasoningTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
       totalTokens,
       costUsd
     }

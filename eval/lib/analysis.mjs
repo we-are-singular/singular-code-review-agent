@@ -137,8 +137,8 @@ function readReviewStats(file) {
       inputTokens: toNumber(totals.inputTokens),
       outputTokens: toNumber(totals.outputTokens),
       reasoningTokens: toNumber(totals.reasoningTokens),
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
+      cacheReadTokens: toNumber(totals.cacheReadTokens),
+      cacheWriteTokens: toNumber(totals.cacheWriteTokens),
       costUsd: toNumber(totals.costUsd),
     },
   };
@@ -349,9 +349,19 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const reviewStats = job.files?.stats ? readReviewStats(job.files.stats) : null;
   const captureUsage = reviewStats?.usage || readOpenCodeUsage(job.files?.raw);
   const judgeUsage = readOpenCodeUsage(judgment?.files?.raw);
-  const captureCost = priceUsage({ model: job.model, usage: captureUsage, reportedCostUsd: captureUsage.costUsd });
+  const captureCost = priceUsage({
+    model: job.model,
+    usage: captureUsage,
+    reportedCostUsd: captureUsage.costUsd,
+    startedAt: job.startedAt,
+  });
   const judgeCost = judgment
-    ? priceUsage({ model: judgment.model || "", usage: judgeUsage, reportedCostUsd: judgeUsage.costUsd })
+    ? priceUsage({
+        model: judgment.model || "",
+        usage: judgeUsage,
+        reportedCostUsd: judgeUsage.costUsd,
+        startedAt: judgment.startedAt,
+      })
     : { costUsd: 0, label: formatCost(0), rawReportedCostUsd: 0, source: "not-run" };
   const usage = combineUsage(captureUsage, judgeUsage);
   usage.costUsd = sumKnownCosts([captureCost.costUsd, judgeCost.costUsd]);

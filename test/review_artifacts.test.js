@@ -40,7 +40,9 @@ function result() {
       inputTokens: 100,
       outputTokens: 20,
       reasoningTokens: 0,
-      totalTokens: 120,
+      cacheReadTokens: 80,
+      cacheWriteTokens: 0,
+      totalTokens: 200,
       costUsd: 0.01
     },
     traceSummaries: [
@@ -65,6 +67,7 @@ test("eval adapter writes four canonical artifacts from one in-memory result", (
   ])
   const stats = JSON.parse(fs.readFileSync(exported.paths.stats, "utf8"))
   assert.equal(stats.totals.durationMs, 1234)
+  assert.equal(stats.totals.cacheReadTokens, 80)
   assert.equal(Object.hasOwn(stats.phases[0], "durationMs"), false)
   assert.equal(stats.phases[1].status, "completed")
   assert.equal(stats.phases.find(phase => phase.name === "audit").findings, 0)
