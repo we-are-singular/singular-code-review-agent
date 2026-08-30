@@ -89,6 +89,8 @@ npm run eval:report -- --run eval/runs/smoke
 
 The judge receives the captured review, filtered diff, normalized PR context, and review telemetry. Human review threads remain outside the scoring prompt. Reports require a completed capture by default; --allow-partial renders only a diagnostic report and remains ineligible for benchmark aggregation.
 
+The judge reuses the eval config recorded in run.json so the capture's judge model and timeout remain stable. Pass --config, --model, or --timeout-ms only when intentionally overriding those defaults.
+
 Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity.
 
 ## Compare

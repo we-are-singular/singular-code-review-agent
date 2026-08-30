@@ -45,7 +45,7 @@ function writeText(file, value) {
 function parseArgs(argv) {
   const options = {
     runDir: "",
-    configFile: resolve(repoRoot, "eval", "config.ts"),
+    configFile: "",
     model: "",
     timeoutMs: undefined,
     force: false,
@@ -79,12 +79,16 @@ function printHelp() {
 
 Options:
   --run <dir>         Eval run directory containing run.json
-  --config <file>     Config for default judge model. Default: eval/config.ts
+  --config <file>     Config for judge defaults. Default: run.json config, then eval/config.ts
   --model <model>     Judge model override
   --timeout-ms <ms>   Judge timeout override
   --force             Rejudge captures and bypass the global judgment cache
   --cache-dir <dir>   Global judgment cache. Default: eval/cache/judgments
 `)
+}
+
+function resolveJudgeConfigFile(explicitConfigFile, run) {
+  return resolve(explicitConfigFile || run?.configFile || join(repoRoot, "eval", "config.ts"))
 }
 
 function restoreJudgeCache({ cacheDir, key, jobDir, jobKey, model }) {
@@ -377,13 +381,15 @@ async function main() {
     throw new Error("--run is required")
   }
 
-  const config = await loadEvalConfig(options.configFile)
+  // Captures retain the config that defined their judge model and timeout. Reuse
+  // it by default so a later judge invocation cannot silently change semantics.
+  const run = readJson(join(options.runDir, "run.json"))
+  const config = await loadEvalConfig(resolveJudgeConfigFile(options.configFile, run))
   const model = normalizeEvalModel(options.model || config.judge.model, "judge model")
   if (!model) {
     throw new Error("judge model is required; set config.judge.model or pass --model")
   }
   const timeoutMs = options.timeoutMs || config.judge.timeoutMs
-  const run = readJson(join(options.runDir, "run.json"))
   const existingJudgments =
     readJsonOr(join(options.runDir, "judgments.json"), { judgments: [] }).judgments?.filter(
       (judgment) => judgment && typeof judgment === "object",
@@ -447,7 +453,11 @@ async function main() {
   )
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error))
-  process.exitCode = 1
-})
+export { resolveJudgeConfigFile }
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error))
+    process.exitCode = 1
+  })
+}

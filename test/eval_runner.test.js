@@ -16,6 +16,7 @@ import {
   writeRunFile
 } from "../eval/run.mjs"
 import { completedJobArtifacts } from "../eval/lib/job-artifacts.mjs"
+import { resolveJudgeConfigFile } from "../eval/judge.mjs"
 
 const input = {
   slug: "owner-repository-pr-42",
@@ -43,6 +44,16 @@ test("review process settles at the timeout even when the child ignores SIGTERM"
   assert.equal(result.status, 1)
   assert.match(result.error, /timed out after 20ms/)
   assert.ok(Date.now() - started < 180, "timeout should not wait for child close")
+})
+
+test("judge config follows the capture unless explicitly overridden", () => {
+  const directory = mkdtempSync(join(tmpdir(), "singular-eval-judge-config-"))
+  const capturedConfig = join(directory, "capture.ts")
+  const explicitConfig = join(directory, "override.ts")
+
+  assert.equal(resolveJudgeConfigFile("", { configFile: capturedConfig }), capturedConfig)
+  assert.equal(resolveJudgeConfigFile(explicitConfig, { configFile: capturedConfig }), explicitConfig)
+  assert.match(resolveJudgeConfigFile("", {}), /eval\/config\.ts$/)
 })
 
 test("stale cleanup ignores fresh and unowned evaluator leases", () => {
