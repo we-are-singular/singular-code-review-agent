@@ -20,13 +20,6 @@ export default {
       ignoreHistory: true,
       label: "batch stream call index",
     },
-    // Private repositories work with a token that can read them. Replace this
-    // placeholder locally; do not commit private repository or PR identifiers.
-    // {
-    //   pr: "https://github.com/example-org/private-repository/pull/123",
-    //   ignoreHistory: true,
-    //   label: "private calibration case",
-    // },
   ],
   judge: {
     model: "opencode-go/deepseek-v4-flash",

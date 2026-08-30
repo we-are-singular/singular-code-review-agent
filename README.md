@@ -44,8 +44,7 @@ check instead of publishing an incomplete green review.
 
 ## Model benchmark
 
-Repeated history-blind runs against the same large private TypeScript PR
-produced these judge-score averages:
+Repeated history-blind runs against the same fixed, anonymized calibration change produced these judge-score averages:
 
 | Model                    | Average score |
 | ------------------------ | ------------: |
@@ -54,17 +53,7 @@ produced these judge-score averages:
 | MiniMax M3               |          74.7 |
 | GPT-5.6 Luna             |          71.0 |
 
-DeepSeek's clean retry set scored 78, 81, and 83, produced two comments per
-run, averaged about 11 minutes, and reported about $0.0416 per run. DeepSeek was
-more focused and grounded; MiniMax was broader and caught an additional
-important issue, but produced noisier findings.
-
-These aggregate values were reconstructed from the generated benchmark summary
-after private run artifacts were removed. They are directional, not a universal
-model ranking. The PR, model variant, prompt, provider, and judge all affect the
-result. See the [eval guide](eval/README.md) and
-[`eval/benchmark.mjs`](eval/benchmark.mjs) for the capture and aggregation
-method.
+Only aggregate values are published; source identifiers, review text, and generated reports stay local. The comparison is directional rather than a universal model ranking because the calibration change, model variant, prompt, provider, and judge all affect the result. See the [eval guide](eval/README.md) and [`eval/benchmark.mjs`](eval/benchmark.mjs) for the capture and aggregation method.
 
 ## Install
 
