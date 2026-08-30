@@ -110,6 +110,17 @@ The CLI is dry-run by default and requires `--publish` for live GitHub mutations
 
 Production uses the OpenCode ACP supplied by the pinned AML Agent Sandbox with `opencode-go/deepseek-v4-flash`. Codex ACP with `gpt-5.6-luna` remains available for deliberate evaluation rather than normal production runs.
 
+## Model comparison
+
+The current AML workflow was run once per model across the same fixed, history-blind ten-PR calibration corpus. Both runs used the same reviewer revision and judge. Only model-level aggregates are published; source identifiers, review text, captures, and generated reports remain local.
+
+| Model             | Completed | Judge score | Mean review time | Reported reviewer cost/run |
+| ----------------- | --------: | ----------: | ---------------: | -------------------------: |
+| DeepSeek V4 Flash |     10/10 |    86.9/100 |           5m 31s |                    $0.0096 |
+| GLM 5.3 Flash     |     10/10 |    87.8/100 |           5m 43s |                    $0.0108 |
+
+Provider-reported reviewer cost excludes judge inference. This is a calibration snapshot, not a general model ranking; repository mix, prompts, provider revisions, and the judge can change the result.
+
 ## Install
 
 1. Install the Singular Code Review GitHub App on the target repository.
@@ -171,7 +182,7 @@ docker build -t singular-code-review:local .
 Run one real pull request through the production review boundary without publishing to GitHub:
 
 ```bash
-OPENCODE_API_KEY=... npm run eval -- --no-config-input --pr owner/repository/123 --model opencode-go/deepseek-v4-flash --out eval/runs/smoke
+OPENCODE_API_KEY=... npm run eval -- --no-config-input --pr trpc/trpc/7262 --model opencode-go/deepseek-v4-flash --out eval/runs/smoke
 ```
 
 The evaluator verifies the requested revision, prepares the checkout outside the image, mounts it at the review workspace, and invokes the same production runner without `--publish`. See the [evaluation guide](eval/README.md) for scored runs, provider comparisons, caching, and reports.
