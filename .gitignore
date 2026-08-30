@@ -6,3 +6,4 @@ coverage/
 *.log
 /tmp/
 /dist/
+/eval/config.local.ts
