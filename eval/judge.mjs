@@ -1,0 +1,421 @@
+import { spawn } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
+import { tmpdir } from "node:os"
+import { fileURLToPath } from "node:url"
+import {
+  cacheEntryDir,
+  copyExistingFile,
+  readJsonFile,
+  writeJsonFile,
+} from "./lib/cache.mjs"
+import { loadEvalConfig } from "./lib/config.mjs"
+import { judgeCacheKey } from "./lib/judge-cache-key.mjs"
+import { buildJudgePrompt } from "./lib/judge-prompt.mjs"
+import { JUDGE_RUBRIC } from "./lib/judge-rubric.mjs"
+import { normalizeEvalModel } from "./lib/models.mjs"
+import { extractRenderedText, cleanupScratch } from "./lib/opencode-runner.mjs"
+import { slugify } from "./lib/pr-input.mjs"
+
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"))
+}
+
+function readJsonOr(file, fallback) {
+  if (!existsSync(file)) {
+    return fallback
+  }
+  return readJson(file)
+}
+
+function writeJson(file, value) {
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+}
+
+function writeText(file, value) {
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, value, { mode: 0o600 })
+}
+
+function parseArgs(argv) {
+  const options = {
+    runDir: "",
+    configFile: resolve(repoRoot, "eval", "config.ts"),
+    model: "",
+    timeoutMs: undefined,
+    force: false,
+    cacheDir: resolve(repoRoot, "eval", "cache", "judgments"),
+  }
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg === "--run") {
+      options.runDir = resolve(argv[++index])
+    } else if (arg === "--config") {
+      options.configFile = resolve(argv[++index])
+    } else if (arg === "--model") {
+      options.model = argv[++index] || ""
+    } else if (arg === "--timeout-ms") {
+      options.timeoutMs = Number(argv[++index])
+    } else if (arg === "--force") {
+      options.force = true
+    } else if (arg === "--cache-dir") {
+      options.cacheDir = resolve(argv[++index])
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true
+    } else {
+      throw new Error(`unknown option: ${arg}`)
+    }
+  }
+  return options
+}
+
+function printHelp() {
+  console.log(`Usage: node eval/judge.mjs --run <dir> [options]
+
+Options:
+  --run <dir>         Eval run directory containing run.json
+  --config <file>     Config for default judge model. Default: eval/config.ts
+  --model <model>     Judge model override
+  --timeout-ms <ms>   Judge timeout override
+  --force             Rejudge captures and bypass the global judgment cache
+  --cache-dir <dir>   Global judgment cache. Default: eval/cache/judgments
+`)
+}
+
+function restoreJudgeCache({ cacheDir, key, jobDir, jobKey, model }) {
+  const entryDir = cacheEntryDir(cacheDir, key)
+  const cached = readJsonFile(join(entryDir, "judge.json"))
+  if (!cached || cached.status !== "completed") {
+    return null
+  }
+
+  const rawFile = join(jobDir, "judge.raw.jsonl")
+  const stderrFile = join(jobDir, "judge.stderr.log")
+  copyExistingFile(join(entryDir, "judge.raw.jsonl"), rawFile)
+  copyExistingFile(join(entryDir, "judge.stderr.log"), stderrFile)
+  const judgment = {
+    ...cached,
+    jobKey,
+    model,
+    files: {
+      raw: existsSync(rawFile) ? rawFile : "",
+      stderr: existsSync(stderrFile) ? stderrFile : "",
+    },
+    cache: {
+      hit: true,
+      key,
+      dir: entryDir,
+    },
+  }
+  writeJson(join(jobDir, "judge.json"), judgment)
+  return judgment
+}
+
+function saveJudgeCache({ cacheDir, key, jobDir, judgment }) {
+  if (judgment.status !== "completed") {
+    return
+  }
+  const entryDir = cacheEntryDir(cacheDir, key)
+  copyExistingFile(join(jobDir, "judge.raw.jsonl"), join(entryDir, "judge.raw.jsonl"))
+  copyExistingFile(join(jobDir, "judge.stderr.log"), join(entryDir, "judge.stderr.log"))
+  writeJsonFile(join(entryDir, "judge.json"), {
+    ...judgment,
+    files: {
+      raw: "judge.raw.jsonl",
+      stderr: "judge.stderr.log",
+    },
+    cache: {
+      hit: false,
+      key,
+    },
+  })
+}
+
+function parseJudgeJson(text) {
+  const trimmed = String(text || "").trim()
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/iu.exec(trimmed)
+  const source = fenced ? fenced[1] : trimmed
+  try {
+    return normalizeJudgeOutput(JSON.parse(source))
+  } catch {
+    const match = source.match(/\{[\s\S]*\}/u)
+    if (!match) {
+      throw new Error("judge output did not contain a JSON object")
+    }
+    return normalizeJudgeOutput(JSON.parse(match[0]))
+  }
+}
+
+function scoreFromUnknown(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    return null
+  }
+  const normalized = numeric > 10 ? numeric / 10 : numeric
+  return Math.max(0, Math.min(10, Number(normalized.toFixed(1))))
+}
+
+function normalizeVerdict(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/gu, "_")
+  if (["lgtm", "good", "pass", "passed", "approve", "approved"].includes(normalized)) {
+    return "lgtm"
+  }
+  if (["request_changes", "request_change", "changes", "block", "blocked", "fail", "failed"].includes(normalized)) {
+    return "request_changes"
+  }
+  return "error"
+}
+
+function normalizeQuestion(raw, fallback) {
+  const question = raw && typeof raw === "object" ? raw : {}
+  return {
+    id: String(question.id || fallback.id).trim(),
+    question: String(question.question || fallback.question).trim(),
+    score: scoreFromUnknown(question.score) ?? 0,
+    reason: String(question.reason || question.answer || question.evidence || question.notes || question.rationale || "").trim(),
+  }
+}
+
+function normalizeQuestions(value) {
+  const rawQuestions = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? Object.entries(value).map(([id, item]) => ({
+          id,
+          ...(item && typeof item === "object" ? item : { score: item }),
+        }))
+      : []
+  const byId = new Map(rawQuestions.map((item) => [String(item?.id || ""), item]))
+  return JUDGE_RUBRIC.map((rubricItem) => normalizeQuestion(byId.get(rubricItem.id), rubricItem))
+}
+
+function averageQuestionScore(questions) {
+  if (questions.length === 0) {
+    return 0
+  }
+  return Number((questions.reduce((sum, question) => sum + question.score, 0) / questions.length).toFixed(1))
+}
+
+function normalizeStringList(value) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean).slice(0, 5) : []
+}
+
+function normalizeJudgeOutput(value) {
+  const raw = value && typeof value === "object" ? value : {}
+  const questions = normalizeQuestions(raw.questions || raw.answers || raw.rubric || raw.scores)
+  const score = questions.length > 0 ? averageQuestionScore(questions) : (scoreFromUnknown(raw.score) ?? 0)
+  const notes = String(raw.notes || raw.summary || "").trim()
+  return {
+    score,
+    verdict: normalizeVerdict(raw.verdict),
+    reason: String(raw.reason || notes).trim(),
+    questions,
+    strengths: normalizeStringList(raw.strengths),
+    risks: normalizeStringList(raw.risks),
+    notes,
+  }
+}
+
+function runJudge({ model, jobDir, job, timeoutMs }) {
+  return new Promise((resolveJudge) => {
+    const scratchRoot = join(tmpdir(), "singular-code-review-eval-judge", `${Date.now()}-${job.input.slug}`)
+    const home = join(scratchRoot, "home")
+    const xdgRoot = join(scratchRoot, "xdg")
+    const configHome = join(xdgRoot, "config")
+    const dataHome = join(xdgRoot, "data")
+    const cacheHome = join(xdgRoot, "cache")
+    const stateHome = join(xdgRoot, "state")
+    mkdirSync(home, { recursive: true })
+    mkdirSync(configHome, { recursive: true })
+    mkdirSync(dataHome, { recursive: true })
+    mkdirSync(cacheHome, { recursive: true })
+    mkdirSync(stateHome, { recursive: true })
+    writeText(join(configHome, "opencode", "opencode.json"), "{}\n")
+
+    const rawFile = join(jobDir, "judge.raw.jsonl")
+    const stderrFile = join(jobDir, "judge.stderr.log")
+    const prompt = buildJudgePrompt({ repoRoot, job })
+    const attachedFiles = [
+      join(jobDir, "artifacts", "review_model_context.json"),
+      join(jobDir, "artifacts", "pr.diff"),
+      join(jobDir, "artifacts", "review_queue.json"),
+      join(jobDir, "artifacts", "review_payload.json"),
+      join(jobDir, "artifacts", "review_validated.json"),
+      join(jobDir, "artifacts", "review_validation_context.json"),
+      join(jobDir, "artifacts", "audit_model_context.json"),
+      join(jobDir, "artifacts", "opencode_review.log"),
+      join(jobDir, "artifacts", "opencode_review.log.jsonl"),
+      join(jobDir, "artifacts", "opencode_audit.log"),
+      join(jobDir, "artifacts", "opencode_audit.log.jsonl"),
+      join(jobDir, "artifacts", "opencode_synthesis.log"),
+      join(jobDir, "artifacts", "opencode_synthesis.log.jsonl"),
+      join(jobDir, "review.md"),
+      join(jobDir, "review_comments.json"),
+      join(jobDir, "review_stats.json"),
+      join(jobDir, "review_transcript.md"),
+    ].filter((file) => existsSync(file))
+    const args = [
+      "run",
+      "--pure",
+      "--model",
+      model,
+      "--format",
+      "json",
+    ]
+    for (const file of attachedFiles) {
+      args.push("--file", file)
+    }
+    args.push("--", prompt)
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+    const child = spawn("opencode", args, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: configHome,
+        XDG_DATA_HOME: dataHome,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_STATE_HOME: stateHome,
+        OPENCODE_MODEL: model,
+        OPENCODE_API_KEY: process.env.OPENCODE_API_KEY || "",
+        OPENCODE_DISABLE_AUTOUPDATE: "true",
+        OPENCODE_DISABLE_CLAUDE_CODE: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+
+    const finish = (result) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      writeText(rawFile, stdout)
+      writeText(stderrFile, stderr)
+      cleanupScratch(scratchRoot, false)
+      resolveJudge({
+        ...result,
+        files: {
+          raw: rawFile,
+          stderr: stderrFile,
+        },
+      })
+    }
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM")
+      finish({ status: "failed", error: `judge timed out after ${timeoutMs}ms` })
+    }, timeoutMs).unref()
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    child.on("error", (error) => {
+      finish({ status: "failed", error: error.message })
+    })
+    child.on("close", (status) => {
+      if (status !== 0) {
+        finish({ status: "failed", error: `judge exited ${status}` })
+        return
+      }
+      const rendered = extractRenderedText(stdout)
+      try {
+        finish({ status: "completed", judgment: parseJudgeJson(rendered), error: null })
+      } catch (error) {
+        finish({ status: "failed", error: error instanceof Error ? error.message : String(error), rendered })
+      }
+    })
+  })
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2))
+  if (options.help) {
+    printHelp()
+    return
+  }
+  if (!options.runDir) {
+    throw new Error("--run is required")
+  }
+
+  const config = await loadEvalConfig(options.configFile)
+  const model = normalizeEvalModel(options.model || config.judge.model, "judge model")
+  if (!model) {
+    throw new Error("judge model is required; set config.judge.model or pass --model")
+  }
+  const timeoutMs = options.timeoutMs || config.judge.timeoutMs
+  const run = readJson(join(options.runDir, "run.json"))
+  const existingJudgments =
+    readJsonOr(join(options.runDir, "judgments.json"), { judgments: [] }).judgments?.filter(
+      (judgment) => judgment && typeof judgment === "object",
+    ) || []
+  const existingByJob = new Map(existingJudgments.map((judgment) => [judgment.jobKey, judgment]))
+  const judgments = []
+
+  for (const job of run.jobs || []) {
+    const jobKey = `${job.input.slug}__${slugify(job.model)}`
+    const jobDir = join(options.runDir, "jobs", jobKey)
+    if (job.status !== "completed" || !existsSync(join(jobDir, "review.md"))) {
+      judgments.push({ jobKey, status: "skipped", error: "capture did not complete" })
+      continue
+    }
+    const existing = existingByJob.get(jobKey)
+    if (!options.force && existing?.status === "completed" && existing.model === model) {
+      judgments.push(existing)
+      console.log(`skipping existing judgment ${jobKey}`)
+      continue
+    }
+    const cacheKey = judgeCacheKey({ repoRoot, model, jobDir, job })
+    if (!options.force) {
+      const cached = restoreJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, jobKey, model })
+      if (cached) {
+        judgments.push(cached)
+        console.log(`judgment cache hit ${jobKey}`)
+        continue
+      }
+    }
+    console.log(`judging ${jobKey} with ${model}`)
+    const result = await runJudge({ model, jobDir, job, timeoutMs })
+    const judgment = {
+      jobKey,
+      model,
+      status: result.status,
+      error: result.error || null,
+      ...(result.judgment || {}),
+      files: result.files,
+      cache: {
+        hit: false,
+        key: cacheKey,
+        dir: cacheEntryDir(options.cacheDir, cacheKey),
+      },
+    }
+    judgments.push(judgment)
+    writeJson(join(jobDir, "judge.json"), judgment)
+    saveJudgeCache({ cacheDir: options.cacheDir, key: cacheKey, jobDir, judgment })
+  }
+
+  writeJson(join(options.runDir, "judgments.json"), {
+    generatedAt: new Date().toISOString(),
+    judgeModel: model,
+    judgments,
+  })
+  console.log(
+    `judged ${judgments.filter((judgment) => judgment.status === "completed").length}/${judgments.length} captures`,
+  )
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.stack || error.message : String(error))
+  process.exitCode = 1
+})

@@ -11,7 +11,7 @@
     "es2024": true,
     "node": true
   },
-  "ignorePatterns": ["dist/**", "node_modules/**", "coverage/**", "eval/**"],
+  "ignorePatterns": ["dist/**", "node_modules/**", "coverage/**"],
   "rules": {
     "eslint/no-unused-vars": "error",
     "typescript/no-unused-vars": "error",
