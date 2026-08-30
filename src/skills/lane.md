@@ -53,7 +53,7 @@ A merge-affecting concern labeled `critical`, `high`, or `low` needs all of the 
 
 For behavior, include the smallest reachable reproducer and whether the changed behavior is safer, equivalent, or a regression. For structural debt, identify the concrete responsibility boundary and why keeping it entangled imposes a present ownership, comprehension, testing, or change-isolation cost.
 
-A `question` needs the exact unresolved decision, the conflicting or missing evidence, why the answer changes merge readiness, and a changed-line anchor. A `nit` needs a concrete observation in touched code, a small local improvement the author can apply, and a changed-line anchor. A `nit` does not need a failure mode because the pull request may safely merge unchanged.
+A `question` needs the exact unresolved decision, the conflicting or missing evidence, why the answer changes merge readiness, and a changed-line anchor. It resolves a known contract fork; it is not a request for the author to investigate a hypothetical mechanism the lane could not demonstrate. Put that uncertainty in the terminal assessment. A `nit` needs a concrete observation in touched code, a small local improvement the author can apply, and a changed-line anchor. A `nit` does not need a failure mode because the pull request may safely merge unchanged.
 
 The only anchorless exception is a high-confidence `critical` issue that makes the pull request fundamentally unsafe to land. A missing anchor never raises severity. If the issue would not independently justify `⛔ Block`, it is not a blocker.
 

@@ -302,6 +302,7 @@ test("the declarative tree carries Tool findings through audit, validation, synt
     assert.match(call.request.prompt, /Synthesis writes the top-level review summary/u)
     assert.match(call.request.prompt, /A `low` finding never describes itself as optional/u)
     assert.match(call.request.prompt, /A `nit` does not need a failure mode/u)
+    assert.match(call.request.prompt, /not a request for the author to investigate a hypothetical mechanism/u)
     assert.match(call.request.prompt, /material present structural cost/u)
     assert.match(call.request.prompt, /concrete responsibility boundary/u)
     assert.match(call.request.prompt, /The pull request may merge unchanged/u)
@@ -338,6 +339,16 @@ test("the declarative tree carries Tool findings through audit, validation, synt
     /generated, vendored, external, build, migration, and maintenance scripts/u
   )
   assert.match(maintainabilityCall.request.prompt, /line count alone is never a finding/u)
+  assert.match(maintainabilityCall.request.prompt, /type-only coupling, generated-file markers/u)
+
+  const codePathCall = laneCalls.find(call => laneName(call.request.prompt) === "code-path-bug-hunter")
+  assert.ok(codePathCall)
+  assert.match(codePathCall.request.prompt, /populated to empty or withheld/u)
+  assert.match(codePathCall.request.prompt, /repository-supported producer and consumer pair/u)
+
+  const documentationCall = laneCalls.find(call => laneName(call.request.prompt) === "documentation-commentary")
+  assert.ok(documentationCall)
+  assert.match(documentationCall.request.prompt, /concrete incorrect use, rollout, or operator action/u)
 
   const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
   assert.ok(audit)
@@ -352,6 +363,9 @@ test("the declarative tree carries Tool findings through audit, validation, synt
   assert.match(audit.request.prompt, /`critical` → `high` → `low` → `nit` → drop/u)
   assert.match(audit.request.prompt, /unchanged body remains author-ready at the lower severity/u)
   assert.match(audit.request.prompt, /Demote a `low` whose wording makes the action optional/u)
+  assert.match(audit.request.prompt, /merge-action counterfactual/u)
+  assert.match(audit.request.prompt, /Treat factuality and merge action separately/u)
+  assert.match(audit.request.prompt, /undocumented older or third-party compatibility/u)
   assert.match(audit.request.prompt, /An anchorless blocker can only remain `critical` or be dropped/u)
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
   assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)

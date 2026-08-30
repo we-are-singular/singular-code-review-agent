@@ -7,9 +7,24 @@ import test from "node:test"
 import { fileURLToPath } from "node:url"
 
 import { buildEvalSummary, evalRunStatus } from "../eval/lib/analysis.mjs"
+import { buildJudgePrompt } from "../eval/lib/judge-prompt.mjs"
 import { evalJobKey } from "../eval/lib/job-key.mjs"
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+
+test("judge prompt separates review quality from the pull-request verdict", () => {
+  const prompt = buildJudgePrompt({
+    repoRoot,
+    job: {
+      input: { ref: "owner/repository#42", ignoreHistory: true },
+      model: "opencode-go/deepseek-v4-flash"
+    }
+  })
+
+  assert.match(prompt, /top-level `verdict` grades the quality of that candidate review/u)
+  assert.match(prompt, /sound even if it correctly requests PR changes/u)
+  assert.match(prompt, /Independently verify every candidate finding that affects merge readiness/u)
+})
 
 test("legacy run completion requires a terminal job for every matrix cell", () => {
   const run = {

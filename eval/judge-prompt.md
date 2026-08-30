@@ -4,6 +4,8 @@ Use the PR target, candidate review, candidate transcript, deterministic
 heuristic result, and reviewed diff. Judge whether the review is useful to the
 PR author and maintainers.
 
+The candidate review owns the pull request's merge decision. Your top-level `verdict` grades the quality of that candidate review: use `lgtm` when the review is sound even if it correctly requests PR changes, and use `request_changes` when the review itself has a material flaw. Never mirror the candidate's PR verdict mechanically.
+
 Score each rubric question from 0 to 10:
 
 - 10 means exceptional, with no meaningful improvement supported by the
@@ -19,6 +21,8 @@ score. Reward grounded, actionable, concise review output. Penalize internal
 leakage, process prose, vague praise, unsupported claims, duplicated inline
 details, weak merge guidance, stale PR-history references, or overconfident
 conclusions.
+
+Independently verify every candidate finding that affects merge readiness. When the candidate's only basis for Request changes or Block is invalid, speculative, pre-existing, resolved, duplicated, or actually nit-level, treat its merge decision as a material review-quality failure and score verdict quality, severity prioritization, and hallucination control accordingly.
 
 Use Singular Code Review's verdict contract when judging calibration:
 `critical` maps to Block; `high`, `low`, and unresolved `question` map to
