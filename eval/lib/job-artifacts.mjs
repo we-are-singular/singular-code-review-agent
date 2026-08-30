@@ -6,6 +6,7 @@ const REQUIRED_ARTIFACTS = [
   "review_transcript.md",
   "review_comments.json",
   "review_stats.json",
+  "provider_completions.jsonl",
   "artifacts/pr.diff",
   "artifacts/review_model_context.json",
 ]
@@ -22,6 +23,26 @@ export function canonicalJobArtifacts(jobDir) {
   try {
     JSON.parse(readFileSync(join(jobDir, "review_comments.json"), "utf8"))
     JSON.parse(readFileSync(join(jobDir, "review_stats.json"), "utf8"))
+    const completions = readFileSync(join(jobDir, "provider_completions.jsonl"), "utf8")
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+    if (
+      completions.length === 0 ||
+      completions.some(
+        completion =>
+          !completion ||
+          typeof completion !== "object" ||
+          typeof completion.runId !== "string" ||
+          !completion.runId ||
+          typeof completion.sessionId !== "string" ||
+          !completion.sessionId ||
+          typeof completion.stopReason !== "string" ||
+          !completion.stopReason
+      )
+    ) {
+      return false
+    }
     return true
   } catch {
     return false

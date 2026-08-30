@@ -11,10 +11,17 @@ export type ReviewUsage = {
   costUsd: number | null
 }
 
+export type ReviewProviderCompletion = {
+  runId: string
+  sessionId: string
+  stopReason: string
+}
+
 /** Collects content-free AML summaries and provider-optional usage per evaluation. */
 export class ReviewTelemetryCollector {
   readonly #collector = createTraceSummaryCollector()
   readonly #completed: TraceSummary[] = []
+  readonly #providerCompletions: ReviewProviderCompletion[] = []
 
   readonly trace: TraceSink
 
@@ -32,6 +39,19 @@ export class ReviewTelemetryCollector {
   /** Captures a summary only after AML has closed the complete evaluation span. */
   #record(event: AmlTraceEvent): void {
     this.#collector.trace(event)
+    if (event.type === "event" && event.name === "acp.session.prompt.completed") {
+      const sessionId = event.attributes.sessionId
+      const stopReason = event.attributes.stopReason
+      if (typeof sessionId === "string" && sessionId && typeof stopReason === "string" && stopReason) {
+        this.#providerCompletions.push(
+          Object.freeze({
+            runId: event.runId,
+            sessionId,
+            stopReason
+          })
+        )
+      }
+    }
     if (event.type !== "span.end" || event.kind !== "evaluation") {
       return
     }
@@ -51,6 +71,11 @@ export class ReviewTelemetryCollector {
   /** Returns immutable, content-free summaries in evaluation completion order. */
   summaries(): readonly TraceSummary[] {
     return Object.freeze([...this.#completed])
+  }
+
+  /** Preserves content-free ACP completion evidence in provider event order. */
+  providerCompletions(): readonly ReviewProviderCompletion[] {
+    return Object.freeze([...this.#providerCompletions])
   }
 
   /** ACP usage is optional, so absence remains null instead of becoming zero. */

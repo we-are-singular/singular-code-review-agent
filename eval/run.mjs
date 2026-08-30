@@ -44,6 +44,7 @@ const EXTRACTED_ARTIFACTS = [
   "review_transcript.md",
   "review_comments.json",
   "review_stats.json",
+  "provider_completions.jsonl",
   "docker.stdout.log",
   "docker.stderr.log",
 ]
@@ -199,6 +200,7 @@ function jobFiles(jobDir) {
     transcript: existsSync(join(jobDir, "review_transcript.md")) ? join(jobDir, "review_transcript.md") : "",
     comments: existsSync(join(jobDir, "review_comments.json")) ? join(jobDir, "review_comments.json") : "",
     stats: existsSync(join(jobDir, "review_stats.json")) ? join(jobDir, "review_stats.json") : "",
+    providerCompletions: existsSync(join(jobDir, "provider_completions.jsonl")) ? join(jobDir, "provider_completions.jsonl") : "",
     stdout: existsSync(join(jobDir, "docker.stdout.log")) ? join(jobDir, "docker.stdout.log") : "",
     stderr: existsSync(join(jobDir, "docker.stderr.log")) ? join(jobDir, "docker.stderr.log") : ""
   }

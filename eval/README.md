@@ -63,6 +63,7 @@ The capture builds the current Dockerfile, prepares the exact pull-request check
 - review.md;
 - review_comments.json;
 - review_stats.json;
+- provider_completions.jsonl with content-free ACP run, session, model, and stop-reason evidence;
 - review_transcript.md.
 
 The eval boundary also preserves the exact filtered diff and normalized PR context supplied to the judge. Those artifacts are observability and scoring inputs, not production workflow state.

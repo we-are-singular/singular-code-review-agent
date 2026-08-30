@@ -1,6 +1,6 @@
 import { sha256Json, sha256Text } from "./cache.mjs";
 
-export const REVIEW_CACHE_VERSION = 16;
+export const REVIEW_CACHE_VERSION = 17;
 
 export function reviewCacheKey({ runner = "src", provider, model, reviewerImageId, input, context, diffText }) {
   return sha256Json({

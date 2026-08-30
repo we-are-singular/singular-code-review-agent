@@ -147,6 +147,7 @@ export async function runReview(
     durationMs: Date.now() - started,
     usage: telemetry.usage(),
     traceSummaries: telemetry.summaries(),
+    providerCompletions: telemetry.providerCompletions(),
     publication: actions.receipts(),
     publicationStatus: selected.publicationError ? "failed" : "completed",
     publicationError: selected.publicationError

@@ -17,9 +17,28 @@ function spanEnd(runId, overrides) {
   }
 }
 
+function event(runId, name, attributes) {
+  return {
+    type: "event",
+    runId,
+    spanId: "agent-turn",
+    sequence: 1,
+    timestamp: Date.now(),
+    name,
+    attributes
+  }
+}
+
 test("review telemetry derives usage and summaries from completed AML evaluations", () => {
   const telemetry = new ReviewTelemetryCollector()
   const runId = "review-run"
+  telemetry.trace(
+    event(runId, "acp.session.prompt.completed", {
+      sessionId: "session-1",
+      stopReason: "end_turn",
+      usage: JSON.stringify({ totalTokens: 208 })
+    })
+  )
   telemetry.trace(
     spanEnd(runId, {
       kind: "agent",
@@ -52,4 +71,19 @@ test("review telemetry derives usage and summaries from completed AML evaluation
   })
   assert.equal(telemetry.summaries().length, 1)
   assert.equal(telemetry.summaries()[0].applicationSpans["review.audit"].totalDurationMs, 7)
+  assert.deepEqual(telemetry.providerCompletions(), [
+    {
+      runId,
+      sessionId: "session-1",
+      stopReason: "end_turn"
+    }
+  ])
+})
+
+test("review telemetry ignores incomplete provider completion events", () => {
+  const telemetry = new ReviewTelemetryCollector()
+  telemetry.trace(event("review-run", "acp.session.prompt.completed", { sessionId: "session-1" }))
+  telemetry.trace(event("review-run", "unrelated", { sessionId: "session-2", stopReason: "end_turn" }))
+
+  assert.deepEqual(telemetry.providerCompletions(), [])
 })

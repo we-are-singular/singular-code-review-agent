@@ -85,10 +85,18 @@ test("completed capture reuse requires a valid result and every canonical artifa
     "review_transcript.md",
     "review_comments.json",
     "review_stats.json",
+    "provider_completions.jsonl",
     "artifacts/pr.diff",
     "artifacts/review_model_context.json"
   ]) {
-    writeFileSync(join(directory, file), file.endsWith(".json") ? "{}" : "ok")
+    writeFileSync(
+      join(directory, file),
+      file === "provider_completions.jsonl"
+        ? '{"runId":"run-1","sessionId":"session-1","stopReason":"end_turn"}\n'
+        : file.endsWith(".json")
+          ? "{}"
+          : "ok"
+    )
   }
   writeFileSync(join(directory, "result.json"), JSON.stringify({ status: "completed" }))
   assert.equal(completedJobArtifacts(directory), true)
@@ -105,13 +113,40 @@ test("canonical capture artifacts reject malformed required JSON", () => {
     "review_transcript.md",
     "review_comments.json",
     "review_stats.json",
+    "provider_completions.jsonl",
+    "artifacts/pr.diff",
+    "artifacts/review_model_context.json"
+  ]) {
+    writeFileSync(
+      join(directory, file),
+      file === "provider_completions.jsonl"
+        ? '{"runId":"run-1","sessionId":"session-1","stopReason":"end_turn"}\n'
+        : file.endsWith(".json")
+          ? "{}"
+          : "ok"
+    )
+  }
+  writeFileSync(join(directory, "result.json"), JSON.stringify({ status: "completed" }))
+  writeFileSync(join(directory, "review_stats.json"), "malformed")
+  assert.equal(completedJobArtifacts(directory), false)
+})
+
+test("canonical capture artifacts require provider completion evidence", () => {
+  const directory = mkdtempSync(join(tmpdir(), "singular-eval-provider-completions-"))
+  mkdirSync(join(directory, "artifacts"))
+  for (const file of [
+    "review.md",
+    "review_transcript.md",
+    "review_comments.json",
+    "review_stats.json",
+    "provider_completions.jsonl",
     "artifacts/pr.diff",
     "artifacts/review_model_context.json"
   ]) {
     writeFileSync(join(directory, file), file.endsWith(".json") ? "{}" : "ok")
   }
   writeFileSync(join(directory, "result.json"), JSON.stringify({ status: "completed" }))
-  writeFileSync(join(directory, "review_stats.json"), "malformed")
+
   assert.equal(completedJobArtifacts(directory), false)
 })
 

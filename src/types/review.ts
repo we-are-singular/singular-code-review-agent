@@ -14,7 +14,7 @@ import type { LaneAssessment, ValidatedReviewQueue } from "../lib/review-queue.j
 import type { AuditedReview } from "../components/phases/review-audit.js"
 import type { ReviewGateResult } from "../components/phases/review-gate.js"
 import type { GitHubActionReceipt } from "../services/github-actions.js"
-import type { ReviewUsage } from "../lib/review-telemetry.js"
+import type { ReviewProviderCompletion, ReviewUsage } from "../lib/review-telemetry.js"
 
 /**
  * Contracts carried between the CLI, deterministic snapshot, AML phases, and
@@ -136,6 +136,7 @@ type ReviewRunMetadata = {
   attempts: ReviewAttempt[]
   usage: ReviewUsage
   traceSummaries: readonly TraceSummary[]
+  providerCompletions: readonly ReviewProviderCompletion[]
   publication: GitHubActionReceipt[]
   publicationStatus: "completed" | "failed"
   publicationError: string | null

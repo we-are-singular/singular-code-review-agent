@@ -116,6 +116,7 @@ function stats(result, generatedAt, runtimeDir) {
     runtimeDir,
     phases: phases(result),
     attempts: result.attempts,
+    providerCompletions: result.providerCompletions || [],
     traceSummaries: result.traceSummaries || [],
     totals: {
       durationMs: result.durationMs,
@@ -215,12 +216,20 @@ export function writeReviewArtifacts(result, outputDir, generatedAt = result.gen
     review: join(outputDir, "review.md"),
     comments: join(outputDir, "review_comments.json"),
     stats: join(outputDir, "review_stats.json"),
-    transcript: join(outputDir, "review_transcript.md")
+    transcript: join(outputDir, "review_transcript.md"),
+    providerCompletions: join(outputDir, "provider_completions.jsonl")
   }
   writeFileSync(files.review, reviewMarkdown(result, commentExport), { mode: 0o600 })
   writeFileSync(files.comments, json(commentExport), { mode: 0o600 })
   writeFileSync(files.stats, json(stats(result, generatedAt, outputDir)), { mode: 0o600 })
   writeFileSync(files.transcript, transcript(result, commentExport, generatedAt), { mode: 0o600 })
+  writeFileSync(
+    files.providerCompletions,
+    (result.providerCompletions || [])
+      .map(completion => JSON.stringify({ ...completion, provider: result.provider, model: result.model }))
+      .join("\n") + "\n",
+    { mode: 0o600 }
+  )
   return { paths: files, comments: commentExport }
 }
 

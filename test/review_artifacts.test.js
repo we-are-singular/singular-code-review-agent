@@ -50,17 +50,30 @@ function result() {
         runId: "review-run"
       }
     ],
+    providerCompletions: [
+      {
+        runId: "review-run",
+        sessionId: "session-1",
+        stopReason: "end_turn"
+      }
+    ],
     publication: [],
     publicationStatus: "completed",
     publicationError: null
   }
 }
 
-test("eval adapter writes four canonical artifacts from one in-memory result", () => {
+test("eval adapter writes canonical artifacts from one in-memory result", () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "aml-artifacts-"))
   const exported = writeReviewArtifacts(result(), outputDir, "2026-08-23T00:00:00.000Z")
 
-  assert.deepEqual(Object.keys(exported.paths).sort(), ["comments", "review", "stats", "transcript"])
+  assert.deepEqual(Object.keys(exported.paths).sort(), [
+    "comments",
+    "providerCompletions",
+    "review",
+    "stats",
+    "transcript"
+  ])
   assert.equal(fs.readFileSync(exported.paths.review, "utf8").includes("Request changes"), true)
   assert.deepEqual(JSON.parse(fs.readFileSync(exported.paths.comments, "utf8")).replies, [
     { kind: "reply", to: 123, body: "This still applies." }
@@ -76,6 +89,16 @@ test("eval adapter writes four canonical artifacts from one in-memory result", (
     stats.traceSummaries.map(summary => summary.runId),
     ["review-run"]
   )
+  assert.deepEqual(stats.providerCompletions, result().providerCompletions)
+  assert.deepEqual(fs.readFileSync(exported.paths.providerCompletions, "utf8").trim().split("\n").map(JSON.parse), [
+    {
+      runId: "review-run",
+      sessionId: "session-1",
+      stopReason: "end_turn",
+      provider: "opencode",
+      model: "test-model"
+    }
+  ])
   assert.match(fs.readFileSync(exported.paths.transcript, "utf8"), /Specialist Output/u)
   assert.equal(
     fs.readdirSync(outputDir).some(file => file.includes(".tmp-")),

@@ -110,6 +110,7 @@ function copyReviewArtifacts({ entryDir, runDir, job }) {
     "review_transcript.md": artifactPath(runDir, job.files?.transcript) || join(jobDir, "review_transcript.md"),
     "review_comments.json": artifactPath(runDir, job.files?.comments) || join(jobDir, "review_comments.json"),
     "review_stats.json": artifactPath(runDir, job.files?.stats) || join(jobDir, "review_stats.json"),
+    "provider_completions.jsonl": artifactPath(runDir, job.files?.providerCompletions) || join(jobDir, "provider_completions.jsonl"),
     "docker.stdout.log": artifactPath(runDir, job.files?.stdout) || join(jobDir, "docker.stdout.log"),
     "docker.stderr.log": artifactPath(runDir, job.files?.stderr) || join(jobDir, "docker.stderr.log"),
   };
@@ -129,13 +130,16 @@ function seedReviewCache({ runDir, run, job, cacheDir, force }) {
   const reviewFile = artifactPath(runDir, job.files?.review) || join(jobDir, "review.md");
   const commentsFile = artifactPath(runDir, job.files?.comments) || join(jobDir, "review_comments.json");
   const statsFile = artifactPath(runDir, job.files?.stats) || join(jobDir, "review_stats.json");
+  const providerCompletionsFile =
+    artifactPath(runDir, job.files?.providerCompletions) || join(jobDir, "provider_completions.jsonl");
   if (
     job.status !== "completed" ||
     !existsSync(contextFile) ||
     !existsSync(diffFile) ||
     !existsSync(reviewFile) ||
     !existsSync(commentsFile) ||
-    !existsSync(statsFile)
+    !existsSync(statsFile) ||
+    !existsSync(providerCompletionsFile)
   ) {
     return "skipped";
   }
