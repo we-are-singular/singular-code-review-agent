@@ -6,6 +6,7 @@ export default {
   // Hard stuck-provider ceiling; targetDurationMs above remains advisory.
   reviewTimeoutMs: 1_800_000,
   keepScratch: false,
+  provider: "opencode",
   // Provider comparisons remain opt-in CLI runs so the committed matrix stays
   // a small, predictable low-cost baseline.
   models: ["opencode-go/deepseek-v4-flash"],

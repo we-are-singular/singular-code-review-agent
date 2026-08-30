@@ -7,11 +7,7 @@ import test from "node:test"
 import { evalJobKey } from "../eval/lib/job-key.mjs"
 import { normalizeEvalModel } from "../eval/lib/models.mjs"
 import { reviewCacheKey } from "../eval/lib/review-cache-key.mjs"
-import {
-  normalizeAmlReviewProvider,
-  normalizeReviewRunner,
-  reviewerContainerConfig
-} from "../eval/lib/reviewer-runner.mjs"
+import { normalizeReviewProvider, reviewerContainerConfig } from "../eval/lib/reviewer-runner.mjs"
 import {
   isOrphanedEvalContainer,
   runProcess,
@@ -26,7 +22,9 @@ const input = {
   repository: "owner/repository",
   number: 42,
   ref: "owner/repository#42",
-  ignoreHistory: true
+  ignoreHistory: true,
+  baseSha: "1111111111111111111111111111111111111111",
+  headSha: "2222222222222222222222222222222222222222"
 }
 
 test("review process settles at the timeout even when the child ignores SIGTERM", async () => {
@@ -123,8 +121,7 @@ test("bare eval model names use the selected provider namespace", () => {
   assert.equal(normalizeEvalModel("gpt-5.6-luna", "model", ""), "gpt-5.6-luna")
 })
 
-test("eval job identity separates source and AML captures", () => {
-  const source = evalJobKey({ runner: "src", model: "opencode-go/deepseek-v4-flash", input })
+test("eval job identity separates provider captures", () => {
   const opencode = evalJobKey({
     runner: "aml",
     provider: "opencode",
@@ -133,19 +130,20 @@ test("eval job identity separates source and AML captures", () => {
   })
   const codex = evalJobKey({ runner: "aml", provider: "codex", model: "gpt-5.6-luna", input })
 
-  assert.notEqual(source, opencode)
   assert.match(opencode, /^aml-opencode__/)
   assert.match(codex, /^aml-codex__/)
   assert.notEqual(opencode, codex)
 })
 
 test("append reuse requires identical review-context semantics", () => {
-  const captured = { runner: "src", model: "opencode-go/deepseek-v4-flash", input }
+  const captured = { runner: "aml", provider: "opencode", model: "opencode-go/deepseek-v4-flash", input }
 
   assert.equal(sameCaptureJob(captured, structuredClone(captured)), true)
   assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, ignoreHistory: false } }), false)
   assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, notes: "focus on rollout" } }), false)
   assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, label: "migration" } }), false)
+  assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, headSha: null } }), false)
+  assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, headSha: "3".repeat(40) } }), false)
 })
 
 test("append reuse requires immutable image identity for completed legacy jobs", () => {
@@ -177,28 +175,16 @@ test("append reuse requires immutable image identity for completed legacy jobs",
   )
 })
 
-test("eval reviewer selection maps to the packaged executable and AML CLI environment", () => {
-  assert.equal(normalizeReviewRunner(undefined), "src")
-  assert.throws(() => normalizeReviewRunner("unknown"), /must be src or aml/)
-  assert.equal(normalizeAmlReviewProvider(undefined), "opencode")
-  assert.equal(normalizeAmlReviewProvider("codex"), "codex")
-  assert.throws(() => normalizeAmlReviewProvider("pi"), /must be opencode or codex/)
+test("eval reviewer selection maps both providers to the production executable", () => {
+  assert.equal(normalizeReviewProvider(undefined), "opencode")
+  assert.equal(normalizeReviewProvider("codex"), "codex")
+  assert.throws(() => normalizeReviewProvider("pi"), /must be opencode or codex/)
 
-  assert.deepEqual(reviewerContainerConfig({ runner: "src", model: "opencode-go/deepseek-v4-flash" }), {
+  assert.deepEqual(reviewerContainerConfig({ model: "opencode-go/deepseek-v4-flash" }), {
     command: "/usr/local/bin/review_runner",
     environment: {
-      OPENCODE_MODEL: "opencode-go/deepseek-v4-flash",
-      OPENCODE_MODEL_FALLBACK: "opencode-go/deepseek-v4-flash"
-    },
-    inheritedEnvironment: ["OPENCODE_API_KEY", "OPENROUTER_API_KEY"],
-    requiredEnvironment: [],
-    usesOpenCodeAuth: true
-  })
-  assert.deepEqual(reviewerContainerConfig({ runner: "aml", model: "opencode-go/deepseek-v4-flash" }), {
-    command: "/usr/local/bin/aml_review",
-    environment: {
-      AML_REVIEW_PROVIDER: "opencode",
-      AML_REVIEW_MODEL: "opencode-go/deepseek-v4-flash"
+      REVIEW_PROVIDER: "opencode",
+      REVIEW_MODEL: "opencode-go/deepseek-v4-flash"
     },
     inheritedEnvironment: [
       "ANTHROPIC_API_KEY",
@@ -212,19 +198,19 @@ test("eval reviewer selection maps to the packaged executable and AML CLI enviro
     usesOpenCodeAuth: true
   })
 
-  const codex = reviewerContainerConfig({ runner: "aml", provider: "codex", model: "gpt-5.6-luna" })
+  const codex = reviewerContainerConfig({ provider: "codex", model: "gpt-5.6-luna" })
   assert.deepEqual(codex, {
-    command: "/usr/local/bin/aml_review",
+    command: "/usr/local/bin/review_runner",
     environment: {
-      AML_CODEX_HOME: "/tmp/.singular-code-review/eval-runtime/codex-home",
-      AML_REVIEW_PROVIDER: "codex",
-      AML_REVIEW_MODEL: "gpt-5.6-luna"
+      REVIEW_CODEX_HOME: "/tmp/.singular-code-review/eval-runtime/codex-home",
+      REVIEW_PROVIDER: "codex",
+      REVIEW_MODEL: "gpt-5.6-luna"
     },
     inheritedEnvironment: ["CONTEXT7_API_KEY"],
     requiredEnvironment: [],
     requiresCodexAuth: true
   })
-  assert.equal(codex.environment.AML_REVIEW_MODEL, "gpt-5.6-luna")
+  assert.equal(codex.environment.REVIEW_MODEL, "gpt-5.6-luna")
   assert.equal(codex.inheritedEnvironment.includes("Z_AI_API_KEY"), false)
   assert.equal(codex.inheritedEnvironment.includes("OPENCODE_API_KEY"), false)
   assert.equal(codex.inheritedEnvironment.includes("OPENAI_API_KEY"), false)

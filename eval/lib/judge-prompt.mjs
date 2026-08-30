@@ -13,7 +13,7 @@ Attached files:
 - review_comments.json: canonical dry-run comment export
 - review_stats.json: canonical phase, attempt, token, and cost telemetry
 - review_transcript.md: canonical gate, specialist, audit, validation, and publication transcript
-- source-runner queue, validation, and opencode files may also be attached when that implementation produces them
+- historical captures may include additional implementation diagnostics
 
 Rubric questions:
 

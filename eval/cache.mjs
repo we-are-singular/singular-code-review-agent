@@ -7,7 +7,9 @@ import { evalJobKey } from "./lib/job-key.mjs";
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const RUNTIME_ARTIFACTS = [
+// Cache seeding remains able to import pre-migration runs so the historical
+// source-versus-AML benchmark does not disappear with the production runner.
+const HISTORICAL_RUNTIME_ARTIFACTS = [
   "review_payload.json",
   "review_validated.json",
   "review_validation_context.json",
@@ -114,7 +116,7 @@ function copyReviewArtifacts({ entryDir, runDir, job }) {
   for (const [target, source] of Object.entries(artifacts)) {
     copyExistingFile(source, join(entryDir, target));
   }
-  for (const file of RUNTIME_ARTIFACTS) {
+  for (const file of HISTORICAL_RUNTIME_ARTIFACTS) {
     copyExistingFile(join(jobDir, "artifacts", file), join(entryDir, "artifacts", file));
   }
 }

@@ -22,10 +22,15 @@ conclusions.
 
 Use Singular Code Review's verdict contract when judging calibration:
 `critical` maps to Block; `high`, `low`, and unresolved `question` map to
-Request changes; only `hint`, `nit`, or no findings map to LGTM. Do not call a
-supported `low` finding nonblocking merely because its label sounds mild;
-instead judge whether the finding itself is severe and grounded enough to
-justify fixing before merge.
+Request changes; only `nit` or no findings map to LGTM. A `low` recommends
+fixing the concern before merge even though a human may accept it with a reason;
+its own wording must not call the action optional or say the pull request may
+merge unchanged. A `nit` is explicitly safe to leave unchanged.
+Material structural debt introduced by the pull request can justify `low` when
+the review identifies its present cost and a concrete responsibility boundary;
+file size alone cannot.
+Treat `hint` in a legacy captured review as equivalent to `nit`; the current
+reviewer cannot emit it.
 
 When a rubric surface is genuinely not implicated by the diff, score highly if
 the reviewer correctly avoids invented work. Do not deduct points merely

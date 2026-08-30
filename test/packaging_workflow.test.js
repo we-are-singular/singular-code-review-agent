@@ -6,142 +6,67 @@ import { fileURLToPath } from "node:url"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
-test("Dockerfile builds and packages the TypeScript runner surface", () => {
+test("Dockerfile packages only the canonical AML-backed reviewer surface", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8")
+  const evalRunner = fs.readFileSync(path.join(repoRoot, "eval", "run.mjs"), "utf8")
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"))
 
   assert.match(
     dockerfile,
-    /^ARG BASE_IMAGE=docker\.io\/wearesingular\/aml-agent-sandbox@sha256:5b9724161e815b67d2bde72f9157d651b763c1b39e535b287bede8d90a874f9f$/m
+    /^ARG BASE_IMAGE=docker\.io\/wearesingular\/aml-agent-sandbox:0\.3\.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2$/m
   )
   assert.match(dockerfile, /^FROM \$\{BASE_IMAGE\} AS review-build$/m)
+  assert.match(
+    evalRunner,
+    /docker\.io\/wearesingular\/aml-agent-sandbox:0\.3\.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2/u
+  )
   assert.match(dockerfile, /^ARG CONTEXT7_MCP_VERSION=3\.2\.4$/m)
-  assert.match(dockerfile, /\bbuild-essential\b/)
-  assert.match(dockerfile, /apt-get install[\s\S]*\bgh\b/)
-  assert.match(dockerfile, /npm ci --include=dev/)
+  assert.match(dockerfile, /COPY package\.json package-lock\.json tsconfig\.json \.[/]/)
+  assert.match(dockerfile, /COPY src\/ \.\/src\//)
+  assert.doesNotMatch(dockerfile, /COPY aml\/|COPY opencode\/|tsconfig\.aml/u)
+  assert.doesNotMatch(dockerfile, /\bbuild-essential\b/u)
+  assert.match(dockerfile, /HUSKY=0 npm ci --include=dev/)
   assert.match(dockerfile, /npm run build/)
   assert.match(dockerfile, /npm prune --omit=dev/)
-  assert.doesNotMatch(dockerfile, /\/node_modules\/@aml-jsx\/sdk\/package\.json/u)
-  assert.doesNotMatch(dockerfile, /typeof sdk\.Parallel/u)
-  assert.doesNotMatch(dockerfile, /npm uninstall/u)
-  assert.doesNotMatch(dockerfile, /rm -rf node_modules\/@aml-jsx\/sdk/u)
-  assert.match(dockerfile, /COPY --from=review-build \/opt\/singular-code-review\//)
-  assert.match(dockerfile, /COPY package\.json package-lock\.json tsconfig\.json tsconfig\.aml\.json \.\//)
-  assert.match(dockerfile, /COPY aml\/ \.\/aml\//)
-  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"))
-  assert.equal(packageJson.dependencies["@aml-jsx/sdk"], "0.7.1")
-  assert.equal(Object.hasOwn(packageJson.dependencies, "@earendil-works/pi-coding-agent"), false)
-  assert.equal(Object.hasOwn(packageJson.dependencies, "pi-acp"), false)
-  assert.equal(Object.hasOwn(packageJson.dependencies, "pi-mcp-adapter"), false)
-  assert.doesNotMatch(dockerfile, /NODE_VERSION|NPM_VERSION|nodejs\.org\/dist/)
-  const runtimeStage = dockerfile.split(/^FROM \$\{BASE_IMAGE\}$/m)[1]
-  assert.ok(runtimeStage)
-  assert.doesNotMatch(runtimeStage, /\bbuild-essential\b/)
-  assert.match(runtimeStage, /apt-get purge -y --auto-remove gnupg/)
+  assert.match(dockerfile, /npm install -g @upstash\/context7-mcp@\$\{CONTEXT7_MCP_VERSION\}/)
+  assert.match(dockerfile, /^ARG SKILLS_CLI_VERSION=1\.5\.23$/m)
+  assert.match(dockerfile, /--skill backend-architecture frontend-architecture/)
+  assert.doesNotMatch(dockerfile, /apt-get|\bgh\b/u)
+  assert.match(
+    dockerfile,
+    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review\.js \/usr\/local\/bin\/review_runner/
+  )
+  assert.match(
+    dockerfile,
+    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/preflight\.js \/usr\/local\/bin\/review_preflight/
+  )
+  assert.doesNotMatch(
+    dockerfile,
+    /review_dry_run|aml_review|review_ack|review_comments|review_context|review_extract|review_guard/u
+  )
   assert.match(dockerfile, /USER aml\s*\nCMD/)
-  assert.match(dockerfile, /\/usr\/local\/lib\/singular-code-review/)
-  assert.match(dockerfile, /review_runner/)
-  assert.match(dockerfile, /review_extract/)
-  assert.match(
-    dockerfile,
-    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-runner\.js \/usr\/local\/bin\/review_runner/
-  )
-  assert.match(
-    dockerfile,
-    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/cli\/review-extract\.js \/usr\/local\/bin\/review_extract/
-  )
-  assert.match(
-    dockerfile,
-    /ln -sf \/usr\/local\/lib\/singular-code-review\/dist\/aml\/cli\.js \/usr\/local\/bin\/aml_review/
-  )
-  assert.match(dockerfile, /COPY opencode\/agents\/ \/usr\/local\/share\/singular-code-review\/agents\//)
-  assert.match(dockerfile, /COPY opencode\/skills\/ \/usr\/local\/share\/singular-code-review\/skills\//)
-  assert.match(dockerfile, /provision\.sh/)
-  assert.doesNotMatch(dockerfile, /COPY opencode\/AGENTS\.md/)
-  assert.doesNotMatch(dockerfile, /COPY bin\/review_runner/)
-  assert.doesNotMatch(dockerfile, /review_orchestrator/)
-  assert.doesNotMatch(dockerfile, /opencode_step/)
-  assert.doesNotMatch(dockerfile, /lib\/review-tools/)
+  assert.equal(packageJson.dependencies["@aml-jsx/sdk"], "0.7.1")
+  assert.deepEqual(Object.keys(packageJson.bin).sort(), ["review_preflight", "review_runner"])
 })
 
-test("OpenCode config defines reviewer and auditor agents with scoped permissions", () => {
-  const config = JSON.parse(fs.readFileSync(path.join(repoRoot, "opencode", "opencode.json"), "utf8"))
-
-  assert.deepEqual(config.permission.edit, {
-    "*": "deny",
-    "/tmp/.singular-code-review/**": "allow"
-  })
-  assert.deepEqual(config.permission.read, {
-    "*": "allow",
-    "*.env": "allow",
-    "*.env.test": "allow"
-  })
-  assert.deepEqual(config.permission.external_directory, {
-    "*": "deny",
-    "/tmp/.singular-code-review/**": "allow"
-  })
-  assert.equal(config.default_agent, "reviewer")
-  assert.equal(config.agent.reviewer.prompt, "{file:./agents/reviewer.md}")
-  assert.equal(Object.hasOwn(config.agent.reviewer, "permission"), false)
-  assert.equal(config.agent.gate.model, "{env:OPENCODE_GATE_MODEL}")
-  assert.equal(config.agent.gate.prompt, "{file:./agents/gate.md}")
-  assert.equal(config.agent.auditor.prompt, "{file:./agents/auditor.md}")
-  assert.deepEqual(config.agent.gate.permission, {
-    edit: "deny",
-    bash: "deny",
-    webfetch: "deny"
-  })
-  assert.deepEqual(config.agent.auditor.permission, {
-    bash: "deny",
-    webfetch: "deny"
-  })
-  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "reviewer.md")), true)
-  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "gate.md")), true)
-  assert.equal(fs.existsSync(path.join(repoRoot, "opencode", "agents", "auditor.md")), true)
-
-  const reviewerAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "reviewer.md"), "utf8")
-  assert.match(reviewerAgent, /use repository-relative paths without a leading slash/u)
-  assert.match(reviewerAgent, /filesystem root to OpenCode/u)
-  assert.match(reviewerAgent, /`\/tmp\/\.singular-code-review` only for temporary files/u)
-
-  const auditorAgent = fs.readFileSync(path.join(repoRoot, "opencode", "agents", "auditor.md"), "utf8")
-  assert.match(auditorAgent, /Sandbox diagnostics:/)
-  assert.match(auditorAgent, /denials usually mean the sandbox worked/u)
-  assert.match(reviewerAgent, /bold, lower-case review flag/u)
-  assert.match(reviewerAgent, /`critical` to `⛔ Block`/u)
-  assert.match(reviewerAgent, /`high`, `low`, or `question` to `⚠️ Request changes`/u)
-  assert.match(reviewerAgent, /exclusively `hint`\/`nit` findings to `✅ LGTM`/u)
-
-  const reviewSkill = fs.readFileSync(
-    path.join(repoRoot, "opencode", "skills", "singular-code-review", "SKILL.md"),
-    "utf8"
-  )
-  assert.match(reviewSkill, /spawn every review lane.*in one assistant turn/u)
-  assert.match(reviewSkill, /run the same lanes sequentially and keep their notes separated before synthesis/u)
-  assert.match(reviewSkill, /documentation-commentary/u)
-})
-
-test("example trigger workflow runs gate-capable reviews on new pull request heads", () => {
+test("example trigger workflow reviews new heads and trusted mentions", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, "examples", "singular-code-review.yml"), "utf8")
 
   assert.match(workflow, /pull_request:\s*\n\s*types: \[opened, ready_for_review, synchronize\]/)
-  assert.doesNotMatch(workflow, /\breopened\b/)
   assert.match(workflow, /issue_comment:\s*\n\s*types: \[created\]/)
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/)
   assert.match(workflow, /contains\(github\.event\.comment\.body, '@singular-code-review'\)/)
   assert.match(workflow, /github\.event\.comment\.user\.type != 'Bot'/)
+  assert.match(workflow, /github\.event\.comment\.user\.login == github\.event\.issue\.user\.login/)
   assert.match(
     workflow,
     /concurrency:\s*\n\s+group: singular-code-review-\$\{\{ github\.event\.issue\.number \|\| github\.event\.pull_request\.number \|\| github\.event\.inputs\.pr_number \}\}/
   )
-  assert.doesNotMatch(workflow, /"CONTRIBUTOR"/)
 })
 
-test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
+test("publish workflow validates and builds the same reviewer image", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "publish-image.yml"), "utf8")
 
-  assert.doesNotMatch(workflow, /AML_SANDBOX_REVISION|\.aml-sandbox-source/u)
-  assert.doesNotMatch(workflow, /use-local-aml-sdk|build-local-aml-base/u)
-  assert.doesNotMatch(workflow, /build-args: BASE_IMAGE|driver: docker/u)
   assert.match(workflow, /uses: actions\/checkout@v7/)
   assert.match(workflow, /uses: actions\/setup-node@v7/)
   assert.match(workflow, /node-version: 26/)
@@ -149,56 +74,30 @@ test("publish workflow uses Node 26 and Node 24-backed action runtimes", () => {
   assert.match(workflow, /uses: docker\/login-action@v4/)
   assert.match(workflow, /uses: docker\/metadata-action@v6/)
   assert.match(workflow, /uses: docker\/build-push-action@v7/)
-  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v4/)
-  assert.doesNotMatch(workflow, /uses: docker\/(?:setup-buildx-action|login-action)@v3/)
-  assert.doesNotMatch(workflow, /uses: docker\/metadata-action@v5/)
-  assert.doesNotMatch(workflow, /uses: docker\/build-push-action@v6/)
+  assert.doesNotMatch(workflow, /use-local-aml-sdk|build-local-aml-base|AML_SANDBOX_REVISION/u)
 })
 
-test("published AML releases replace the temporary source-overlay path", () => {
-  assert.equal(fs.existsSync(path.join(repoRoot, "aml", "Dockerfile.local-base")), false)
-  assert.equal(fs.existsSync(path.join(repoRoot, "scripts", "build-local-aml-base.sh")), false)
-  assert.equal(fs.existsSync(path.join(repoRoot, "scripts", "use-local-aml-sdk.sh")), false)
-})
-
-test("reusable workflow runs guard, ack, provisioning, and the new runner", () => {
+test("reusable workflow preflights once and publishes through the production review tree", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review.yml"), "utf8")
 
   assert.match(workflow, /uses: actions\/create-github-app-token@v3/)
   assert.match(workflow, /uses: actions\/checkout@v7/)
-  assert.doesNotMatch(workflow, /uses: actions\/checkout@v4/)
-  assert.match(workflow, /if \/usr\/local\/bin\/review_guard; then/)
-  assert.match(workflow, /review_guard attempt \$\{attempt\}\/2/)
-  assert.match(workflow, /npm_install:\s*\n\s+description: Install repository dependencies before review\./)
-  assert.match(workflow, /type: boolean\s*\n\s+default: false/)
-  assert.match(workflow, /runner:\s*\n\s+description: Runner label used for the review job\./)
-  assert.match(workflow, /runs-on: "\$\{\{ inputs\.runner \|\| 'ubuntu-latest' \}\}"/)
-  assert.match(workflow, /run: \/usr\/local\/bin\/review_ack/)
-  assert.match(workflow, /name: Provision review workspace/)
-  assert.match(workflow, /\/usr\/local\/bin\/provision\.sh/)
+  assert.match(workflow, /if \/usr\/local\/bin\/review_preflight; then/)
+  assert.match(workflow, /else\s+status=\$\?/)
+  assert.match(workflow, /review_preflight attempt \$\{attempt\}\/2/)
   assert.match(
     workflow,
-    /OPENCODE_GATE_MODEL: \$\{\{ vars\.OPENCODE_GATE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/
+    /REVIEW_MODEL: \$\{\{ vars\.REVIEW_MODEL \|\| vars\.OPENCODE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/
   )
-  assert.match(
-    workflow,
-    /OPENCODE_MODEL_FALLBACK: \$\{\{ vars\.OPENCODE_MODEL_FALLBACK \|\| 'opencode-go\/minimax-m3' \}\}/
-  )
+  assert.match(workflow, /ref: refs\/pull\/\$\{\{ inputs\.pr_number \}\}\/head/)
+  assert.doesNotMatch(workflow, /gh pr checkout/u)
   assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/)
   assert.match(
     workflow,
-    /name: Run Singular Code Review\s+if: steps\.review-request\.outputs\.should_review == 'true'\s+timeout-minutes: 42\s+run: timeout 40m \/usr\/local\/bin\/review_runner/
+    /name: Run Singular Code Review\s+if: steps\.review-preflight\.outputs\.should_review == 'true'\s+timeout-minutes: 42\s+run: timeout 40m \/usr\/local\/bin\/review_runner --publish/
   )
-  assert.ok(workflow.indexOf("Run review guard") < workflow.indexOf("Create GitHub App token"))
-  assert.ok(workflow.indexOf("Run review guard") < workflow.indexOf("Provision review workspace"))
-  assert.doesNotMatch(workflow, /review_runner attempt/)
-  assert.match(workflow, /\/usr\/local\/bin\/review_runner/)
-  assert.match(workflow, /BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
-  assert.match(workflow, /Extract review outputs and telemetry/)
-  assert.match(workflow, /\/usr\/local\/bin\/review_extract --github-summary/)
-  assert.doesNotMatch(workflow, /review_guard\.sh/)
-  assert.doesNotMatch(workflow, /review_ack\.sh/)
-  assert.doesNotMatch(workflow, /review_orchestrator/)
-  assert.doesNotMatch(workflow, /concurrency:/)
-  assert.doesNotMatch(workflow, /singular-code-review-\$\{\{ inputs\.pr_number \}\}/)
+  assert.ok(workflow.indexOf("Run review preflight") < workflow.indexOf("Create GitHub App token"))
+  assert.match(workflow, /REVIEW_BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug \}\}\[bot\]/)
+  assert.doesNotMatch(workflow, /^\s+BOT_LOGIN:/mu)
+  assert.doesNotMatch(workflow, /review_ack|review_extract|OPENCODE_MODEL_FALLBACK|OPENCODE_GATE_MODEL/u)
 })

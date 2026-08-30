@@ -1,115 +1,45 @@
 # Model evaluations
 
-This harness runs the production reviewer image against real pull requests,
-then judges and compares the captured reviews. Capture, judgment, reporting,
-and aggregation are separate steps so the original model output remains
-inspectable.
+The eval harness builds the production reviewer image, captures dry-run reviews for exact pull-request revisions, judges the output, renders reports, and aggregates repeated runs. Capture, judgment, reporting, and aggregation remain separate so raw model output is inspectable.
 
-Runs may call paid APIs. Start with one PR, one model, and concurrency 1.
-`eval/runs/` and `eval/cache/` can contain private source, PR metadata, raw
-model transcripts, local paths, and provider telemetry. Both directories are
-ignored and remain local.
+Runs may call paid or rate-limited providers. Start with one PR, one model, and concurrency 1. eval/runs/ and eval/cache/ are ignored because they may contain private source, PR metadata, provider telemetry, local paths, and credentials.
 
 ## Requirements
 
-- Docker and installed repository dependencies
-- `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI
-- credentials required by the selected source or AML Agent provider
+- Docker and installed repository dependencies;
+- GH_TOKEN, GITHUB_TOKEN, or an authenticated GitHub CLI;
+- credentials for the selected Agent provider.
 
-The GitHub token needs read access to every input PR. Keep real private
-repository identifiers in an uncommitted local config.
+The GitHub token needs read access to every input PR.
 
-## 1. Configure
+## Configure
 
-Edit [`config.ts`](config.ts). Its committed matrix uses public PRs and a small
-model set. A private input has the same shape:
+Edit [config.ts](config.ts):
 
 ```ts
 export default {
   concurrency: 1,
+  provider: "opencode",
   models: ["opencode-go/deepseek-v4-flash"],
-  input: [
-    { pr: "trpc/trpc/7262", ignoreHistory: true },
-    // Replace locally; keep the real identifier out of Git.
-    // { pr: "example-org/private-repository/123", ignoreHistory: true },
-  ],
+  input: [{ pr: "trpc/trpc/7262", ignoreHistory: true }],
   judge: {
     model: "opencode-go/deepseek-v4-flash",
-    timeoutMs: 120_000,
-  },
+    timeoutMs: 120_000
+  }
 }
 ```
 
-`ignoreHistory: true` removes issue comments, reviews, review comments, and
-threads from model context while retaining PR metadata, commits, the filtered
-diff, and valid comment ranges. Use it to measure a fresh review rather than
-agreement with prior discussion.
+ignoreHistory removes issue comments, reviews, review comments, and threads from model context while retaining PR metadata, commits, the filtered diff, and valid comment ranges. Use it for a fresh-review measurement.
 
-Model values are provider-qualified IDs. AML production uses
-`opencode-go/deepseek-v4-flash`; an opt-in Codex capture uses
-`gpt-5.6-luna` and the provider applies `max` reasoning at construction. A bare
-OpenCode model uses the `opencode-go/` namespace for both implementations; a
-bare Codex model remains the exact Codex catalog ID. Prefer exact IDs for
-reproducible matrices, and check availability and pricing before a large run.
+OpenCode production uses opencode-go/deepseek-v4-flash. Codex comparison runs use provider codex with gpt-5.6-luna; the runtime sets maximum reasoning once at provider construction.
 
-The default reviewer is the existing `src` implementation. The AML reviewer
-is selected per capture without changing `src/`:
-
-```bash
-npm run eval -- --runner aml --model opencode-go/deepseek-v4-flash \
-  --out eval/runs/aml-smoke --cache-dir eval/cache/reviews/aml-smoke
-```
-
-The fixed comparison uses the same five DAAAM revisions for
-`gpt-5.6-luna`:
-
-```bash
-npm run eval -- --runner aml --aml-provider codex --model gpt-5.6-luna \
-  --out eval/runs/aml-codex-luna --cache-dir eval/cache/reviews/aml-codex-luna
-```
-
-The pre-refactor fixed Codex/Luna comparison completed 5/5 at an 83.0% judged average;
-it is AML-only because `src/` has no Codex ACP path. Its four uncached captures
-averaged 1,407.1s and all five internal timings averaged 1,232.0s, so it remains
-evaluation-only because of latency. The pre-refactor ten-PR OpenCode/DeepSeek
-run also completed: AML scored 84.8/100 and `src` scored 84.7/100 on identical
-revisions. AML averaged 414.2s uncached capture time and 400.4s internal review
-time; `src` averaged 236.2s and 209.8s respectively. AML's 414.2s capture mean
-matches the roughly 7-12 minute reference; the 90/100 quality target was not
-reached. Historical Pi/Ox, fallback-model, and API-key diagnostic captures are
-not comparable benchmark evidence; retain them only as labelled diagnostics.
-The current simplified AML tree needs a fresh fixed-set capture before being
-compared with these baselines.
-
-Use separate output and cache directories for `src` and `aml`; the harness
-also includes the runner in each job and cache identity. AML receives the same
-repository and PR input, then materializes `pr.md`, `pr.diff`, and `history.md`
-beneath its disposable checkout from one cached GitHub snapshot. Request-scoped
-GitHub read Tools remain available for details those files do not settle. The
-eval-owned snapshot and filtered diff remain at the cache/judge boundary. The
-eval adapter renders AML's one typed result as
-the canonical artifacts consumed by the existing judge/report steps.
-`AML_REVIEW_MODEL` is passed into the reviewer container for AML entrypoint
-wiring. AML uses one provider-selected attempt; production selects OpenCode,
-while the Codex/Luna comparison is explicit and eval-only. The source runner
-retains its own retry policy.
-The exact provider model ID is installation/provider-specific; verify it before
-running a paid or rate-limited matrix.
-
-Local OpenCode captures prefer an explicit `OPENCODE_API_KEY`. When that
-variable is unset, the evaluator copies the host OpenCode `auth.json` and
-`account.json` into each isolated XDG data directory and removes both before
-retaining scratch or returning. This keeps host login refreshes and secrets out
-of the checkout, cache, and generated artifacts. The judge uses the same
-ephemeral copy.
-
-## 2. Capture
+## Capture
 
 ```bash
 npm run eval -- --out eval/runs/smoke
 ```
 
-For a one-off input without editing config:
+One-off input:
 
 ```bash
 npm run eval -- \
@@ -119,97 +49,56 @@ npm run eval -- \
   --out eval/runs/smoke
 ```
 
-Capture builds the current image and runs `review_dry_run`. The source runner
-emits the canonical review, comments, stats, and transcript; the eval adapter
-renders the same views from AML's one stdout result. Both captures include the
-eval-owned filtered diff and model context. The source runner also preserves
-its queue, validation, phase-log, and raw JSONL diagnostics. AML keeps findings
-and phase handoffs in memory; its three Markdown/diff files are read-only Agent
-context, not orchestration state. GitHub writes stay disabled.
-
-The Dockerfile and eval harness default to the published AML Agent Sandbox
-image pinned by digest. To test an unreleased local sandbox, pass its tag
-explicitly; the selected build argument is recorded in `run-config.json`:
+Codex/Luna:
 
 ```bash
 npm run eval -- \
-  --runner aml \
-  --aml-provider codex \
+  --provider codex \
   --model gpt-5.6-luna \
-  --base-image aml-agent-sandbox:local-development \
-  --out eval/runs/aml-codex-luna
+  --out eval/runs/codex-luna
 ```
 
-Use `--skip-build` when the reviewer image has already been built. The local
-AML sandbox image must provide the provider executables required by the
-selected run.
+The capture builds the current Dockerfile, prepares the exact pull-request checkout on the host, mounts it into the reviewer container, invokes the production review_runner without --publish, and records its single typed JSON result. The eval-only adapter renders:
 
-The default advisory target is approximately 10 minutes (`targetDurationMs`);
-it affects duration reporting only. The hard per-review safety ceiling for the
-comparison is 30 minutes (`reviewTimeoutMs`). It is not the expected review
-duration. The harness deliberately has no no-output timeout: a provider may
-remain silent while producing a valid review, so only the total stuck-process
-ceiling is enforced.
+- review.md;
+- review_comments.json;
+- review_stats.json;
+- review_transcript.md.
 
-Codex/Luna uses the host ChatGPT Codex login. For each Codex job, the eval
-harness stages an ephemeral writable copy of
-`${CODEX_HOME:-~/.codex}/auth.json` into that job's runtime mount because Codex
-may refresh the file, then deletes the copy in `finally`. It never forwards
-`OPENAI_API_KEY` or `CODEX_API_KEY`, and never copies auth state into stdout,
-cached artifacts, transcripts, or reports. Non-Codex runs do not receive the
-Codex auth copy.
+The eval boundary also preserves the exact filtered diff and normalized PR context supplied to the judge. Those artifacts are observability and scoring inputs, not production workflow state.
 
-An API-key diagnostic run is invalid non-benchmark evidence: six trivial
-parallel typed agents completed only 4/6 after 28 reconnects, and its trace
-exposed `no credits`. Do not include that run in model, completion, latency, or
-score comparisons.
+The default targetDurationMs is advisory. reviewTimeoutMs is the larger stuck-provider safety ceiling and must not be interpreted as the expected review duration. There is no short no-output timeout because providers may be silent while producing a complete result.
 
-Use `--append` to extend a run and `--force` to bypass cached captures. Review
-cache identity includes the inspected reviewer image ID alongside the runner,
-provider, model, and reviewed input, so rebuilding the image cannot silently
-restore evidence from an older implementation. Keep separate output directories
-for each comparison run; use `--force` only when intentionally resampling the
-exact same image and input.
+Use --skip-build only when the exact reviewer image already exists. Use --base-image to test another AML Agent Sandbox explicitly. The run manifest records both image IDs so rebuilding cannot silently restore a result captured from another implementation revision.
 
-Run `npm run eval -- --help` for the complete capture interface.
+Use --append to add missing matrix cells and --force to bypass the global review cache. Cache promotion requires a completed typed result and every canonical artifact; exit zero alone is insufficient.
 
-## 3. Judge and report
+### Credentials
+
+OpenCode prefers OPENCODE_API_KEY. When it is absent, the harness stages disposable copies of the host OpenCode auth files into the isolated XDG data directory and removes them before retaining scratch.
+
+Codex uses the host ChatGPT login. The harness copies auth.json into a disposable writable REVIEW_CODEX_HOME because Codex may refresh it, then deletes that copy in finally. It does not forward OPENAI_API_KEY or CODEX_API_KEY to a Codex run.
+
+## Judge and report
 
 ```bash
 npm run eval:judge -- --run eval/runs/smoke
 npm run eval:report -- --run eval/runs/smoke
 ```
 
-The judge receives the captured review, filtered diff, and curated runtime
-evidence. Human review threads remain outside the scoring prompt. By default,
-the report rejects a run that has not reached `status: completed`; use
-`--allow-partial` only to render local diagnostics for an interrupted run.
-Partial summaries remain ineligible for benchmark aggregation. The report
-writes `summary.json` and `report.html` with scores, verdicts, comments,
-timing, tokens, known costs, and failures. It keeps uncached capture wall time
-separate from reviewer-reported timing: the first is comparable across runners,
-while AML's internal clock covers its complete in-memory workflow and `src/`
-sums model phases. Cache restoration is excluded from wall time. Cost is `n/a`
-when the provider reports no charge and the exact model has no configured
-price; the harness never substitutes a generic token rate.
+The judge receives the captured review, filtered diff, normalized PR context, and review telemetry. Human review threads remain outside the scoring prompt. Reports require a completed capture by default; --allow-partial renders only a diagnostic report and remains ineligible for benchmark aggregation.
 
-Judgments are cached. Use `npm run eval:judge -- --help` before changing the
-judge model, timeout, or cache behavior.
+Judgments are cached. Changing the rubric, prompt, judge model, or attached evidence changes judgment identity.
 
-## 4. Compare
+## Compare
 
 ```bash
 npm run eval:benchmark
 ```
 
-[`benchmark.mjs`](benchmark.mjs) aggregates generated summaries into an HTML
-report and JSON dataset. Keep the PR head, model variant, judge, and
-`ignoreHistory` setting stable when comparing reviewer revisions.
-Only completed run summaries are eligible. When the default aggregation sees
-repeated PR/model evidence, a completed judged result stays ahead of a newer
-failed diagnostic capture; freshness breaks ties between equivalent results.
+[benchmark.mjs](benchmark.mjs) aggregates completed summary.json files into an HTML report and JSON dataset. Keep the PR head, provider model, judge, ignoreHistory, and reviewer image stable when comparing revisions.
 
-For repeated captures of the same PR/model under different reviewer versions:
+Repeated captures:
 
 ```bash
 npm run eval:benchmark -- \
@@ -220,21 +109,16 @@ npm run eval:benchmark -- \
   --json eval/runs/reviewer-compare-summary.json
 ```
 
-`--avg` aggregates repeated captures by exact model and reasoning variant.
-Run `npm run eval:benchmark -- --help` for filters and output controls.
+--avg aggregates repeats by exact model and reasoning variant. Completed judged evidence ranks ahead of newer failed diagnostics.
+
+## Historical benchmark context
+
+The final fixed private ten-PR OpenCode/DeepSeek calibration completed 10/10 at 86.1/100, with 27 retained comments and a 193-second mean internal review time. The historical source reviewer completed the same ten revisions at 84.7/100, six comments, and 210 seconds, but used the provider's former model namespace. Treat that comparison as directional.
+
+A blind corpus of ten merged public-library PR heads completed 10/10 at 85.0/100 and a 164-second mean internal time. Codex/Luna completed its fixed five at 83.0/100 but was materially slower.
+
+The benchmark aggregator can still read historical source and AML summaries. All new captures execute the canonical production reviewer.
 
 ## Publication boundary
 
-Commit the harness, rubric, example config, documentation, and ignore files.
-Keep captures, caches, reports, Docker logs, scratch workspaces, private
-identifiers, human review exports, credentials, and provider tokens local.
-
-Public PR examples are suitable committed calibration inputs. Dated benchmark
-notes and one-off launch scripts belong outside the repository.
-
-The historical v29 image was built from the local AML workspace at clean
-revision `160ee881`; it is retained only to explain older captures. The current
-blueprint runs six native Parallel lanes, stages findings through one review
-Tool, performs one semantic audit with a 24-finding hard ceiling, applies the
-existing deterministic queue validation, and derives the verdict from typed
-retained severity. There is no separate findings judge or publisher Agent.
+Commit harness code, rubric, public example configuration, documentation, and ignore files. Keep captures, caches, generated reports, Docker logs, scratch workspaces, private identifiers, human review exports, credentials, and provider tokens local.

@@ -55,8 +55,7 @@ function normalizeConfig(value) {
   const judge = config.judge && typeof config.judge === "object" ? config.judge : {};
   return {
     models: normalizeStringArray(config.models, "models"),
-    runner: config.runner === undefined ? "src" : String(config.runner),
-    amlProvider: config.amlProvider === undefined ? "opencode" : String(config.amlProvider),
+    provider: config.provider === undefined ? "opencode" : String(config.provider),
     baseImage: optionalString(config.baseImage, "baseImage"),
     input: normalizeInput(config.input),
     concurrency: positiveInteger(config.concurrency, "concurrency") ?? 1,

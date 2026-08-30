@@ -23,23 +23,22 @@ import {
   writeJsonFile,
 } from "./lib/cache.mjs"
 import { loadEvalConfig } from "./lib/config.mjs"
-import { loadPullRequestInput, resolveGitHubToken } from "./lib/github.mjs"
+import { loadPullRequestInput, preparePullRequestWorkspace, resolveGitHubToken } from "./lib/github.mjs"
 import { normalizeEvalModels } from "./lib/models.mjs"
 import { normalizeEvalInput, normalizeEvalInputs, parsePrReference } from "./lib/pr-input.mjs"
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs"
 import {
-  normalizeAmlReviewProvider,
-  normalizeReviewRunner,
+  normalizeReviewProvider,
   reviewerContainerConfig,
 } from "./lib/reviewer-runner.mjs"
 import { evalJobKey } from "./lib/job-key.mjs"
-import { readAmlResult, writeAmlArtifacts } from "./lib/aml-artifacts.mjs"
+import { readReviewResult, writeReviewArtifacts } from "./lib/review-artifacts.mjs"
 import { canonicalJobArtifacts, completedJobArtifacts } from "./lib/job-artifacts.mjs"
 import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_BASE_IMAGE =
-  "docker.io/wearesingular/aml-agent-sandbox@sha256:5b9724161e815b67d2bde72f9157d651b763c1b39e535b287bede8d90a874f9f"
+  "docker.io/wearesingular/aml-agent-sandbox:0.3.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2"
 const EXTRACTED_ARTIFACTS = [
   "review.md",
   "review_transcript.md",
@@ -48,20 +47,9 @@ const EXTRACTED_ARTIFACTS = [
   "docker.stdout.log",
   "docker.stderr.log",
 ]
-const RUNTIME_ARTIFACTS = [
-  "review_payload.json",
-  "review_validated.json",
-  "review_validation_context.json",
+const JUDGE_ARTIFACTS = [
   "review_model_context.json",
-  "audit_model_context.json",
-  "review_queue.json",
   "pr.diff",
-  "opencode_review.log",
-  "opencode_review.log.jsonl",
-  "opencode_audit.log",
-  "opencode_audit.log.jsonl",
-  "opencode_synthesis.log",
-  "opencode_synthesis.log.jsonl",
 ]
 const activeDockerContainers = new Set()
 const EVAL_OWNER_LABEL = "singular-code-review-eval-owner"
@@ -200,37 +188,11 @@ function writeText(file, value) {
   writeFileSync(file, value, { mode: 0o600 })
 }
 
-function copyRuntimeArtifacts(runtimeDir, artifactDir, runner) {
-  mkdirSync(artifactDir, { recursive: true })
-  for (const file of RUNTIME_ARTIFACTS) {
-    copyExistingFile(join(runtimeDir, file), join(artifactDir, file))
-  }
-  if (runner === "aml") {
-    return
-  }
-
-  const auditLog = join(artifactDir, "opencode_audit.log")
-  if (fileSize(auditLog) === 0) {
-    writeText(auditLog, "Audit phase artifact was not produced by the reviewer runtime. The phase may have been skipped or ended before writing output.\n")
-  }
-  const auditJsonLog = join(artifactDir, "opencode_audit.log.jsonl")
-  if (fileSize(auditJsonLog) === 0) {
-    writeText(
-      auditJsonLog,
-      `${JSON.stringify({
-        type: "phase_artifact_missing",
-        phase: "audit",
-        message: "Audit phase artifact was not produced by the reviewer runtime.",
-      })}\n`,
-    )
-  }
-}
-
-function jobFiles(jobDir, runner) {
+function jobFiles(jobDir) {
   const artifactDir = join(jobDir, "artifacts")
   const reviewModelContext = join(artifactDir, "review_model_context.json")
   const prDiff = join(artifactDir, "pr.diff")
-  const canonical = {
+  return {
     context: existsSync(reviewModelContext) ? reviewModelContext : "",
     diff: existsSync(prDiff) ? prDiff : "",
     review: existsSync(join(jobDir, "review.md")) ? join(jobDir, "review.md") : "",
@@ -238,39 +200,7 @@ function jobFiles(jobDir, runner) {
     comments: existsSync(join(jobDir, "review_comments.json")) ? join(jobDir, "review_comments.json") : "",
     stats: existsSync(join(jobDir, "review_stats.json")) ? join(jobDir, "review_stats.json") : "",
     stdout: existsSync(join(jobDir, "docker.stdout.log")) ? join(jobDir, "docker.stdout.log") : "",
-    stderr: existsSync(join(jobDir, "docker.stderr.log")) ? join(jobDir, "docker.stderr.log") : "",
-  }
-  if (runner === "aml") {
-    return canonical
-  }
-
-  return {
-    ...canonical,
-    payload: existsSync(join(artifactDir, "review_payload.json")) ? join(artifactDir, "review_payload.json") : "",
-    validated: existsSync(join(artifactDir, "review_validated.json")) ? join(artifactDir, "review_validated.json") : "",
-    validationContext: existsSync(join(artifactDir, "review_validation_context.json"))
-      ? join(artifactDir, "review_validation_context.json")
-      : "",
-    reviewModelContext: existsSync(reviewModelContext) ? reviewModelContext : "",
-    auditModelContext: existsSync(join(artifactDir, "audit_model_context.json"))
-      ? join(artifactDir, "audit_model_context.json")
-      : "",
-    reviewQueue: existsSync(join(artifactDir, "review_queue.json")) ? join(artifactDir, "review_queue.json") : "",
-    prDiff: existsSync(prDiff) ? prDiff : "",
-    reviewOutput: existsSync(join(artifactDir, "opencode_review.log")) ? join(artifactDir, "opencode_review.log") : "",
-    reviewJsonOutput: existsSync(join(artifactDir, "opencode_review.log.jsonl"))
-      ? join(artifactDir, "opencode_review.log.jsonl")
-      : "",
-    auditOutput: existsSync(join(artifactDir, "opencode_audit.log")) ? join(artifactDir, "opencode_audit.log") : "",
-    auditJsonOutput: existsSync(join(artifactDir, "opencode_audit.log.jsonl"))
-      ? join(artifactDir, "opencode_audit.log.jsonl")
-      : "",
-    synthesisOutput: existsSync(join(artifactDir, "opencode_synthesis.log"))
-      ? join(artifactDir, "opencode_synthesis.log")
-      : "",
-    synthesisJsonOutput: existsSync(join(artifactDir, "opencode_synthesis.log.jsonl"))
-      ? join(artifactDir, "opencode_synthesis.log.jsonl")
-      : "",
+    stderr: existsSync(join(jobDir, "docker.stderr.log")) ? join(jobDir, "docker.stderr.log") : ""
   }
 }
 
@@ -384,42 +314,15 @@ function reviewBodyFromComments(comments) {
   return String(review.body || "").trim()
 }
 
-function reviewExportCounts(comments) {
-  return [
-    comments.issueComments,
-    comments.inlineComments,
-    comments.replies,
-  ].reduce((sum, items) => sum + (Array.isArray(items) ? items.length : 0), 0)
-}
-
-function readCaptureFailure({ run, commentsFile, artifactDir, runner }) {
+function readCaptureFailure({ run, commentsFile }) {
   if (run.status !== 0) {
     return run.error || `dry-run exited ${run.status}`
   }
 
   const comments = readJson(commentsFile, {})
   const body = reviewBodyFromComments(comments)
-  const producedFeedback = reviewExportCounts(comments)
-  const reviewJsonOutput = existsSync(join(artifactDir, "opencode_review.log.jsonl"))
-    ? readFileSync(join(artifactDir, "opencode_review.log.jsonl"), "utf8")
-    : ""
-  const synthesisJsonOutput = existsSync(join(artifactDir, "opencode_synthesis.log.jsonl"))
-    ? readFileSync(join(artifactDir, "opencode_synthesis.log.jsonl"), "utf8")
-    : ""
-  if (runner === "src" && (/"type"\s*:\s*"error"/u.test(reviewJsonOutput) || /"type"\s*:\s*"error"/u.test(synthesisJsonOutput))) {
-    return "OpenCode phase emitted an error event"
-  }
   if (!body || /synthesis pass did not produce a body/iu.test(body)) {
     return "review synthesis did not produce a final body"
-  }
-  // AML stdout has already passed its typed result parser. Only the legacy
-  // source runner needs a prose heuristic for otherwise silent failures.
-  if (
-    runner === "src" &&
-    producedFeedback === 0 &&
-    /incomplete review|access limitations|access restrictions|could not complete|did not successfully complete|no new inline comments|queue shows no/iu.test(body)
-  ) {
-    return "review synthesis reported an incomplete review"
   }
   return null
 }
@@ -459,8 +362,7 @@ function parseArgs(argv) {
     outDir: resolve(repoRoot, "eval", "runs", timestamp()),
     configFile: resolve(repoRoot, "eval", "config.ts"),
     models: [],
-    runner: undefined,
-    amlProvider: undefined,
+    provider: undefined,
     prs: [],
     concurrency: undefined,
     targetDurationMs: undefined,
@@ -483,10 +385,8 @@ function parseArgs(argv) {
       options.configFile = resolve(argv[++index])
     } else if (arg === "--model") {
       options.models.push(argv[++index])
-    } else if (arg === "--runner") {
-      options.runner = argv[++index] || ""
-    } else if (arg === "--aml-provider") {
-      options.amlProvider = argv[++index] || ""
+    } else if (arg === "--provider") {
+      options.provider = argv[++index] || ""
     } else if (arg === "--pr") {
       options.prs.push(argv[++index])
     } else if (arg === "--concurrency") {
@@ -531,8 +431,7 @@ Options:
   --config <file>           Eval config. Default: eval/config.ts
   --pr <owner/repo/123>     Add one PR without editing config. Can repeat.
   --model <model>           Override model matrix. Can repeat.
-  --runner <src|aml>        Reviewer implementation. Default: src.
-  --aml-provider <name>     AML Agent provider: opencode or codex. Default: opencode.
+  --provider <name>         Agent provider: opencode or codex. Default: opencode.
   --concurrency <n>         Concurrent captures. Default: config or 1
   --target-duration-ms <ms> Advisory duration target. Default: config or 600000
   --review-timeout-ms <ms>  Hard per-review safety timeout. Default: config or 1800000 (30 minutes)
@@ -541,7 +440,7 @@ Options:
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
   --image <tag>             Docker image tag. Default: singular-code-review:eval
-  --base-image <tag>        AML base image. Default: published sandbox 0.3.1 digest
+  --base-image <tag>        AML base image. Default: published sandbox 0.3.3 digest
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
 `)
@@ -555,7 +454,7 @@ function positiveInteger(value, fallback, name) {
   return number
 }
 
-function resolveModels(options, config, runner, amlProvider) {
+function resolveModels(options, config, provider) {
   let models = []
   if (options.models.length > 0) {
     models = options.models
@@ -565,7 +464,7 @@ function resolveModels(options, config, runner, amlProvider) {
   if (models.length === 0) {
     throw new Error("no models configured; set config.models or pass --model")
   }
-  const defaultProvider = runner === "aml" && amlProvider === "codex" ? "" : "opencode-go"
+  const defaultProvider = provider === "codex" ? "" : "opencode-go"
   return normalizeEvalModels(models, defaultProvider)
 }
 
@@ -601,6 +500,10 @@ function mergeInputs(existing, next) {
 function sameCaptureJob(existing, requested) {
   return (
     evalJobKey(existing) === evalJobKey(requested) &&
+    Boolean(existing.input.baseSha) &&
+    existing.input.baseSha === requested.input.baseSha &&
+    Boolean(existing.input.headSha) &&
+    existing.input.headSha === requested.input.headSha &&
     Boolean(existing.input.ignoreHistory) === Boolean(requested.input.ignoreHistory) &&
     (existing.input.label || "") === (requested.input.label || "") &&
     (existing.input.notes || "") === (requested.input.notes || "")
@@ -644,7 +547,7 @@ function restoreReviewCache({ cacheDir, jobDir, job, key, startedAt }) {
   for (const file of EXTRACTED_ARTIFACTS) {
     copyExistingFile(join(entryDir, file), join(jobDir, file))
   }
-  for (const file of RUNTIME_ARTIFACTS) {
+  for (const file of JUDGE_ARTIFACTS) {
     copyExistingFile(join(entryDir, "artifacts", file), join(jobDir, "artifacts", file))
   }
   if (!canonicalJobArtifacts(jobDir)) {
@@ -657,13 +560,13 @@ function restoreReviewCache({ cacheDir, jobDir, job, key, startedAt }) {
     timedOut: false,
     artifactsComplete: true,
     model: job.model,
-    runner: job.runner || "src",
-    provider: job.runner === "aml" ? job.provider || "opencode" : null,
+    runner: "aml",
+    provider: job.provider,
     input: job.input,
     startedAt,
     endedAt: new Date().toISOString(),
     outputBytes: fileSize(join(jobDir, "review.md")),
-    files: jobFiles(jobDir, job.runner),
+    files: jobFiles(jobDir),
     scratch: null,
     cache: {
       hit: true,
@@ -683,7 +586,7 @@ function saveReviewCache({ cacheDir, key, jobDir, result, job, reviewerImageId }
   for (const file of EXTRACTED_ARTIFACTS) {
     copyExistingFile(join(jobDir, file), join(entryDir, file))
   }
-  for (const file of RUNTIME_ARTIFACTS) {
+  for (const file of JUDGE_ARTIFACTS) {
     copyExistingFile(join(jobDir, "artifacts", file), join(entryDir, "artifacts", file))
   }
   writeJsonFile(join(entryDir, "cache.json"), {
@@ -692,8 +595,8 @@ function saveReviewCache({ cacheDir, key, jobDir, result, job, reviewerImageId }
     status: "completed",
     key,
     model: job.model,
-    runner: job.runner || "src",
-    provider: job.runner === "aml" ? job.provider || "opencode" : null,
+    runner: "aml",
+    provider: job.provider,
     reviewerImageId,
     input: job.input,
     outputBytes: result.outputBytes,
@@ -740,10 +643,11 @@ async function runJob(job, options) {
   const stderrFile = join(jobDir, "docker.stderr.log")
   const artifactDir = join(jobDir, "artifacts")
   const containerName = `singular-eval-${EVAL_OWNER_ID.slice(0, 8)}-${job.index}-${Date.now()}`
-  // Keep the live checkout outside the output mount. Otherwise Docker exposes
-  // it through both the permitted runtime path and `/eval-output`, which makes
-  // OpenCode reject a discovered alias as an external directory.
-  const runtimeDir = join(tmpdir(), "singular-code-review-eval", containerName)
+  // Keep credentials and the checkout in sibling mounts. Exposing the same
+  // checkout under a second container path makes OpenCode reject the alias.
+  const scratchDir = join(tmpdir(), "singular-code-review-eval", containerName)
+  const runtimeDir = join(scratchDir, "runtime")
+  const workspaceDir = join(scratchDir, "workspace")
 
   mkdirSync(jobDir, { recursive: true })
   mkdirSync(runtimeDir, { recursive: true })
@@ -751,23 +655,26 @@ async function runJob(job, options) {
   const startedAt = new Date().toISOString()
   let preserveScratch = false
   let stagedOpenCodeAuth = []
+  let captureInput = job.input
   console.log(`[${job.index + 1}/${job.total}] ${job.input.ref} ${job.model}`)
 
   try {
     const loaded = await loadPullRequestInput(job.input, options.githubToken)
+    captureInput = loaded.input
+    const captureJob = { ...job, input: captureInput }
     const reviewer = reviewerContainerConfig(job)
 
-    // Inputs belong to the eval boundary, not the reviewer workflow. AML can
-    // remain entirely in memory while the judge still receives the exact PR
+    // Inputs belong to the eval boundary, not the reviewer workflow. The
+    // reviewer remains in memory while the judge still receives the exact PR
     // snapshot used to identify and cache this capture.
     writeJson(join(artifactDir, "review_model_context.json"), loaded.context)
     writeText(join(artifactDir, "pr.diff"), loaded.diffText)
     const cacheKey = reviewCacheKey({
-      runner: job.runner,
+      runner: "aml",
       provider: job.provider,
       model: job.model,
       reviewerImageId: options.imageId,
-      input: job.input,
+      input: captureInput,
       context: loaded.context,
       diffText: loaded.diffText,
     })
@@ -776,7 +683,7 @@ async function runJob(job, options) {
       const cached = restoreReviewCache({
         cacheDir: options.cacheDir,
         jobDir,
-        job,
+        job: captureJob,
         key: cacheKey,
         startedAt,
       })
@@ -786,6 +693,11 @@ async function runJob(job, options) {
       }
     }
     preserveScratch = options.keepScratch
+
+    await preparePullRequestWorkspace(captureInput, workspaceDir, options.githubToken)
+    for (const directory of ["home", "xdg/config", "xdg/data", "xdg/cache", "xdg/state"]) {
+      mkdirSync(join(runtimeDir, directory), { recursive: true })
+    }
 
     if (reviewer.requiresCodexAuth) {
       const sourceHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")
@@ -823,28 +735,36 @@ async function runJob(job, options) {
       "--label",
       `${EVAL_OWNER_LABEL}=${EVAL_OWNER_ID}`,
       "--entrypoint",
-      "/usr/local/bin/review_dry_run",
+      reviewer.command,
+      "--workdir",
+      "/workspace",
       "--env",
       "GH_TOKEN",
       "--env",
       "REVIEW_IGNORE_HISTORY",
       "--env",
-      `REVIEW_RUNNER=${reviewer.command}`,
+      "HOME=/tmp/.singular-code-review/eval-runtime/home",
+      "--env",
+      "XDG_CONFIG_HOME=/tmp/.singular-code-review/eval-runtime/xdg/config",
+      "--env",
+      "XDG_DATA_HOME=/tmp/.singular-code-review/eval-runtime/xdg/data",
+      "--env",
+      "XDG_CACHE_HOME=/tmp/.singular-code-review/eval-runtime/xdg/cache",
+      "--env",
+      "XDG_STATE_HOME=/tmp/.singular-code-review/eval-runtime/xdg/state",
       ...reviewer.inheritedEnvironment.flatMap(key => ["--env", key]),
       ...Object.keys(reviewer.environment).flatMap(key => ["--env", key]),
       "--volume",
-      `${jobDir}:/eval-output`,
-      "--volume",
       `${runtimeDir}:/tmp/.singular-code-review/eval-runtime`,
+      "--volume",
+      `${workspaceDir}:/workspace`,
       options.image,
-      job.input.repository,
-      String(job.input.number),
-      ...(job.input.baseSha ? ["--base-sha", job.input.baseSha] : []),
-      ...(job.input.headSha ? ["--head-sha", job.input.headSha] : []),
-      "--runtime-dir",
-      "/tmp/.singular-code-review/eval-runtime",
-      "--out-dir",
-      "/eval-output",
+      "--repo",
+      captureInput.repository,
+      "--pr",
+      String(captureInput.number),
+      "--workspace",
+      "/workspace",
     ]
     if (typeof process.getuid === "function" && typeof process.getgid === "function") {
       dockerArgs.splice(4, 0, "--user", `${process.getuid()}:${process.getgid()}`)
@@ -859,30 +779,27 @@ async function runJob(job, options) {
         ...process.env,
         GH_TOKEN: options.githubToken,
         ...reviewer.environment,
-        REVIEW_IGNORE_HISTORY: job.input.ignoreHistory ? "true" : "false",
+        REVIEW_IGNORE_HISTORY: captureInput.ignoreHistory ? "true" : "false",
       },
       stdoutFile,
       stderrFile,
       timeoutMs: options.reviewTimeoutMs,
     })
-    copyRuntimeArtifacts(runtimeDir, artifactDir, job.runner)
-    if (run.status === 0 && job.runner === "aml") {
-      // AML emits one typed result on stdout. Keep markdown/comments/stats as
-      // eval compatibility views, outside the production reviewer image.
+    if (run.status === 0) {
+      // The reviewer emits one typed result. Render stable judge views outside
+      // the production image so eval concerns never enter the runtime.
       try {
-        writeAmlArtifacts(readAmlResult(stdoutFile), jobDir)
+        writeReviewArtifacts(readReviewResult(stdoutFile), jobDir)
       } catch (error) {
         run.status = 1
         run.error = error instanceof Error ? error.message : String(error)
       }
     }
-    // review_dry_run maps both implementations into the same extracted
-    // comments/stats/transcript contract before the candidate is rendered.
     if (run.status === 0 && existsSync(commentsFile) && existsSync(statsFile) && existsSync(transcriptFile)) {
       writeCandidateReview({ commentsFile, reviewFile })
     }
     const outputBytes = fileSize(reviewFile)
-    const captureFailure = readCaptureFailure({ run, commentsFile, artifactDir, runner: job.runner })
+    const captureFailure = readCaptureFailure({ run, commentsFile })
 
     const artifactsComplete = canonicalJobArtifacts(jobDir)
     const completed = !captureFailure && outputBytes > 0 && artifactsComplete
@@ -894,14 +811,14 @@ async function runJob(job, options) {
       timedOut: Boolean(run.timedOut),
       artifactsComplete,
       model: job.model,
-      runner: job.runner,
-      provider: job.runner === "aml" ? job.provider : null,
-      input: job.input,
+      runner: "aml",
+      provider: job.provider,
+      input: captureInput,
       startedAt,
       endedAt: new Date().toISOString(),
       outputBytes,
-      files: jobFiles(jobDir, job.runner),
-      scratch: preserveScratch ? runtimeDir : null,
+      files: jobFiles(jobDir),
+      scratch: preserveScratch ? scratchDir : null,
       cache: {
         hit: false,
         key: cacheKey,
@@ -914,7 +831,7 @@ async function runJob(job, options) {
       key: cacheKey,
       jobDir,
       result,
-      job,
+      job: captureJob,
       reviewerImageId: options.imageId,
     })
     return result
@@ -925,14 +842,14 @@ async function runJob(job, options) {
       timedOut: false,
       artifactsComplete: false,
       model: job.model,
-      runner: job.runner,
-      provider: job.runner === "aml" ? job.provider : null,
-      input: job.input,
+      runner: "aml",
+      provider: job.provider,
+      input: captureInput,
       startedAt,
       endedAt: new Date().toISOString(),
       outputBytes: 0,
-      files: jobFiles(jobDir, job.runner),
-      scratch: preserveScratch ? runtimeDir : null,
+      files: jobFiles(jobDir),
+      scratch: preserveScratch ? scratchDir : null,
       cache: null,
     }
     writeJson(join(jobDir, "result.json"), result)
@@ -946,7 +863,7 @@ async function runJob(job, options) {
       rmSync(authFile, { force: true })
     }
     if (!preserveScratch) {
-      rmSync(runtimeDir, { recursive: true, force: true })
+      rmSync(scratchDir, { recursive: true, force: true })
     }
   }
 }
@@ -959,12 +876,8 @@ async function main() {
   }
 
   const config = await loadEvalConfig(options.configFile)
-  const runner = normalizeReviewRunner(options.runner || config.runner)
-  if (runner !== "aml" && options.amlProvider !== undefined) {
-    throw new Error("--aml-provider requires --runner aml")
-  }
-  const amlProvider = runner === "aml" ? normalizeAmlReviewProvider(options.amlProvider || config.amlProvider) : undefined
-  const models = resolveModels(options, config, runner, amlProvider)
+  const provider = normalizeReviewProvider(options.provider || config.provider)
+  const models = resolveModels(options, config, provider)
   const inputs = resolveInputs(options, config)
   const concurrency = positiveInteger(options.concurrency, config.concurrency, "concurrency")
   const targetDurationMs = positiveInteger(options.targetDurationMs, config.targetDurationMs, "targetDurationMs")
@@ -981,8 +894,8 @@ async function main() {
 
   if (existingRun) {
     const requestedIdentity = {
-      runner,
-      provider: amlProvider || null,
+      runner: "aml",
+      provider,
       image: options.image,
       baseImage,
     }
@@ -1006,8 +919,8 @@ async function main() {
     startedAt,
     configFile: options.configFile,
     models: uniqueStrings([...(existingRun?.models || []), ...models]),
-    runner,
-    provider: amlProvider || null,
+    runner: "aml",
+    provider,
     inputs: mergeInputs(existingRun?.inputs || [], inputs),
     concurrency,
     targetDurationMs,
@@ -1030,7 +943,7 @@ async function main() {
           job.status === "completed" && completedJobArtifacts(join(options.outDir, "jobs", evalJobKey(job)))
       )
   const requestedJobs = inputs.flatMap(input =>
-    models.map(model => ({ input, model, runner, ...(amlProvider ? { provider: amlProvider } : {}) }))
+    models.map(model => ({ input, model, runner: "aml", provider }))
   )
   const duplicateJobs = requestedJobs.filter(requested => reusableJobs.some(existing => sameCaptureJob(existing, requested)))
   const jobs = requestedJobs.filter(requested => !reusableJobs.some(existing => sameCaptureJob(existing, requested)))

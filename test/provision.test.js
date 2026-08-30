@@ -21,6 +21,7 @@ function runProvision(workspace, extraEnv = {}) {
   const mockbin = path.join(dir, "mockbin")
   const npmArgsFile = path.join(dir, "npm-args.json")
   fs.mkdirSync(mockbin)
+  fs.mkdirSync(home)
 
   makeExecutable(
     path.join(mockbin, "git"),
@@ -94,19 +95,4 @@ test("provision skips dependency install by default", () => {
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")
 
   assert.equal(runProvision(workspace).npmArgs, null)
-})
-
-test("provision installs OpenCode config and skills into XDG config home", () => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
-  const xdgConfigHome = fs.mkdtempSync(path.join(os.tmpdir(), "provision-xdg-config-"))
-  const result = runProvision(workspace, { XDG_CONFIG_HOME: xdgConfigHome })
-
-  assert.equal(fs.existsSync(path.join(result.home, ".config", "opencode", "opencode.json")), false)
-  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "opencode.json")), true)
-  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "agents", "reviewer.md")), true)
-  assert.equal(fs.existsSync(path.join(result.xdgConfigHome, "opencode", "agents", "auditor.md")), true)
-  assert.equal(
-    fs.existsSync(path.join(result.xdgConfigHome, "opencode", "skills", "singular-code-review", "SKILL.md")),
-    true
-  )
 })

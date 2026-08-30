@@ -2,20 +2,14 @@
   "name": "singular-code-review-agent",
   "version": "0.2.0",
   "private": true,
-  "description": "Production runner for Singular Code Review GitHub App reviews.",
+  "description": "AML-powered pull request review agent for the Singular Code Review GitHub App.",
   "bin": {
-    "aml_review": "dist/aml/cli.js",
-    "review_ack": "dist/cli/review-ack.js",
-    "review_comments": "dist/cli/review-comments.js",
-    "review_context": "dist/cli/review-context.js",
-    "review_dry_run": "bin/review_dry_run",
-    "review_extract": "dist/cli/review-extract.js",
-    "review_guard": "dist/cli/review-guard.js",
-    "review_runner": "dist/cli/review-runner.js"
+    "review_preflight": "dist/cli/preflight.js",
+    "review_runner": "dist/cli/review.js"
   },
   "type": "module",
   "scripts": {
-    "aml:review": "node dist/aml/cli.js",
+    "review": "node dist/cli/review.js",
     "build": "bash scripts/build.sh",
     "test": "npm run build && node --test test/*.test.js",
     "eval": "node eval/run.mjs",
@@ -23,7 +17,7 @@
     "eval:judge": "node eval/judge.mjs",
     "eval:report": "node eval/report.mjs",
     "eval:benchmark": "node eval/benchmark.mjs",
-    "lint": "tsc --noEmit && tsc -p tsconfig.aml.json --noEmit && oxlint .",
+    "lint": "tsc --noEmit && oxlint .",
     "lint:fix": "oxlint . --fix",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

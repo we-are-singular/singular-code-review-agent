@@ -1,216 +1,153 @@
 # Singular Code Review Agent
 
-Singular Code Review Agent runs an automated pull-request review inside GitHub
-Actions. It gives OpenCode the PR context and filtered diff, validates findings
-against changed lines, audits the result, and publishes one batched review from
-a GitHub App identity.
+Singular Code Review Agent is an AML workflow that reviews pull requests from GitHub Actions. It gathers one immutable PR snapshot, runs six focused review lanes in parallel, consolidates their Tool-staged findings, validates every GitHub target deterministically, and publishes one batched review through a GitHub App.
 
-This repository publishes the container image and reusable workflow used by
-Singular repositories. It is open source infrastructure, not a hosted review
-service. Forks need their own GitHub App identity and model credentials.
+This repository publishes the container image and reusable workflow used by Singular repositories. It is open source infrastructure, not yet the hosted subscription service described in [Future Work](FUTURE.md).
 
-## Existing review flow
+## Architecture
 
-The reusable workflow rejects fork PRs and skip directives before minting a
-GitHub App token or checking out code. For accepted runs, `review_runner`:
+[src/review.tsx](src/review.tsx) is the complete workflow blueprint:
 
-1. gathers normalized PR context and a filtered diff;
-2. optionally gates low-risk updates and direct mention questions;
-3. runs the reviewer, which queues findings through `review_comments`;
-4. validates comment locations against the current diff;
-5. audits the queue for invalid, duplicate, or overlapping findings;
-6. synthesizes the review body and publishes one GitHub review.
+```
+Workspace
+├─ ReviewContextFiles
+│  ├─ .singular-code-review/pr.md
+│  ├─ .singular-code-review/pr.diff
+│  └─ .singular-code-review/history.md
+├─ ReviewAcknowledgement
+├─ ReviewGate
+│     ├─ answer | no-review
+│     └─ review
+│        ├─ Parallel
+│        │  ├─ IntentContractLane
+│        │  ├─ StandardsArchitectureLane
+│        │  ├─ CodePathBugHunterLane
+│        │  ├─ CorrectnessRiskTestingLane
+│        │  ├─ DocumentationCommentaryLane
+│        │  └─ MaintainabilityEleganceLane
+│        └─ ReviewAudit
+│           └─ ReviewValidation
+│              └─ ReviewSynthesis
+└─ ReviewPublication
+```
 
-The gate can answer or skip a full re-review, but it never submits an approval.
-Dry runs bypass it so local checks exercise the complete review pipeline.
+One request-scoped [ReviewContext](src/components/review-context.tsx) holds the cached GitHub snapshot, publication boundary, [ReviewQueue](src/lib/review-queue.ts), and typed phase results. Provider and model configuration happen once when [AmlRuntime](src/run-review.tsx) is constructed; neither is passed through the component tree.
 
-### Existing reviewer incomplete-review recovery
+The three files under .singular-code-review/ are durable evidence for Agents, not orchestration state:
 
-The `src/` exploratory review has three numbered attempts:
+- pr.md contains the author description, refs, trigger, commits, and changed file manifest.
+- pr.diff contains the filtered unified diff.
+- history.md contains prior comments, reviews, threads, action items, and the chronological PR timeline.
 
-1. configured primary model, new session;
-2. configured primary model, new session;
-3. configured fallback model, new session.
+Findings, audit decisions, validation results, and GitHub mutations stay typed and in memory.
 
-The fallback defaults to `opencode-go/minimax-m3`. A detected sandbox
-permission denial first receives one corrective steering message in the same
-session; that continuation does not consume another numbered attempt.
+## Review behavior
 
-An attempt succeeds only when OpenCode completes conclusively and produces
-findings or a terminal verdict. Nonzero exits, terminal `unknown`, and empty or
-mid-investigation output advance to the next attempt. Intermediate attempts are
-retained as artifacts and never published. Exhausting the policy fails the
-check instead of publishing an incomplete green review.
+Every lane uses the shared [lane review policy](src/skills/lane.md), Context7 for material external-library questions, five read-only Tools for explicitly referenced GitHub PRs/issues/commits, and three finding Tools. The active PR remains preloaded in the evidence files, so reference Tools are self-service context rather than a second gathering path. The image also installs the public backend-architecture and frontend-architecture skills so OpenCode can load repository-relevant guidance on demand.
 
-## Side-by-side AML reviewer
+- add_review_comment stages a changed-line comment or fenced suggestion.
+- add_review_reply stages a direct response to an existing top-level review comment.
+- add_review_blocker stages the exceptional high-confidence critical concern that cannot honestly be anchored to one changed line.
 
-[`aml/review.tsx`](aml/review.tsx) contains a new AML implementation beside the
-unchanged `src/` reviewer. Its main JSX tree shows acknowledgement, gate, six
-specialist lanes under native `<Parallel>`, evidence audit, deterministic
-validation, synthesis, and publication in one place. Before investigation,
-AML writes `pr.md`, `pr.diff`, and `history.md` beneath the checkout's
-`.singular-code-review/` directory. They are readable evidence, not workflow
-handoffs: specialists queue validated comments, suggestions, and replies
-through distinct in-memory Tools and finish through one short assessment Tool.
-An exceptional blocker Tool accepts only application-fixed, high-confidence
-critical concerns without an honest changed-line anchor. Audit deduplicates and
-calibrates the shared findings owner before deterministic validation and
-publication. There is no custom scheduler, partial-success quorum, or hard-coded
-documentation-only detector; any failed native Parallel branch stops the review
-before publication.
+Tool calls contain publication-ready author text. Lane terminal output is a short internal assessment and can never become a finding by accident.
 
-The AML runtime selects OpenCode once from the ACP executable provided by the
-AML sandbox image. That is the AML implementation's normal provider/model:
-`opencode-go/deepseek-v4-flash`. Evaluation may opt into AML's Codex ACP provider
-with `gpt-5.6-luna` at `max` reasoning; that path is intentionally not the
-production default. Review phases exchange one flat typed Context in memory;
-GitHub reads, staged review findings, and prepared mutations are explicit AML
-Tools. Publication invokes those Tools programmatically inside the same AML
-tree and does not spend a publisher Agent turn. The `aml_review` CLI emits one
-complete JSON result, while the eval harness alone renders compatibility
-Markdown/JSON artifacts.
+[ReviewAudit](src/components/phases/review-audit.tsx) sees the complete staged queue but does not re-review the diff. It may merge duplicate finding IDs, lower an anchored inline severity, or drop weak, resolved, speculative, or disproportionate findings; it cannot invent a finding or rewrite its author text, evidence, or anchor. [ReviewValidation](src/components/phases/review-validation.tsx) then checks changed-line ranges, reply targets, duplicate comments, and unresolved prior bot threads with deterministic code.
 
-The AML reviewer is selectable in local evals and is not yet the reusable
-workflow default. See [`aml/README.md`](aml/README.md) for its component tree,
-provider/runtime contract, publication boundary, and local command.
+The application derives the verdict from the retained typed findings:
 
-Managed workers may inject an AML `SandboxProvider`. The same visible review
-tree then acquires one read-only `<Workspace>` and `<Sandbox>` lease around the
-complete investigative blueprint. The packaged CLI does not start nested
-Docker because the application already runs in the outer reviewer container; a
-managed service must own the stronger Sandbox provider at its composition
-boundary.
+- critical inline findings or review-level blockers produce ⛔ Block;
+- high, low, or unresolved question findings produce ⚠️ Request changes;
+- nit-only or empty reviews produce ✅ LGTM.
 
-The Dockerfile pins the published AML Agent Sandbox by immutable digest. The
-application installs AML SDK `0.7.1` through its ordinary package lock, while
-the base image supplies the matching CLI and Agent ACP executables.
+`low` is the reviewer's default recommendation to fix a concrete defect, contract problem, or material structural debt before merge even though a human may accept it with a reason. `nit` is explicitly safe to leave unchanged.
 
-## Model evaluation
+Synthesis receives that authoritative verdict and writes only the concise pull-request overview. Inline comments remain the sole home for specific findings. Request-changes and Block reviews may include a short Recommendations section that coordinates next steps without repeating the comments.
 
-The settled provider split is intentionally small:
+### Fast follow-up reviews
 
-- production AML: OpenCode with `opencode-go/deepseek-v4-flash`;
-- opt-in evaluation: Codex ACP with `gpt-5.6-luna` at maximum reasoning.
+The deterministic gate uses event type, the previous bot review, Git ancestry, unresolved feedback, and the delta since the reviewed commit before starting the six lanes. It can:
 
-The pre-refactor ten-PR baseline completed 10/10 with OpenCode/DeepSeek: AML
-scored 84.8/100 and the unchanged `src/` reviewer scored 84.7/100 on the same
-revisions. AML's mean uncached capture was 414.2s and its mean internal review
-time was 400.4s; the source means were 236.2s capture and 209.8s internal review
-time. These are historical benchmark averages, not a timeout or a production
-SLA. The separate AML-only Codex ACP/Luna run completed 5/5 at 83.0/100, but
-its four uncached captures averaged 1,407.1s and its five internal timings
-averaged 1,232.0s, so it remains evaluation-only. The current simplified
-architecture still needs a fresh fixed-set benchmark before its quality or
-latency is compared with that baseline. See the [eval guide](eval/README.md)
-for the matrix and cache rules.
+- answer a direct conversational request;
+- post a quick LGTM for an already reviewed head or a confidently contained response to prior feedback;
+- escalate new behavior, unresolved findings, broad deltas, or uncertainty to the full review.
+
+An explicit review or re-review request always reaches the full workflow.
+
+## Runtime and publication
+
+Production uses the OpenCode ACP supplied by the pinned AML Agent Sandbox with opencode-go/deepseek-v4-flash. Codex ACP with gpt-5.6-luna at maximum reasoning remains available for deliberate evaluation.
+
+The packaged CLI runs inside the AML reviewer container. Agent permissions keep repository access read-only and disable native shell and network access; application-owned Tools provide the explicit external capabilities.
+
+GitHub reads are gathered once by deterministic application code before any Agent starts. GitHub writes are declarative Tools backed by one idempotent action ledger. The runtime verifies that the checked-out commit matches the API snapshot before model work, publication rechecks the head, the batched review is submitted with commit_id, and prepared replies follow. An ambiguous failed mutation is never replayed. The CLI is dry-run by default and requires --publish for live mutations.
 
 ## Install
 
 1. Install the Singular Code Review GitHub App on the target repository.
-2. Add `SINGULAR_CODE_REVIEW_PRIVATE_KEY` and `OPENCODE_API_KEY` as repository
-   or scoped organization Actions secrets. `CONTEXT7_API_KEY` is optional.
-   Codex/Luna evaluation uses the host ChatGPT Codex login, not an API-key
-   credential. The eval harness stages an ephemeral writable copy of
-   `${CODEX_HOME:-~/.codex}/auth.json` for Codex, removes it in `finally`, and
-   never forwards API keys or copies auth state into artifacts or caches.
-3. Copy [`examples/singular-code-review.yml`](examples/singular-code-review.yml)
-   to `.github/workflows/singular-code-review.yml` in the target repository.
-4. Open a same-repository PR, mark a draft ready, or have an `OWNER`, `MEMBER`,
-   or `COLLABORATOR` comment `@singular-code-review`.
+2. Add SINGULAR_CODE_REVIEW_PRIVATE_KEY and OPENCODE_API_KEY as repository or organization Actions secrets. CONTEXT7_API_KEY is optional.
+3. Copy [examples/singular-code-review.yml](examples/singular-code-review.yml) to .github/workflows/singular-code-review.yml in the target repository.
+4. Open a same-repository PR, mark a draft ready, push a new head, or have a trusted collaborator comment @singular-code-review.
 
-Optional repository variables:
+The reusable workflow accepts npm_install: true for repositories whose review needs installed dependencies. It is disabled by default because package install scripts execute with the review credentials available.
 
-- `OPENCODE_MODEL` selects the primary reviewer model and supports an OpenCode
-  reasoning variant suffix such as `:high`.
-- `OPENCODE_MODEL_FALLBACK` selects the source review's third attempt and
-  defaults to `opencode-go/minimax-m3`. It follows the same variant rule.
-- `OPENCODE_GATE_MODEL` selects the cheaper gate model.
-
-Dependency installation is disabled by default. Set the reusable workflow's
-`npm_install` input only for repositories whose review requires installed
-dependencies.
-
-Start a PR title with `[skip]` or add `@singular-code-review skip` to the PR
-body to stop the workflow before checkout and model execution.
+Set the repository variable REVIEW_MODEL to override the production model. Existing OPENCODE_MODEL repository variables remain supported as a fallback. Start a PR title with [skip] or add @singular-code-review skip to the PR body to stop before App-token creation, checkout, and model execution.
 
 ## Security boundary
 
-The reviewer runs inside the consuming repository's Actions environment. The
-example and reusable workflows block fork heads before secrets, checkout, or
-dependency installation. Mention triggers are limited to trusted repository
-roles and remain blocked for forks.
+The example and reusable workflows reject fork heads before secrets, checkout, or dependency installation. Mention triggers require a repository owner, member, collaborator, or the pull-request author and ignore bot comments.
 
-Keep the workflow on `pull_request` and `issue_comment`. Moving it to
-`pull_request_target` would put trusted credentials next to untrusted fork
-code. Enabling dependency installation assumes branches and write
-collaborators are trusted to run install scripts with repository Actions
-secrets available.
+Keep the trigger on pull_request and issue_comment. pull_request_target would place trusted credentials next to untrusted fork code. Each accepted run mints a short-lived installation token for checkout, GitHub reads, reactions, replies, and review submission.
 
-The App private key remains in the consuming repository or organization. Each
-run mints a short-lived installation token for checkout, GitHub reads, replies,
-and final review submission.
-
-## Image and repository entry points
-
-Pushes to `main` publish:
-
-```text
-ghcr.io/we-are-singular/singular-code-review-agent:latest
-ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
-```
-
-Useful entry points:
-
-- [`.github/workflows/review.yml`](.github/workflows/review.yml): reusable
-  workflow and runtime defaults
-- [`src/review/workflow.ts`](src/review/workflow.ts): review orchestration
-- [`src/clients/opencode.ts`](src/clients/opencode.ts): OpenCode process and
-  JSONL boundary
-- [`opencode/agents`](opencode/agents): durable agent roles
-- [`src/prompts`](src/prompts): phase-specific prompts
-- [`opencode/skills`](opencode/skills): vendored reviewer skills
-- [`eval`](eval/README.md): real-PR model evaluation framework
-
-Target repositories can supply `AGENTS.md` for project context. Bundled agent
-roles remain authoritative for review, audit, and synthesis behavior.
+Investigative Agents have read-only filesystem access with native shell and network disabled. They receive the materialized review evidence, focused read-only GitHub reference Tools, and the finding Tools needed by their lane; Context7 is the explicit documentation MCP boundary. GitHub publication Tools are invoked programmatically after deterministic validation.
 
 ## Local development
-
-Install the published AML SDK through the repository lockfile, then run the
-normal checks:
 
 ```bash
 npm ci
 npm test
 npm run lint
 npm run format:check
-```
-
-The application image uses the published sandbox by default:
-
-```bash
 docker build -t singular-code-review:local .
 ```
 
-See the [AML reviewer guide](aml/README.md#running) for the
-provider and image contract. `--base-image` remains available in the eval
-harness when testing an unreleased local AML sandbox explicitly.
-
-Run a real PR through the production pipeline without GitHub writes:
+Run one real pull request without GitHub writes through the eval boundary:
 
 ```bash
-OPENCODE_API_KEY=... bin/review_dry_run owner/repository 123
+OPENCODE_API_KEY=... npm run eval -- --no-config-input --pr owner/repository/123 --model opencode-go/deepseek-v4-flash --out eval/runs/smoke
 ```
 
-The dry run clones the PR into a disposable workspace, blocks GitHub writes,
-prints the review payload, and keeps diagnostic artifacts under
-`/tmp/.singular-code-review/`.
+The evaluator verifies the configured revision, prepares the checkout outside the image, mounts it at /workspace, and invokes the same production review_runner without --publish.
 
-For model comparisons and reports, follow the [eval guide](eval/README.md).
+For scored real-PR runs, provider comparisons, cache rules, and reports, see the [evaluation guide](eval/README.md).
 
-## Vendored skills
+## Published image and entry points
 
-The image vendors `backend-architecture`, `frontend-architecture`, and
-`singular-code-review` from `we-are-singular/skills`. The pinned source commit
-and update instructions live in
-[`opencode/skills/VENDORED_SKILLS.md`](opencode/skills/VENDORED_SKILLS.md).
+Pushes to main publish:
+
+```
+ghcr.io/we-are-singular/singular-code-review-agent:latest
+ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
+```
+
+The image exposes:
+
+- review_runner: the production CLI;
+- review_preflight: the workflow-token fork, trust, and skip guard;
+- provision.sh: optional target-repository dependency installation.
+
+Useful source entry points:
+
+- [src/review.tsx](src/review.tsx): complete declarative workflow;
+- [src/components/lanes](src/components/lanes): modular specialist lanes;
+- [src/components/phases](src/components/phases): gate, audit, validation, synthesis, and publication phases;
+- [src/tools](src/tools): review-queue and focused GitHub read/write Tools;
+- [src/services](src/services): GitHub API, cached session, evidence assembly, preflight, and mutation boundaries;
+- [src/lib](src/lib): deterministic diff, gate, queue, payload, provider, and telemetry rules;
+- [src/types](src/types): request, snapshot, phase, and final-result contracts;
+- [eval](eval/README.md): real-PR evaluation framework.
+
+## Benchmark snapshot
+
+The migration was calibrated on fixed private and public PR corpora. The final pre-consolidation OpenCode/DeepSeek ten-PR run averaged 86.1/100 and 193 seconds of internal review time. The historical source implementation averaged 84.7/100 and 210 seconds on the same private revisions, but used the provider's former model namespace, so that comparison is directional. A separate Codex/Luna five-PR run averaged 83.0/100 and was much slower; it remains an evaluation path rather than the production default.
+
+These are historical calibration results, not a latency SLA or a guarantee for the current provider snapshot.

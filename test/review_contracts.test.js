@@ -1,58 +1,73 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { main as reviewCommentsMain } from "../dist/cli/review-comments.js"
-import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../dist/review/body.js"
-import { buildReviewerContext, buildValidationContext, createEmptyReviewContext } from "../dist/review/context.js"
-import { filterReviewDiff, parseUnifiedDiff, validCommentRangesFromDiff } from "../dist/review/diff.js"
-import {
-  addInlineComment,
-  addReply,
-  addSuggestion,
-  clearQueue,
-  loadQueue,
-  setConclusion,
-  validateQueue
-} from "../dist/review/queue.js"
+import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../dist/lib/review-body.js"
+import { ReviewDiff } from "../dist/lib/review-diff.js"
+import { ReviewQueue, ReviewSeveritySchema } from "../dist/lib/review-queue.js"
+import { ReviewEvidence } from "../dist/services/review-evidence.js"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const fixture = path.join(repoRoot, "test", "fixtures", "sample.patch")
 
-function tempFile(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-contracts-"))
-  return path.join(dir, name)
-}
-
-function context(diffText, overrides = {}) {
+function queueOptions(diffText, overrides = {}) {
   return {
-    generated_at: new Date().toISOString(),
-    run: {
-      event_name: null,
-      reason: "manual",
-      actor: null,
-      trigger_comment: null,
-      command: "@singular-code-review",
-      bot_login: "review-bot"
-    },
-    pr: {},
-    diff: { file: fixture, files: [] },
-    valid_comment_ranges: validCommentRangesFromDiff(diffText),
-    issue_comments: [],
-    review_comments: [],
-    review_threads_available: false,
-    review_threads: [],
-    unresolved_review_threads: [],
-    unresolved_bot_threads: [],
-    reviews: [],
-    previous_bot_findings: [],
-    action_items: [],
+    botLogin: "review-bot",
+    commentRanges: ReviewDiff.from(diffText).commentRanges,
+    reviewThreadsAvailable: false,
+    unresolvedBotThreads: [],
+    reviewComments: [{ id: 456, body: "Original", user: { login: "review-bot" } }],
     ...overrides
   }
 }
+
+function inline(body, overrides = {}) {
+  return {
+    kind: "inline",
+    severity: "high",
+    body,
+    evidence: "Changed-line evidence.",
+    confidence: "high",
+    path: "src/app.js",
+    line: 2,
+    side: "RIGHT",
+    ...overrides
+  }
+}
+
+test("review severity exposes one nonblocking nit category", () => {
+  assert.deepEqual(ReviewSeveritySchema.options, ["critical", "high", "low", "question", "nit"])
+  assert.equal(ReviewSeveritySchema.safeParse("hint").success, false)
+})
+
+test("audit demotion follows the inline severity ladder and preserves category boundaries", () => {
+  const queue = new ReviewQueue(queueOptions(fs.readFileSync(fixture, "utf8")))
+  const critical = queue.add("code-path-bug-hunter", inline("Critical concern.", { severity: "critical" }))
+  const explicit = queue.add("maintainability-elegance", inline("Overstated cleanup.", { severity: "high", line: 6 }))
+  const question = queue.add(
+    "intent-contract",
+    inline("Which contract should this preserve?", { severity: "question", line: 4 })
+  )
+  const blocker = queue.add("standards-architecture", {
+    kind: "blocker",
+    severity: "critical",
+    body: "The approach cannot safely land.",
+    evidence: "No changed line can honestly anchor the repository-wide conflict.",
+    confidence: "high"
+  })
+  queue.beginAudit()
+
+  assert.deepEqual(queue.demote(critical.id), { action: "demoted", severity: "high" })
+  assert.deepEqual(queue.demote(critical.id), { action: "demoted", severity: "low" })
+  assert.deepEqual(queue.demote(critical.id), { action: "demoted", severity: "nit" })
+  assert.deepEqual(queue.demote(critical.id), { action: "dropped" })
+  assert.deepEqual(queue.demote(explicit.id, "nit"), { action: "demoted", severity: "nit" })
+  assert.throws(() => queue.demote(explicit.id, "low"), /severity low is not lower than nit/u)
+  assert.throws(() => queue.demote(question.id), /questions must be retained or dropped/u)
+  assert.throws(() => queue.demote(blocker.id), /only anchored inline findings have ordered severity/u)
+})
 
 test("review body limit keeps verbose synthesized conclusions compact", () => {
   const body = enforceReviewBodyLimit("x".repeat(6_500))
@@ -61,89 +76,67 @@ test("review body limit keeps verbose synthesized conclusions compact", () => {
   assert.match(body, /\[Review body truncated\]$/u)
 })
 
-test("queue supports comments, suggestions, replies, and conclusion", () => {
-  const queueFile = tempFile("queue.json")
-  clearQueue(queueFile)
-
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "Single-line finding." })
-  addInlineComment(queueFile, { path: "src/new.js", start_line: 1, line: 2, body: "Multi-line finding." })
-  addSuggestion(queueFile, {
-    path: "src/new.js",
-    start_line: 1,
-    line: 2,
-    message: "Use one export.",
-    replacement: "export const value = 2;"
-  })
-  addReply(queueFile, { to: 123, body: "This still needs a fix." })
-  setConclusion(queueFile, "Review conclusion: one blocking issue remains.")
-
-  const queue = loadQueue(queueFile)
-  assert.equal(queue.inlineComments.length, 3)
-  assert.equal(queue.replies.length, 1)
-  assert.equal(queue.conclusion, "Review conclusion: one blocking issue remains.")
-  assert.match(queue.inlineComments[2].body, /```suggestion/)
-})
-
-test("queue separates markdown rules from preceding prose before GitHub rendering", () => {
-  const queueFile = tempFile("queue.json")
-  clearQueue(queueFile)
-
-  addInlineComment(queueFile, {
+test("comment normalization keeps Markdown rules and suggestions safe for GitHub rendering", () => {
+  const comment = ReviewQueue.normalizeComment({
     path: "src/app.js",
     line: 2,
     body: "Problem sentence.\n---\n**action:** Fix the contract."
   })
-  addSuggestion(queueFile, {
+  const suggestion = ReviewQueue.normalizeComment({
+    kind: "suggestion",
     path: "src/new.js",
     start_line: 1,
     line: 2,
-    message: "Use the literal block.",
-    replacement: "---\nvalue"
+    body: "Use the literal block.\n\n```suggestion\n---\nvalue\n```"
   })
 
-  const queue = loadQueue(queueFile)
-  assert.equal(queue.inlineComments[0].body, "Problem sentence.\n\n---\n**action:** Fix the contract.")
-  assert.match(queue.inlineComments[1].body, /```suggestion\n---\nvalue\n```/u)
+  assert.equal(comment.body, "Problem sentence.\n\n---\n**action:** Fix the contract.")
+  assert.match(suggestion.body, /```suggestion\n---\nvalue\n```/u)
 })
 
-test("validation is deterministic and keeps genuinely distinct same-line findings", () => {
-  const queueFile = tempFile("queue.json")
+test("ReviewQueue validates targets and keeps distinct same-line findings", () => {
   const diffText = fs.readFileSync(fixture, "utf8")
-  clearQueue(queueFile)
+  const queue = new ReviewQueue(queueOptions(diffText))
 
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "The timeout can become NaN." })
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "The timeout can overflow the retry budget." })
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "The timeout can become NaN." })
-  addInlineComment(queueFile, { path: "src/app.js", line: 3, side: "LEFT", body: "Deleted return path is valid." })
-  addInlineComment(queueFile, { path: "src/app.js", line: 1, side: "RIGHT", body: "Right-side context should drop." })
-  addInlineComment(queueFile, { path: "src/app.js", line: 99, body: "Line outside the diff should drop." })
-  addReply(queueFile, { to: 456, body: "Reply is valid." })
-  addReply(queueFile, { to: 789, body: "Reply target is missing." })
-  setConclusion(queueFile, "LGTM aside from the queued finding.")
-
-  const validated = validateQueue(loadQueue(queueFile), {
-    ...context(diffText),
-    review_comments: [{ id: 456, body: "Original", user: { login: "review-bot" } }]
+  queue.add("intent-contract", inline("The timeout can become NaN."))
+  queue.add("standards-architecture", inline("The timeout can overflow the retry budget."))
+  queue.add("code-path-bug-hunter", inline("The timeout can become NaN."))
+  queue.add("correctness-risk-testing", inline("Deleted return path is valid.", { line: 3, side: "LEFT" }))
+  queue.add("documentation-commentary", {
+    kind: "reply",
+    to: 456,
+    body: "Reply is valid.",
+    evidence: "Comment 456 asks a direct question."
   })
 
+  assert.throws(
+    () => queue.add("maintainability-elegance", inline("Right-side context should drop.", { line: 1 })),
+    /line is not a changed RIGHT-side line/u
+  )
+  assert.throws(
+    () =>
+      queue.add("maintainability-elegance", {
+        kind: "reply",
+        to: 789,
+        body: "Missing reply.",
+        evidence: "No matching comment."
+      }),
+    /target is not a review comment/u
+  )
+
+  queue.beginAudit()
+  const validated = queue.finalize().queue
   assert.equal(validated.inlineComments.length, 3)
   assert.equal(validated.replies.length, 1)
-  assert.equal(validated.dropped.length, 4)
-  assert.equal(validated.stats.has_conclusion, true)
   assert.deepEqual(
     validated.dropped.map(item => item.reason),
-    [
-      "duplicate queued comment",
-      "line is not a changed RIGHT-side line",
-      "line is not a changed RIGHT-side line",
-      "reply target is not a review comment on this PR"
-    ]
+    ["duplicate queued comment"]
   )
 })
 
-test("diff ranges support right-side context and left-side deletions", () => {
-  const diffText = fs.readFileSync(fixture, "utf8")
-  const app = parseUnifiedDiff(diffText).files.find(file => file.path === "src/app.js")
+test("diff anchors include right-side context and left-side deletions", () => {
+  const diff = ReviewDiff.from(fs.readFileSync(fixture, "utf8"))
+  const app = diff.files.find(file => file.path === "src/app.js")
 
   assert.deepEqual(app?.addedLines, [2, 4, 6])
   assert.deepEqual(app?.deletedLines, [3])
@@ -151,167 +144,95 @@ test("diff ranges support right-side context and left-side deletions", () => {
   assert.deepEqual(app?.leftLines, [1, 2, 3, 4])
 })
 
-test("review diff filtering excludes noisy generated and binary hunks", () => {
-  const diffText = `diff --git a/package-lock.json b/package-lock.json
+test("review diff filtering excludes lockfiles and binary hunks", () => {
+  const diff = ReviewDiff.from(`diff --git a/package-lock.json b/package-lock.json
 index 111..222 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -1,3 +1,3 @@
- {
--  "lockfileVersion": 2
-+  "lockfileVersion": 3
- }
-diff --git a/packages/api/pnpm-lock.yaml b/packages/api/pnpm-lock.yaml
-index 111..222 100644
---- a/packages/api/pnpm-lock.yaml
-+++ b/packages/api/pnpm-lock.yaml
-@@ -1,2 +1,2 @@
--lockfileVersion: "8.0"
-+lockfileVersion: "9.0"
+@@ -1 +1 @@
+-old
++new
 diff --git a/assets/logo.png b/assets/logo.png
 new file mode 100644
 index 0000000..1111111
 Binary files /dev/null and b/assets/logo.png differ
-diff --git a/vendor/archive.zip b/vendor/archive.zip
-index 1111111..2222222 100644
-GIT binary patch
-literal 0
-HcmV?d00001
-diff --git a/data/model b/data/model
-index 1111111..2222222 100644
-GIT binary patch
-literal 0
-HcmV?d00001
 diff --git a/src/app.js b/src/app.js
 index 333..444 100644
 --- a/src/app.js
 +++ b/src/app.js
-@@ -1,2 +1,2 @@
+@@ -1 +1 @@
 -old
 +new
-`
+`)
 
-  const filtered = filterReviewDiff(diffText)
-
-  assert.deepEqual(filtered.ignoredFiles, [
-    "assets/logo.png",
-    "data/model",
-    "package-lock.json",
-    "packages/api/pnpm-lock.yaml",
-    "vendor/archive.zip"
-  ])
-  assert.doesNotMatch(filtered.text, /lockfileVersion/u)
-  assert.doesNotMatch(filtered.text, /GIT binary patch|Binary files/u)
-  assert.match(filtered.text, /src\/app\.js/u)
+  assert.deepEqual(diff.ignoredFiles, ["assets/logo.png", "package-lock.json"])
+  assert.doesNotMatch(diff.text, /package-lock|Binary files/u)
   assert.deepEqual(
-    parseUnifiedDiff(filtered.text).files.map(file => file.path),
+    diff.files.map(file => file.path),
     ["src/app.js"]
   )
 })
 
-test("review_comments rejects invalid targets before mutating the queue", async () => {
-  const queueFile = tempFile("queue.json")
-  const contextFile = tempFile("context.json")
+test("ReviewQueue drops exact previous bot findings using thread state or REST fallback", () => {
   const diffText = fs.readFileSync(fixture, "utf8")
-  fs.writeFileSync(contextFile, `${JSON.stringify(buildValidationContext(context(diffText)), null, 2)}\n`)
-
-  await assert.rejects(
-    reviewCommentsMain(
-      ["add", "--path", "src/app.js", "--line", "1", "--body", "Do not comment on unchanged context."],
-      {
-        ...process.env,
-        REVIEW_VALIDATION_CONTEXT_FILE: contextFile,
-        REVIEW_QUEUE_FILE: queueFile
-      }
-    ),
-    /invalid inline comment target: line is not a changed RIGHT-side line/u
+  const body = "**high:** Existing finding."
+  const threadQueue = new ReviewQueue(
+    queueOptions(diffText, {
+      reviewThreadsAvailable: true,
+      unresolvedBotThreads: [
+        {
+          id: "thread-1",
+          is_resolved: false,
+          is_outdated: false,
+          path: "src/app.js",
+          line: 2,
+          start_line: null,
+          side: "RIGHT",
+          start_side: null,
+          top_level_comment_id: 456,
+          top_level_author: "review-bot",
+          latest_author: "review-bot",
+          latest_comment_id: 456,
+          comments: [
+            {
+              id: 456,
+              node_id: null,
+              user: { login: "review-bot" },
+              body,
+              path: "src/app.js",
+              line: 2,
+              start_line: null,
+              side: "RIGHT",
+              start_side: null,
+              created_at: null,
+              html_url: null
+            }
+          ]
+        }
+      ]
+    })
   )
-  assert.equal(loadQueue(queueFile).inlineComments.length, 0)
+  threadQueue.add("intent-contract", inline("Existing finding."))
+  threadQueue.beginAudit()
+  assert.equal(threadQueue.finalize().queue.dropped[0].reason, "matching unresolved bot thread already exists")
 
-  await reviewCommentsMain(
-    ["add", "--path", "src/app.js", "--line", "3", "--side", "LEFT", "--body", "Deleted branch needs explanation."],
-    {
-      ...process.env,
-      REVIEW_VALIDATION_CONTEXT_FILE: contextFile,
-      REVIEW_QUEUE_FILE: queueFile
-    }
+  const restQueue = new ReviewQueue(
+    queueOptions(diffText, {
+      reviewComments: [{ id: 456, path: "src/app.js", line: 2, side: "RIGHT", body, user: { login: "review-bot" } }]
+    })
   )
+  restQueue.add("intent-contract", inline("Existing finding."))
+  restQueue.beginAudit()
+  assert.equal(restQueue.finalize().queue.dropped[0].reason, "matching previous bot comment already exists")
 
-  assert.deepEqual(loadQueue(queueFile).inlineComments, [
-    {
-      kind: "comment",
-      path: "src/app.js",
-      line: 3,
-      side: "LEFT",
-      body: "Deleted branch needs explanation."
-    }
-  ])
-})
-
-test("validation drops exact previous bot findings using thread state or REST fallback", () => {
-  const queueFile = tempFile("queue.json")
-  const diffText = fs.readFileSync(fixture, "utf8")
-  clearQueue(queueFile)
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "Existing finding." })
-
-  const threadValidated = validateQueue(loadQueue(queueFile), {
-    ...context(diffText),
-    review_threads_available: true,
-    unresolved_bot_threads: [
-      {
-        id: "thread-1",
-        is_resolved: false,
-        is_outdated: false,
-        path: "src/app.js",
-        line: 2,
-        start_line: null,
-        side: "RIGHT",
-        start_side: null,
-        top_level_comment_id: 456,
-        top_level_author: "review-bot",
-        latest_author: "review-bot",
-        latest_comment_id: 456,
-        comments: [
-          {
-            id: 456,
-            node_id: null,
-            user: { login: "review-bot" },
-            body: "Existing finding.",
-            path: "src/app.js",
-            line: 2,
-            start_line: null,
-            side: "RIGHT",
-            start_side: null,
-            created_at: null,
-            html_url: null
-          }
-        ]
-      }
-    ]
-  })
-
-  assert.equal(threadValidated.inlineComments.length, 0)
-  assert.equal(threadValidated.dropped[0].reason, "matching unresolved bot thread already exists")
-
-  clearQueue(queueFile)
-  addInlineComment(queueFile, { path: "src/app.js", line: 2, body: "Existing finding." })
-  const restValidated = validateQueue(loadQueue(queueFile), {
-    ...context(diffText),
-    review_threads_available: false,
-    review_comments: [
-      {
-        id: 456,
-        path: "src/app.js",
-        line: 2,
-        side: "RIGHT",
-        body: "Existing finding.",
-        user: { login: "review-bot" }
-      }
-    ]
-  })
-
-  assert.equal(restValidated.inlineComments.length, 0)
-  assert.equal(restValidated.dropped[0].reason, "matching previous bot comment already exists")
+  const malformedHistoryQueue = new ReviewQueue(
+    queueOptions(diffText, {
+      reviewComments: [{ id: 456, path: "src/app.js", line: 2, side: "SIDEWAYS", body, user: { login: "review-bot" } }]
+    })
+  )
+  malformedHistoryQueue.add("intent-contract", inline("Fresh finding."))
+  malformedHistoryQueue.beginAudit()
+  assert.equal(malformedHistoryQueue.finalize().queue.inlineComments.length, 1)
 })
 
 test("review body banner is mechanical and does not sanitize model prose", () => {
@@ -323,7 +244,7 @@ test("review body banner is mechanical and does not sanitize model prose", () =>
   assert.equal(body, "> reviewer · minimax-m3\n\n> reviewer · minimax-m3\n\nThe model wrote a banner anyway.")
 })
 
-test("review payload maps validated queue comments to GitHub review shape", () => {
+test("review payload maps the finalized queue to GitHub review shape", () => {
   const payload = buildReviewPayload({
     version: 1,
     conclusion: "> reviewer · minimax-m3\n\nReady to merge.",
@@ -366,23 +287,33 @@ test("review payload maps validated queue comments to GitHub review shape", () =
   })
 })
 
-test("participants exclude bot logins with or without the bot suffix", () => {
-  const reviewerContext = buildReviewerContext({
-    ...createEmptyReviewContext(),
-    run: {
-      event_name: null,
-      reason: "manual",
+test("evidence participants exclude bot logins with or without the bot suffix", () => {
+  const snapshot = new ReviewEvidence({
+    request: {
+      repository: "owner/repo",
+      prNumber: 42,
+      workspace: "/workspace",
+      workspaceHeadSha: "a".repeat(40),
+      botLogin: "singular-code-review[bot]",
+      eventName: null,
+      eventPath: null,
       actor: null,
-      trigger_comment: null,
-      command: "@singular-code-review",
-      bot_login: "singular-code-review[bot]"
+      ignoreHistory: false
     },
-    issue_comments: [
+    trigger: { eventName: null, reason: "manual", actor: null, comment: null },
+    pullRequest: { number: 42 },
+    diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
+    issueComments: [
       { id: 1, user: { login: "singular-code-review" }, body: "Bot-authored review note." },
       { id: 2, user: { login: "linear-code[bot]" }, body: "SHE-170" },
       { id: 3, user: { login: "fthemudo" }, body: "Thanks for the review." }
-    ]
-  })
+    ],
+    reviewComments: [],
+    reviewThreadsAvailable: false,
+    reviewThreads: [],
+    reviews: [],
+    commits: []
+  }).snapshot()
 
-  assert.deepEqual(reviewerContext.participants, ["<@fthemudo>"])
+  assert.deepEqual(snapshot.participants, ["@fthemudo"])
 })
