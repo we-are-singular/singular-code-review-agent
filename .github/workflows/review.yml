@@ -54,6 +54,7 @@ jobs:
       PR_NUMBER: ${{ inputs.pr_number }}
       TRIGGER_COMMENT_ID: ${{ inputs.trigger_comment_id }}
       REVIEW_MODEL: ${{ vars.REVIEW_MODEL || vars.OPENCODE_MODEL || 'opencode-go/deepseek-v4-flash' }}
+      REVIEW_EMOJIS: ${{ vars.REVIEW_EMOJIS || 'true' }}
       SINGULAR_CODE_REVIEW_INSTALL_DEPS: ${{ inputs.npm_install }}
     steps:
       - name: Run review preflight

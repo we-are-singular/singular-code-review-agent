@@ -299,7 +299,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.equal(result.lanes[2].summary, "The stale-state branch remains reachable and was queued for audit.")
   assert.equal(Object.hasOwn(result, "laneFailures"), false)
   assert.equal(result.validated.inlineComments.length, 1)
-  assert.match(result.validated.inlineComments[0].body, /^\*\*high:\*\* This branch accepts stale state/u)
+  assert.match(result.validated.inlineComments[0].body, /^:red_circle: \*\*high:\*\* This branch accepts stale state/u)
   assert.match(result.body, /^> reviewer · deepseek-v4-flash/u)
   assert.match(result.body, /## Verdict\n\n⚠️ Request changes$/u)
   assert.equal(result.publication.find(receipt => receipt.kind === "review")?.status, "prepared")
@@ -720,7 +720,10 @@ test("audit demotes a useful optional low to nit without rewriting it", async t 
 
   const result = await runReview(reviewOptions(t, github.client), () => provider)
   assert.deepEqual(result.audit.findings, [{ ...optionalLow, severity: "nit" }])
-  assert.match(result.validated.inlineComments[0].body, /^\*\*nit:\*\* Consider aligning this local name/u)
+  assert.match(
+    result.validated.inlineComments[0].body,
+    /^:nerd_face::point_up_2: \*\*nit:\*\* Consider aligning this local name/u
+  )
   assert.match(result.body, /✅ LGTM$/u)
 })
 

@@ -42,6 +42,29 @@ test("review severity exposes one nonblocking nit category", () => {
   assert.equal(ReviewSeveritySchema.safeParse("hint").success, false)
 })
 
+test("ReviewQueue renders optional application-owned severity emoji", () => {
+  const diffText = fs.readFileSync(fixture, "utf8")
+  const emojis = {
+    critical: ":stop_sign:",
+    high: ":red_circle:",
+    low: ":large_orange_diamond:",
+    question: ":question:",
+    nit: ":nerd_face::point_up_2:"
+  }
+
+  for (const [severity, emoji] of Object.entries(emojis)) {
+    const queue = new ReviewQueue(queueOptions(diffText))
+    queue.add("intent-contract", inline("Finding body.", { severity }))
+    queue.beginAudit()
+    assert.equal(queue.finalize().queue.inlineComments[0].body, `${emoji} **${severity}:** Finding body.`)
+  }
+
+  const plainQueue = new ReviewQueue(queueOptions(diffText, { reviewEmojis: false }))
+  plainQueue.add("intent-contract", inline("Finding body."))
+  plainQueue.beginAudit()
+  assert.equal(plainQueue.finalize().queue.inlineComments[0].body, "**high:** Finding body.")
+})
+
 test("audit demotion follows the inline severity ladder and preserves category boundaries", () => {
   const queue = new ReviewQueue(queueOptions(fs.readFileSync(fixture, "utf8")))
   const critical = queue.add("code-path-bug-hunter", inline("Critical concern.", { severity: "critical" }))
@@ -173,7 +196,7 @@ index 333..444 100644
   )
 })
 
-test("ReviewQueue drops exact previous bot findings using thread state or REST fallback", () => {
+test("ReviewQueue drops previous bot findings across legacy severity presentation", () => {
   const diffText = fs.readFileSync(fixture, "utf8")
   const body = "**high:** Existing finding."
   const threadQueue = new ReviewQueue(
