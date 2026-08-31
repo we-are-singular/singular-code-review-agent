@@ -352,6 +352,7 @@ test("runtime forwards Codex identity and its optional auth home to provider con
     options(github.client, workspace, {
       provider: "codex",
       model: "gpt-5.6-luna",
+      reasoningEffort: "max",
       codexHome
     }),
     providerOptions => {
@@ -366,8 +367,8 @@ test("runtime forwards Codex identity and its optional auth home to provider con
   assert.equal(result.provider, "codex")
   assert.equal(result.model, "gpt-5.6-luna")
   assert.deepEqual(
-    created.map(item => [item.provider, item.model, item.workspace, item.codexHome]),
-    [["codex", "gpt-5.6-luna", workspace, codexHome]]
+    created.map(item => [item.provider, item.model, item.reasoningEffort, item.workspace, item.codexHome]),
+    [["codex", "gpt-5.6-luna", "max", workspace, codexHome]]
   )
   assert.doesNotMatch(JSON.stringify(result), /codex-home/u)
 })

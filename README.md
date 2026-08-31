@@ -158,7 +158,7 @@ The reusable workflow accepts:
 | `runner`             | `ubuntu-latest` | GitHub Actions runner label                          |
 | `npm_install`        | `false`         | Install target-repository dependencies before review |
 
-Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible.
+Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible. Codex models accept an optional reasoning-effort suffix such as `gpt/luna:max`; OpenCode variants are not available through AML's current ACP provider.
 
 Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
 

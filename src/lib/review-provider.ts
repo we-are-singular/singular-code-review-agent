@@ -5,6 +5,7 @@ export type ReviewProvider = "opencode" | "codex"
 export type CreateReviewProviderOptions = {
   provider: ReviewProvider
   model: string
+  reasoningEffort?: string
   workspace: string
   codexHome?: string
 }
@@ -15,7 +16,7 @@ export function createReviewProvider(options: CreateReviewProviderOptions): Agen
     return codexAgent({
       model: options.model,
       workingDirectory: options.workspace,
-      config: { model_reasoning_effort: "max" },
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
       ...(options.codexHome ? { env: { CODEX_HOME: options.codexHome } } : {})
     })
   }

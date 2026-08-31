@@ -17,6 +17,7 @@ type CliOptions = {
   workspace: string
   provider: ReviewProvider
   model: string
+  reasoningEffort?: string
   codexHome?: string
   concurrency: number
   publish: boolean
@@ -55,14 +56,29 @@ function positiveInteger(value: string | undefined, name: string): number {
   return parsed
 }
 
-function model(options: { configured?: string; env: NodeJS.ProcessEnv; provider: ReviewProvider }): string {
+export function parseModelSpec(value: string): { model: string; reasoningEffort?: string } {
+  const separator = value.indexOf(":")
+  if (separator === -1) {
+    return { model: value }
+  }
+
+  const model = value.slice(0, separator)
+  const reasoningEffort = value.slice(separator + 1)
+  return reasoningEffort ? { model, reasoningEffort } : { model }
+}
+
+function model(options: {
+  configured?: string
+  env: NodeJS.ProcessEnv
+  provider: ReviewProvider
+}): { model: string; reasoningEffort?: string } {
   const modelEnv = options.env.REVIEW_MODEL || options.env.OPENCODE_MODEL
   const configured = options.configured || modelEnv
   if (configured) {
-    return required(configured, "REVIEW_MODEL")
+    return parseModelSpec(required(configured, "REVIEW_MODEL"))
   }
   if (options.provider === "opencode") {
-    return "opencode-go/deepseek-v4-flash"
+    return { model: "opencode-go/deepseek-v4-flash" }
   }
   throw new Error("REVIEW_MODEL is required when REVIEW_PROVIDER=codex")
 }
@@ -92,12 +108,16 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
   const workspace = resolve(required(values.workspace || env.WORKSPACE || env.GITHUB_WORKSPACE, "WORKSPACE"))
   const provider = parseReviewProvider(values.provider || env.REVIEW_PROVIDER)
   const codexHome = env.REVIEW_CODEX_HOME?.trim()
+  const modelSpec = model({ configured: values.model, env, provider })
+  if (provider !== "codex" && modelSpec.reasoningEffort) {
+    throw new Error("model reasoning suffixes require REVIEW_PROVIDER=codex")
+  }
   return {
     repository,
     prNumber: positiveInteger(values.pr || env.PR_NUMBER, "PR_NUMBER"),
     workspace,
     provider,
-    model: model({ configured: values.model, env, provider }),
+    ...modelSpec,
     ...(codexHome ? { codexHome } : {}),
     concurrency: positiveInteger(values.concurrency || env.REVIEW_CONCURRENCY || "6", "concurrency"),
     // Live mutation requires an explicit CLI flag; ambient CI variables cannot
@@ -167,6 +187,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     actionMode: options.publish ? "live" : "dry-run",
     provider: options.provider,
     model: options.model,
+    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
     ...(options.codexHome ? { codexHome: options.codexHome } : {}),
     maximumConcurrency: options.concurrency
   })
