@@ -1,10 +1,10 @@
-import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, evaluate, Skill } from "@aml-jsx/sdk"
 import { z } from "zod"
 
+import { Block } from "../block.js"
 import { prepareGate } from "../../lib/review-gate.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { ReviewContext, useReview } from "../review-context.js"
-import type { ReviewDraft } from "../../types/review.js"
+import { useReviewContext } from "../review-context.js"
 
 const GateDecisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("review"), reason: z.string().trim().min(1).max(1_000) }).strict(),
@@ -24,35 +24,22 @@ function GateAgent({ context, delta }: { context: unknown; delta: string }) {
       system="You route pull-request follow-up events. Fast-track only evidence-backed, low-risk deltas and escalate uncertainty to a full review."
     >
       <Skill name="Review gate policy" src="./skills/gate.md" />
-      {`Decide whether this event needs a full review, can be answered directly, or needs no review.
-
-Gate context:
-${JSON.stringify(context, null, 2)}
-
-Delta from the last completed review:
-${delta}
-
-The supplied context and delta are normally sufficient. Read ${REVIEW_CONTEXT_PATHS.pullRequest} only when stated intent matters and ${REVIEW_CONTEXT_PATHS.history} only when prior conversation is necessary to classify the latest change.`}
+      <Block>
+        Decide whether this event needs a full review, can be answered directly, or needs no review. Gate context:
+        <Block>{JSON.stringify(context, null, 2)}</Block>
+        Delta from the last completed review:
+        <Block>{delta}</Block>
+        The supplied context and delta are normally sufficient. Read {REVIEW_CONTEXT_PATHS.pullRequest} only when stated
+        intent matters and {REVIEW_CONTEXT_PATHS.history} only when prior conversation is necessary to classify the
+        latest change.
+      </Block>
     </Agent>
   )
 }
 
-/** Gives every confident no-review decision the same idempotent approval marker. */
-function gateBody(gate: Extract<ReviewGateResult, { decision: "answer" | "no-review" }>): string {
-  const answer = gate.answer.trim()
-  if (gate.decision === "answer") {
-    return answer
-  }
-
-  // Providers occasionally include the marker despite the prompt. Normalize
-  // only that exact terminal contract before appending the application-owned line.
-  const withoutExistingVerdict = answer.replace(/(?:^|\n+)\s*✅\s*LGTM\.?\s*$/u, "").trim()
-  return withoutExistingVerdict ? `${withoutExistingVerdict}\n\n✅ LGTM` : "✅ LGTM"
-}
-
 /** Uses deterministic event/history rules before paying for an Agent decision. */
-async function decideGate(): Promise<ReviewGateResult> {
-  const { github, snapshot } = useReview()
+export async function decideReviewGate(): Promise<ReviewGateResult> {
+  const { github, snapshot } = useReviewContext()
   const prepared = prepareGate(snapshot, github.request.workspace)
 
   if (prepared.action === "post") {
@@ -71,21 +58,4 @@ async function decideGate(): Promise<ReviewGateResult> {
     GateDecisionSchema
   )
   return { ...decision, source: "agent" }
-}
-
-/** Stops cheap events at the gate or exposes a typed review decision downstream. */
-export async function ReviewGate({ children }: { children: AmlRenderable }) {
-  const review = useReview()
-  const gate = await decideGate()
-  if (gate.decision !== "review") {
-    const result: ReviewDraft = {
-      status: gate.decision === "answer" ? "answered" : "no-review",
-      gate,
-      body: gateBody(gate)
-    }
-    review.outcome.select(result)
-    return ""
-  }
-
-  return <ReviewContext.Provider value={{ ...review, gate }}>{children}</ReviewContext.Provider>
 }

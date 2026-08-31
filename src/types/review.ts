@@ -94,7 +94,7 @@ export type ReviewSnapshot = {
   participants: string[]
 }
 
-/** Full-review draft selected after audit, validation, and synthesis. */
+/** Full-review draft derived after audit, queue finalization, and synthesis. */
 export type ReviewedDraft = {
   status: "reviewed"
   gate: Extract<ReviewGateResult, { decision: "review" }>

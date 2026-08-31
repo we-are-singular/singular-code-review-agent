@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url"
 
 import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
-import { ReviewContext, ReviewOutcome, type ReviewContextValue } from "./components/review-context.js"
+import { ReviewContext, ReviewOutcome, ReviewRouting, type ReviewContextValue } from "./components/review-context.js"
 import { createReviewProvider, type ReviewProvider } from "./lib/review-provider.js"
 import type { PublishedReview, ReviewAttempt, ReviewRequest, ReviewRunResult } from "./types/review.js"
 import { REVIEW_LANE_NAMES, ReviewQueue } from "./lib/review-queue.js"
@@ -50,7 +50,7 @@ export async function runReview(
   const started = Date.now()
   const signal = options.signal || new AbortController().signal
   const telemetry = new ReviewTelemetryCollector()
-  const github = new GitHubReviewSession(options.github, options.request)
+  const github = new GitHubReviewSession(options.github, options.request, options.actionMode === "live")
   const snapshot = await github.snapshot()
   const pullRequestHead = snapshot.pullRequest.headRefOid
   if (!pullRequestHead || options.request.workspaceHeadSha !== pullRequestHead) {
@@ -79,6 +79,7 @@ export async function runReview(
       unresolvedBotThreads: snapshot.unresolvedBotThreads,
       reviewComments: snapshot.reviewComments
     }),
+    routing: new ReviewRouting(),
     snapshot,
     outcome,
     model: options.model
@@ -99,7 +100,9 @@ export async function runReview(
       // remains pinned to the repository under review.
       cwd: fileURLToPath(new URL(".", import.meta.url)),
       maxConcurrentAgents: options.maximumConcurrency,
-      maxTurnsPerAgent: 1,
+      // The post-order review tree nests lane Agents beneath audit, synthesis,
+      // the router, and Workspace while retaining a finite depth budget.
+      maxDepth: 24,
       workspaceProvider: localWorkspace({ directory: options.request.workspace }),
       trace: telemetry.trace
     })

@@ -33,6 +33,30 @@ The judge does not see the real human review thread. We inspect that history aft
 
 Small score changes are not proof on their own. Model output varies between attempts, the corpus reflects our work rather than every codebase, and changing the judge or rubric breaks direct comparability. Pin the corpus, keep the judge fixed, retain every attempt, and read the artifacts before claiming an improvement.
 
+## Latest reviewer-change snapshot
+
+On 2026-08-31, the explicit `<ReviewRouter>` and ordered `<ReviewPublication>` implementation ran against the same ten pinned, history-blind private pull-request revisions as the previous leaf-first AML snapshot. Both snapshots used `opencode-go/deepseek-v4-flash` for review and judgment with the same rubric.
+
+| Metric | Previous AML tree | Router tree | Change |
+| --- | ---: | ---: | ---: |
+| Completed captures | 10/10 | 10/10 | unchanged |
+| Judge score | 88.0 | 87.6 | -0.4 points |
+| Mean reviewer time | 3m 49s | 5m 45s | 1m 56s slower (51%) |
+| Reviewer completions | 80 | 79 | one fewer |
+| Reviewer tokens | 4.09M | 4.28M | 4.8% more |
+| Retained comments | 30 | 38 | eight more |
+| Reviewer cost per PR | $0.0088 off-peak | $0.0129 off-peak / $0.0258 peak | usage and tariff changed |
+
+The router run completed every capture on its first attempt and recorded no hard failures. Combined audit and synthesis token volume remained effectively flat at about 333K versus 328K despite one fewer model completion, so the native upward handoff did not duplicate parent work. Most additional token volume came from the six investigative lanes.
+
+DeepSeek V4 Flash has separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The previous capture ran during off-peak pricing; the router capture ran during a peak window. The normalized $0.0129 and observed $0.0258 values apply both tariffs to the same router-run token usage and exclude judge inference. Actual cost also varies with review content, cache behavior, and future provider pricing.
+
+The router run retained one high, 13 low, 23 nit, and one question finding. The previous snapshot retained 15 low and 15 nit findings. Manual inspection and judge feedback found stronger behavioral-edge-case, public-contract, documentation, and output-hygiene coverage, but weaker severity calibration in two reviews; the material-finding count remained nearly flat while nit volume increased.
+
+One judgment exceeded the corpus's 180-second judge timeout. The initial failed attempt was retained, and a targeted retry with a 360-second ceiling completed the tenth judgment. The score above uses ten completed judgments; reviewer time and cost remain reviewer-only and are unaffected by that retry.
+
+This is one directly comparable before-and-after run, not a repeated-run confidence interval. It shows that the router tree preserved aggregate quality without adding model turns, while the observed latency, lane token volume, and severity calibration should be rechecked in later prompt changes.
+
 ## Requirements
 
 - Docker;

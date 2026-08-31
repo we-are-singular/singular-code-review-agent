@@ -9,7 +9,7 @@ export type PublicationExpectation = { kind: "issue-comment" } | { kind: "review
 
 export type GitHubActionReceipt = {
   key: string
-  kind: "reaction" | "issue-comment" | "review" | "reply"
+  kind: "issue-comment" | "review" | "reply"
   status: "prepared" | "submitted" | "skipped" | "failed"
   payload: unknown
   error?: string
@@ -17,7 +17,6 @@ export type GitHubActionReceipt = {
 
 export type GitHubActions = {
   readonly mode: GitHubActionMode
-  reactToIssueComment(commentId: number): Promise<GitHubActionReceipt>
   postIssueComment(prNumber: number, body: string): Promise<GitHubActionReceipt>
   submitPullRequestReview(prNumber: number, payload: ReviewPayload): Promise<GitHubActionReceipt>
   replyToReviewComment(prNumber: number, commentId: number, body: string): Promise<GitHubActionReceipt>
@@ -124,14 +123,6 @@ export class ReviewGitHubActions implements GitHubActions {
     this.#github = options.github
     this.#headSha = options.headSha
     this.#ledger = new ActionLedger(`${options.repository}#${options.prNumber}@${options.headSha || "unknown-head"}`)
-  }
-
-  /** Acknowledges a comment at most once per run. */
-  reactToIssueComment(commentId: number): Promise<GitHubActionReceipt> {
-    const payload = { commentId, content: "eyes" as const }
-    return this.#ledger.execute("reaction", payload, this.mode, () =>
-      this.#github.createIssueCommentReaction(commentId, "eyes")
-    )
   }
 
   /** Posts the prepared top-level gate response. */

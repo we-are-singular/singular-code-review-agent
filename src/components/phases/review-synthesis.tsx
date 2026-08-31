@@ -1,9 +1,9 @@
-import { Agent, evaluate, Skill } from "@aml-jsx/sdk"
+import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
+import { Block } from "../block.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { useReview } from "../review-context.js"
-import type { ReviewDraft } from "../../types/review.js"
+import { useReviewContext } from "../review-context.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 
 const SynthesisSchema = z
@@ -14,7 +14,7 @@ const SynthesisSchema = z
   })
   .strict()
 
-function SynthesisAgent({ evidence }: { evidence: unknown }) {
+function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evidence: unknown }) {
   return (
     <Agent
       name="review-synthesis"
@@ -22,11 +22,17 @@ function SynthesisAgent({ evidence }: { evidence: unknown }) {
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
       <Skill name="Review synthesis policy" src="./skills/synthesis.md" />
-      {`Write the author-facing main review body for this final review:
-
-${JSON.stringify(evidence, null, 2)}
-
-Use ${REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and ${REVIEW_CONTEXT_PATHS.history} when the trigger or prior discussion matters.`}
+      <Block>
+        The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
+        application-owned final evidence that follows is authoritative.
+      </Block>
+      {children}
+      <Block>
+        Write the author-facing main review body from this application-owned final evidence:
+        <Block>{JSON.stringify(evidence, null, 2)}</Block>
+        Use {REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and {REVIEW_CONTEXT_PATHS.history} when the
+        trigger or prior discussion matters.
+      </Block>
     </Agent>
   )
 }
@@ -45,15 +51,13 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
   return "✅ LGTM"
 }
 
-/** Selects the final draft after one small, typed prose pass. */
-export async function ReviewSynthesis() {
-  const review = useReview()
-  if (!review.gate || !review.audit || !review.validated) {
-    throw new Error("ReviewSynthesis requires gate, audit, and validation results")
-  }
-
+/** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
+export async function ReviewSynthesis({ children }: { children: AmlRenderable }) {
+  const review = useReviewContext()
+  const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()
-  const finalVerdict = verdict(review.validated.findings)
+  const validated = review.queue.finalize()
+  const finalVerdict = verdict(validated.findings)
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
   )
@@ -62,7 +66,7 @@ export async function ReviewSynthesis() {
       evidence={{
         lane_assessments: lanes,
         final_review: {
-          findings: review.validated.findings,
+          findings: validated.findings,
           verdict: finalVerdict
         },
         conversation: {
@@ -70,42 +74,39 @@ export async function ReviewSynthesis() {
           top_level_action_items: topLevelActionItems
         }
       }}
-    />,
+    >
+      {auditHandoff}
+    </SynthesisAgent>,
     SynthesisSchema
   )
-  const blockers = review.validated.findings.filter(finding => finding.kind === "blocker")
+  const blockers = validated.findings.filter(finding => finding.kind === "blocker")
   // Thread replies are published beside their original comment. Even if a
   // provider ignores the prompt, they must never leak into the top-level body.
   const directAnswer = topLevelActionItems.length > 0 ? synthesis.direct_answer : null
   // Recommendations coordinate requested work; an LGTM has no required work
   // regardless of prose a provider returns against the structured contract.
   const nextSteps = finalVerdict === "✅ LGTM" ? null : synthesis.next_steps
-  const body = directAnswer
-    ? [directAnswer, "", "## Review Summary", "", synthesis.summary]
-    : ["## Review Summary", "", synthesis.summary]
-  if (blockers.length > 0 || nextSteps) {
-    body.push("", "## Recommendations", "")
-    for (const blocker of blockers) {
-      body.push(`- ${blocker.body}`)
+  const recommendations = blockers.map(blocker => `- ${blocker.body}`)
+  if (nextSteps) {
+    if (recommendations.length > 0) {
+      recommendations.push("")
     }
-    if (blockers.length > 0 && nextSteps) {
-      body.push("")
-    }
-    if (nextSteps) {
-      body.push(nextSteps)
-    }
-  }
-  body.push("", "## Verdict", "", finalVerdict)
-
-  const draft: ReviewDraft = {
-    status: "reviewed",
-    gate: review.gate,
-    lanes,
-    audit: review.audit,
-    validated: review.validated.queue,
-    body: body.join("\n")
+    recommendations.push(nextSteps)
   }
 
-  review.outcome.select(draft)
-  return ""
+  return (
+    <>
+      {directAnswer ? <Block>{directAnswer}</Block> : null}
+      ## Review Summary
+      <Block>{synthesis.summary}</Block>
+      {recommendations.length > 0 ? (
+        <>
+          ## Recommendations
+          <Block>{recommendations.join("\n")}</Block>
+        </>
+      ) : null}
+      ## Verdict
+      <Block>{finalVerdict}</Block>
+    </>
+  )
 }

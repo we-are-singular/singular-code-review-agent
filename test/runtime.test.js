@@ -201,6 +201,9 @@ function completeProvider(publisher) {
       if (request.system.includes("final calibration judge")) {
         return { text: "", structured: { keep: [] } }
       }
+      if (request.system.includes("calibrate pull-request findings")) {
+        return { text: "The empty typed queue was audited." }
+      }
       if (request.system.includes("concise pull-request review summary")) {
         return {
           text: "",

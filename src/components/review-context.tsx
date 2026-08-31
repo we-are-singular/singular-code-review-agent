@@ -1,34 +1,41 @@
 import { createContext, useContext } from "@aml-jsx/sdk"
 
-import type { PublishedReview, ReviewDraft, ReviewSnapshot } from "../types/review.js"
+import type { PublishedReview, ReviewSnapshot } from "../types/review.js"
 import type { ReviewQueue } from "../lib/review-queue.js"
 import type { ReviewGitHubActions } from "../services/github-actions.js"
 import type { GitHubReviewSession } from "../services/github-session.js"
-import type { AuditedReview } from "./phases/review-audit.js"
 import type { ReviewGateResult } from "./phases/review-gate.js"
-import type { ValidatedReview } from "./phases/review-validation.js"
 
-/** Owns the one selected draft and its deterministic publication outcome. */
+export type RoutedReview = {
+  gate: ReviewGateResult
+  body: string
+}
+
+/** Owns the one completed router handoff consumed by publication. */
+export class ReviewRouting {
+  #routed: RoutedReview | undefined
+
+  /** Records the gate decision and the body produced by its selected route. */
+  complete(gate: ReviewGateResult, body: string): void {
+    if (this.#routed) {
+      throw new Error("review routing is already complete")
+    }
+    this.#routed = { gate: structuredClone(gate), body: body.trim() }
+  }
+
+  /** Returns the completed route after the router has resolved. */
+  get(): RoutedReview {
+    if (!this.#routed) {
+      throw new Error("review routing has not completed")
+    }
+    return structuredClone(this.#routed)
+  }
+}
+
+/** Owns the one deterministic publication outcome returned to the runtime. */
 export class ReviewOutcome {
-  #draft: ReviewDraft | undefined
   #published: PublishedReview | undefined
   #publicationError: string | null = null
-
-  /** Selects the only draft that publication may consume. */
-  select(draft: ReviewDraft): void {
-    if (this.#draft) {
-      throw new Error("the review already selected a draft")
-    }
-    this.#draft = structuredClone(draft)
-  }
-
-  /** Reads the selected draft without exposing mutable phase state. */
-  selected(): ReviewDraft {
-    if (!this.#draft) {
-      throw new Error("the review finished without selecting a draft")
-    }
-    return structuredClone(this.#draft)
-  }
 
   /** Records the exact rendered review and its deterministic write outcome. */
   publish(review: PublishedReview, error: string | null): void {
@@ -48,22 +55,20 @@ export class ReviewOutcome {
   }
 }
 
-/** Request-scoped dependencies and typed phase results for one reviewed PR head. */
-export type ReviewContextValue = {
+/** Request-scoped dependencies and workflow APIs for one reviewed PR head. */
+export type ReviewContextValue = Readonly<{
   github: GitHubReviewSession
   actions: ReviewGitHubActions
   queue: ReviewQueue
+  routing: ReviewRouting
   outcome: ReviewOutcome
   snapshot: ReviewSnapshot
   model: string
-  gate?: Extract<ReviewGateResult, { decision: "review" }>
-  audit?: AuditedReview
-  validated?: ValidatedReview
-}
+}>
 
 export const ReviewContext = createContext<ReviewContextValue>("SingularReview")
 
 /** Reads the single request-scoped dependency and phase-result context. */
-export function useReview(): ReviewContextValue {
+export function useReviewContext(): ReviewContextValue {
   return useContext(ReviewContext)
 }

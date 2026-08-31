@@ -1,13 +1,34 @@
 import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../../lib/review-body.js"
-import type { PublishedReview } from "../../types/review.js"
+import type { PublishedReview, ReviewDraft } from "../../types/review.js"
 import type { PublicationExpectation } from "../../services/github-actions.js"
 import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/github-write.js"
-import { useReview } from "../review-context.js"
+import { useReviewContext } from "../review-context.js"
 
-/** Publishes the selected draft through application-invoked, traced AML Tools. */
+/** Reads the completed route and publishes it through deterministic application-owned Tools. */
 export async function ReviewPublication() {
-  const { actions, github, model, outcome } = useReview()
-  const draft = outcome.selected()
+  const review = useReviewContext()
+  const { actions, github, model, outcome, routing } = review
+  const { gate, body } = routing.get()
+
+  let draft: ReviewDraft
+  if (gate.decision === "review") {
+    const validated = review.queue.finalize()
+    draft = {
+      status: "reviewed",
+      gate,
+      lanes: review.queue.completed(),
+      audit: { findings: review.queue.audited() },
+      validated: validated.queue,
+      body
+    }
+  } else {
+    draft = {
+      status: gate.decision === "answer" ? "answered" : "no-review",
+      gate,
+      body
+    }
+  }
+
   let published: PublishedReview
   let plan: ReviewPublicationPlan
   let expectation: PublicationExpectation

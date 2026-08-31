@@ -5,13 +5,12 @@ import { AmlRuntime } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContext, ReviewOutcome, useReview } from "../dist/components/review-context.js"
+import { ReviewContext, ReviewOutcome, ReviewRouting, useReviewContext } from "../dist/components/review-context.js"
 
 function runtime() {
   return new AmlRuntime({
     agentProvider: new DeterministicAgentProvider(),
-    maxConcurrentAgents: 2,
-    maxTurnsPerAgent: 1
+    maxConcurrentAgents: 2
   })
 }
 
@@ -20,52 +19,82 @@ function reviewValue(id) {
   return {
     github: service,
     actions: service,
-    findings: service,
+    queue: service,
+    routing: new ReviewRouting(),
     outcome: new ReviewOutcome(),
     snapshot: { id },
-    model: id,
-    gate: { decision: "review", reason: id, source: "deterministic" }
+    model: id
   }
 }
 
-function ReadReview() {
-  const review = useReview()
+function ReadRequest() {
+  const review = useReviewContext()
   return JSON.stringify({
     github: review.github.id,
-    model: review.model,
-    gate: review.gate,
-    audit: review.audit
+    model: review.model
   })
+}
+
+function ReadRouting() {
+  return JSON.stringify(useReviewContext().routing.get())
+}
+
+function CompleteRouting() {
+  useReviewContext().routing.complete(
+    { decision: "no-review", answer: "No review needed.", source: "deterministic" },
+    "No review needed.\n\n✅ LGTM"
+  )
+  return ""
 }
 
 function provided(value, children) {
   return jsx(ReviewContext.Provider, { value, children })
 }
 
-test("nested phase Providers preserve the flat request-scoped review context", async () => {
+test("nested Context Providers preserve the flat request-scoped review context", async () => {
   const initial = reviewValue("request-1")
-  const audit = { summary: "audit" }
-  const value = await runtime().evaluate(provided(initial, provided({ ...initial, audit }, jsx(ReadReview, {}))))
+  const gate = { decision: "no-review", answer: "Nested route.", source: "deterministic" }
+  const routing = new ReviewRouting()
+  routing.complete(gate, "Nested route.\n\n✅ LGTM")
+  const value = await runtime().evaluate(provided(initial, provided({ ...initial, routing }, jsx(ReadRouting, {}))))
 
   assert.deepEqual(JSON.parse(value), {
-    github: "request-1",
-    model: "request-1",
-    gate: { decision: "review", reason: "request-1", source: "deterministic" },
-    audit
+    gate,
+    body: "Nested route.\n\n✅ LGTM"
   })
 })
 
 test("simultaneous evaluations isolate review context values", async () => {
   const [first, second] = await Promise.all([
-    runtime().evaluate(provided(reviewValue("first"), jsx(ReadReview, {}))),
-    runtime().evaluate(provided(reviewValue("second"), jsx(ReadReview, {})))
+    runtime().evaluate(provided(reviewValue("first"), jsx(ReadRequest, {}))),
+    runtime().evaluate(provided(reviewValue("second"), jsx(ReadRequest, {})))
   ])
 
   assert.equal(JSON.parse(first).github, "first")
   assert.equal(JSON.parse(second).github, "second")
 })
 
-test("ReviewOutcome selects and publishes exactly once", () => {
+test("authored routers complete a route before the next Context consumer runs", async () => {
+  const initial = reviewValue("request-1")
+  const value = await runtime().evaluate(provided(initial, [jsx(CompleteRouting, {}), jsx(ReadRouting, {})]))
+
+  assert.deepEqual(JSON.parse(value), {
+    gate: { decision: "no-review", answer: "No review needed.", source: "deterministic" },
+    body: "No review needed.\n\n✅ LGTM"
+  })
+})
+
+test("ReviewRouting requires exactly one completed route", () => {
+  const routing = new ReviewRouting()
+  const gate = { decision: "answer", answer: "The value is retained.", source: "agent" }
+
+  assert.throws(() => routing.get(), /has not completed/u)
+  routing.complete(gate, "  The value is retained.  ")
+  assert.deepEqual(routing.get(), { gate, body: "The value is retained." })
+  assert.throws(() => routing.complete(gate, "Another answer."), /already complete/u)
+})
+
+test("ReviewOutcome publishes exactly once", () => {
   const outcome = new ReviewOutcome()
   const draft = {
     status: "no-review",
@@ -73,12 +102,7 @@ test("ReviewOutcome selects and publishes exactly once", () => {
     body: "Already reviewed.\n\n✅ LGTM"
   }
 
-  assert.throws(() => outcome.selected(), /without selecting a draft/u)
   assert.throws(() => outcome.result(), /without a publication outcome/u)
-
-  outcome.select(draft)
-  assert.deepEqual(outcome.selected(), draft)
-  assert.throws(() => outcome.select(draft), /already selected a draft/u)
 
   outcome.publish(draft, null)
   assert.deepEqual(outcome.result(), { review: draft, publicationError: null })

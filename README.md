@@ -36,15 +36,15 @@ flowchart TB
     subgraph review["src/review.tsx"]
       direction TB
       context["Materialize pr.md, pr.diff,<br/>and history.md"] --> acknowledgement["Acknowledge the request<br/>(best effort)"]
-      acknowledgement --> gate{"ReviewGate"}
-      gate -->|Answer or safe follow-up| outcome["Select answer or LGTM"]
-      gate -->|Full review| parallel["Parallel: six specialist lanes"]
+      acknowledgement --> router{"ReviewRouter"}
+      router -->|Gate: answer or safe follow-up| publication
+      router -->|Gate: full review| parallel["Parallel: six specialist lanes"]
       parallel --> queue["ReviewQueue: typed findings"]
+      parallel --> audit
       queue --> audit["ReviewAudit: merge, demote, drop"]
-      audit --> validation["ReviewValidation: anchors,<br/>reply targets, duplicates"]
-      validation --> synthesis["ReviewSynthesis: summary<br/>and optional next steps"]
-      synthesis --> outcome
-      outcome --> publication["ReviewPublication: verify head<br/>and execute one plan"]
+      audit --> finalization["ReviewQueue: finalize anchors,<br/>reply targets, duplicates"]
+      finalization --> synthesis["ReviewSynthesis: summary,<br/>next steps, and verdict"]
+      synthesis --> publication["ReviewPublication: verify head<br/>and execute one plan"]
     end
 
     snapshot --> context
@@ -57,33 +57,33 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
 <Workspace>
   <ReviewContextFiles />
   <ReviewAcknowledgement />
-  <ReviewGate>
-    <Parallel>
-      <IntentContractLane />
-      <StandardsArchitectureLane />
-      <CodePathBugHunterLane />
-      <CorrectnessRiskTestingLane />
-      <DocumentationCommentaryLane />
-      <MaintainabilityEleganceLane />
-    </Parallel>
-
-    <ReviewAudit>
-      <ReviewValidation>
-        <ReviewSynthesis />
-      </ReviewValidation>
-    </ReviewAudit>
-  </ReviewGate>
+  <ReviewRouter>
+    <ReviewSynthesis>
+      <ReviewAudit>
+        <Parallel>
+          <IntentContractLane />
+          <StandardsArchitectureLane />
+          <CodePathBugHunterLane />
+          <CorrectnessRiskTestingLane />
+          <DocumentationCommentaryLane />
+          <MaintainabilityEleganceLane />
+        </Parallel>
+      </ReviewAudit>
+    </ReviewSynthesis>
+  </ReviewRouter>
   <ReviewPublication />
 </Workspace>
 ```
 
-The nesting defines the review and publication boundaries:
+AML reads the model tree from the leaves back to the trunk. The nesting defines the review and publication boundaries:
 
-- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails.
-- `<ReviewGate>` wraps only the expensive full-review path. A direct answer and a full review still reach the same publication boundary.
-- `<ReviewAudit>` can merge, demote, or drop staged findings. It cannot invent a new finding or rewrite one.
-- `<ReviewValidation>` is ordinary TypeScript. It checks anchors, reply targets, duplicate feedback, and the final queue shape.
-- `<ReviewPublication>` sits outside the gate and verifies that GitHub still points to the reviewed commit before it writes anything.
+- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails. Native fragments keep each authored heading and lane in one branch; every lane records typed findings through Tools and returns a short terminal handoff.
+- `<ReviewAudit>` explicitly resolves all six children before it freezes the staged queue. It skips the audit Agent when no finding exists and otherwise gives that Agent the ordered lane handoffs plus only the merge, demote, and drop Tools.
+- Finding anchors and reply targets are validated when lane Tools add them. `<ReviewSynthesis>` finalizes duplicate and prior-comment handling directly from the queue, runs the typed synthesis Agent, derives the verdict, and returns the composed JSX body to its parent.
+- `<ReviewRouter>` is the intentional conditional boundary. It obtains the deterministic or typed gate decision, evaluates only the selected route, and completes one routed body through the request Context API.
+- AML evaluates `<ReviewPublication>` next in authored order. Publication reads the completed route, derives the publication draft from it and the queue, verifies that GitHub still points to the reviewed commit, and executes one deterministic write plan.
+
+The shared review Context carries request-scoped dependencies plus small APIs for the typed queue, completed routing handoff, and final publication outcome. Its top-level value is not reactive state: components share the same request binding, and mutable workflow transitions remain behind the owning APIs. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
 The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Parallel`, `Skill`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
 
@@ -170,7 +170,7 @@ Start a PR title with `[skip]`, or put `@singular-code-review skip` on its own l
 - Mention triggers accept repository owners, members, collaborators, or the PR author and reject bot comments.
 - The workflow uses `pull_request` and `issue_comment`, never `pull_request_target`.
 - Every model phase sees the same cached GitHub snapshot and filtered diff.
-- A failed lane, audit, validation, or model run leaves no publishable review.
+- A failed lane, audit, queue finalization, synthesis, or model run leaves no publishable review.
 - The CLI is dry-run by default; live GitHub mutations require `--publish`.
 - Publication checks the PR head again and does not replay an ambiguous failed mutation.
 
@@ -182,17 +182,21 @@ We maintain an eval framework that runs the reviewer against a corpus of private
 
 It is not a foolproof benchmark. The corpus reflects the code and review problems we care about, and LLM-as-judge has its own blind spots. It gives us a useful ruler for checking whether changes to the reviewer improve review quality without making reviews slower or more expensive.
 
-Time and cost are averages per review.
+Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed snapshot, not a same-revision model comparison.
 
-| Model                | Score |    Time |    Cost |
-| -------------------- | ----: | ------: | ------: |
-| GLM 5.3 Flash        |  87.8 |  5m 43s | $0.0108 |
-| DeepSeek V4 Flash    |  86.9 |  5m 32s | $0.0096 |
-| MiMo V2.5            |  86.0 |  7m 32s | $0.0128 |
-| HY3                  |  83.0 |  3m 23s | $0.0307 |
-| Qwen 3.7 Max         |  83.0 | 18m 41s | $0.9504 |
-| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s | $0.0838 |
-| MiniMax M3           |  74.7 |  9m 42s | $0.6012 |
+| Model                | Score |    Time |              Cost |
+| -------------------- | ----: | ------: | ----------------: |
+| DeepSeek V4 Flash    |  87.6 |  5m 45s | $0.0129–$0.0258\* |
+| GLM 5.3 Flash        |  87.8 |  5m 43s |           $0.0108 |
+| MiMo V2.5            |  86.0 |  7m 32s |           $0.0128 |
+| HY3                  |  83.0 |  3m 23s |           $0.0307 |
+| Qwen 3.7 Max         |  83.0 | 18m 41s |           $0.9504 |
+| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
+| MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
+
+\* DeepSeek V4 Flash uses separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The range applies both prices to this snapshot's measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
+
+The DeepSeek row was refreshed on 2026-08-31 after separating conditional routing into `<ReviewRouter>`, keeping publication as the next authored component, and allowing review handoffs to resolve natively from the specialist leaves through audit and synthesis. On the same pinned, history-blind ten-PR corpus and unchanged rubric, all ten reviews completed and the score moved from 88.0 to 87.6 while mean reviewer time moved from 3m 49s to 5m 45s. The reviewer used 79 model completions instead of 80; total reviewer token volume increased 4.8%, while the combined audit and synthesis volume remained effectively flat. This is one directly comparable run, not a repeated-run confidence interval, and observed latency varies with provider load.
 
 See [eval/README.md](eval/README.md) for the capture, judgment, reporting, comparison, and private-corpus rules.
 
