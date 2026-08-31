@@ -100,24 +100,62 @@ test("review telemetry ignores incomplete provider completion events", () => {
   assert.deepEqual(telemetry.providerCompletions(), [])
 })
 
-test("review telemetry renders nested lifecycle progress without identities or content", () => {
+test("review telemetry renders only review components and completed turn text", () => {
   const lines = []
   const telemetry = new ReviewTelemetryCollector({ progress: line => lines.push(line) })
   telemetry.trace(spanStart("hidden-run", { kind: "evaluation", name: "evaluation", spanId: "root" }))
   telemetry.trace(
     spanStart("hidden-run", {
+      kind: "component",
+      name: "ReviewAudit",
+      spanId: "audit",
+      parentSpanId: "root"
+    })
+  )
+  telemetry.trace(
+    spanStart("hidden-run", {
+      kind: "component",
+      name: "Block",
+      spanId: "block",
+      parentSpanId: "audit"
+    })
+  )
+  telemetry.trace(
+    spanStart("hidden-run", {
       kind: "agent",
       name: "agent.session",
       spanId: "agent",
-      parentSpanId: "root",
+      parentSpanId: "audit",
       attributes: { name: "code-path-bug-hunter", provider: "codex" }
     })
   )
   telemetry.trace(
-    event("hidden-run", "acp.session.update", {
+    spanStart("hidden-run", {
+      kind: "agent",
+      name: "agent.turn",
+      spanId: "turn",
+      parentSpanId: "agent",
+      attributes: { index: 1, kind: "initial", prompt: "hidden prompt" }
+    })
+  )
+  telemetry.trace({
+    ...event("hidden-run", "acp.session.update", {
       sessionId: "hidden-session",
       sessionUpdate: "agent_message_chunk",
-      content: "hidden model output"
+      update: JSON.stringify({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Useful lane result." }
+      })
+    }),
+    spanId: "turn"
+  })
+  telemetry.trace(
+    spanEnd("hidden-run", {
+      kind: "agent",
+      name: "agent.turn",
+      spanId: "turn",
+      parentSpanId: "agent",
+      attributes: { usage: "hidden usage" }
     })
   )
   telemetry.trace(
@@ -129,9 +167,24 @@ test("review telemetry renders nested lifecycle progress without identities or c
       attributes: { name: "code-path-bug-hunter", provider: "codex" }
     })
   )
+  telemetry.trace(spanEnd("hidden-run", { kind: "component", name: "Block", spanId: "block", parentSpanId: "audit" }))
+  telemetry.trace(
+    spanEnd("hidden-run", { kind: "component", name: "ReviewAudit", spanId: "audit", parentSpanId: "root" })
+  )
   telemetry.trace(spanEnd("hidden-run", { kind: "evaluation", name: "evaluation", spanId: "root" }))
 
-  assert.match(lines.join("\n"), /▶ agent\.session name="code-path-bug-hunter" provider="codex"/u)
-  assert.match(lines.join("\n"), /✓ agent\.session 10ms/u)
-  assert.doesNotMatch(lines.join("\n"), /hidden-run|hidden-session|hidden model output/u)
+  assert.equal(telemetry.trace.captureContent, true)
+  assert.match(lines.join("\n"), /▶ component ReviewAudit/u)
+  assert.match(lines.join("\n"), /▶ turn code-path-bug-hunter #1/u)
+  assert.match(lines.join("\n"), /✓ turn code-path-bug-hunter #1 10ms/u)
+  assert.match(lines.join("\n"), /│ Useful lane result\./u)
+  assert.match(lines.join("\n"), /✓ component ReviewAudit 10ms/u)
+  assert.doesNotMatch(lines.join("\n"), /Block|agent\.session|hidden-run|hidden-session|hidden prompt|hidden usage/u)
+  assert.doesNotMatch(JSON.stringify(telemetry.summaries()), /Useful lane result\./u)
+})
+
+test("review telemetry stays content-free without progress output", () => {
+  const telemetry = new ReviewTelemetryCollector()
+
+  assert.equal(telemetry.trace.captureContent, false)
 })
