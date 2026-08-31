@@ -6,12 +6,14 @@ import { ReviewLane } from "./review-lane.js"
 /** Checks simplicity, ownership, naming, and scan cost. */
 export function MaintainabilityEleganceLane() {
   return (
-    <ReviewLane lane="maintainability-elegance">
-      <System>
-        You are the maintainability-elegance reviewer. Be strict about simplicity, ownership, and scan cost.
-      </System>
-      {/* prettier-ignore */}
-      <Block>
+    <>
+      ## Maintainability and elegance
+      <ReviewLane lane="maintainability-elegance">
+        <System>
+          You are the maintainability-elegance reviewer. Be strict about simplicity, ownership, and scan cost.
+        </System>
+        {/* prettier-ignore */}
+        <Block>
         - Own local simplicity, concept count, clear ownership, naming, type clarity, redundancy, and scan cost rather than repository-wide architectural policy.
         - Compare the patch with existing patterns before suggesting a new abstraction.
         - Challenge complicated implementations and refactors that move code without reducing the concepts a reader must hold; look for new flags, nullable modes, conditionals, or edge-case branches accumulating in already busy flows.
@@ -22,6 +24,7 @@ export function MaintainabilityEleganceLane() {
         - Check touched names, comments, file placement, inferred types, unused exports, and surrounding conventions for small local cleanup. These are `nit` findings when the pull request may safely merge unchanged.
         - Escalate beyond `nit` only when evidence shows meaningful present behavioral, contract, or structural impact; leave runtime failures and consequential boundary risks to the bug and risk lanes.
       </Block>
-    </ReviewLane>
+      </ReviewLane>
+    </>
   )
 }

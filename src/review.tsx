@@ -28,30 +28,12 @@ export function Review() {
           <ReviewSynthesis>
             <ReviewAudit>
               <Parallel>
-                <>
-                  ## Intent
-                  <IntentContractLane />
-                </>
-                <>
-                  ## Standards and architecture
-                  <StandardsArchitectureLane />
-                </>
-                <>
-                  ## Bug hunting and correctness
-                  <CodePathBugHunterLane />
-                </>
-                <>
-                  ## Risk and testing
-                  <CorrectnessRiskTestingLane />
-                </>
-                <>
-                  ## Documentation and commentary
-                  <DocumentationCommentaryLane />
-                </>
-                <>
-                  ## Maintainability and elegance
-                  <MaintainabilityEleganceLane />
-                </>
+                <IntentContractLane />
+                <StandardsArchitectureLane />
+                <CodePathBugHunterLane />
+                <CorrectnessRiskTestingLane />
+                <DocumentationCommentaryLane />
+                <MaintainabilityEleganceLane />
               </Parallel>
             </ReviewAudit>
           </ReviewSynthesis>
