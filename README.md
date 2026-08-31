@@ -162,7 +162,7 @@ Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-
 
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
-The runner writes AML lifecycle progress to standard error while keeping its complete JSON result on standard output. Progress includes nested workflow, Agent, and Tool spans with durations, but excludes trace identities, prompts, model text, and streamed reasoning. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.
+The runner writes concise review progress to standard error while keeping its complete JSON result on standard output. Progress includes the main review components, Agent turn boundaries, durations, and each completed turn's response. It excludes framework plumbing, trace identities, prompts, streamed reasoning, and usage payloads. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.
 
 Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
 
