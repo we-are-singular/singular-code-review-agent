@@ -38,7 +38,6 @@ const PROGRESS_COMPONENTS = new Set([
 ])
 
 type ProgressSpan = {
-  name: string
   parentSpanId?: string
   agentName?: string
   turnIndex?: number
@@ -68,7 +67,6 @@ class ReviewProgressRenderer {
 
   #start(event: Extract<AmlTraceEvent, { type: "span.start" }>): void {
     const span: ProgressSpan = {
-      name: event.name,
       ...(event.parentSpanId ? { parentSpanId: event.parentSpanId } : {}),
       ...(event.name === "agent.session" && typeof event.attributes.name === "string"
         ? { agentName: event.attributes.name }
