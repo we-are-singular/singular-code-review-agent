@@ -5,7 +5,6 @@ import { resolve } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
-import { parseReviewProvider, type ReviewProvider } from "../lib/review-provider.js"
 import { renderGitHubStepSummary } from "../lib/github-summary.js"
 import { runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github-client.js"
@@ -16,9 +15,7 @@ type CliOptions = {
   repository: string
   prNumber: number
   workspace: string
-  provider: ReviewProvider
   model: string
-  codexHome?: string
   concurrency: number
   publish: boolean
 }
@@ -33,7 +30,6 @@ Runs the review in memory. GitHub mutations are recorded by default; pass
 
 Options:
   --workspace <path>          checked-out pull request workspace
-  --provider <name>           Agent provider: opencode or codex (default: opencode)
   --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-v4-flash)
   --concurrency <number>      maximum parallel AML Agents (default: 6)
   --publish                   allow live GitHub mutations
@@ -56,16 +52,13 @@ function positiveInteger(value: string | undefined, name: string): number {
   return parsed
 }
 
-function model(options: { configured?: string; env: NodeJS.ProcessEnv; provider: ReviewProvider }): string {
+function model(options: { configured?: string; env: NodeJS.ProcessEnv }): string {
   const modelEnv = options.env.REVIEW_MODEL || options.env.OPENCODE_MODEL
   const configured = options.configured || modelEnv
   if (configured) {
     return required(configured, "REVIEW_MODEL")
   }
-  if (options.provider === "opencode") {
-    return "opencode-go/deepseek-v4-flash"
-  }
-  throw new Error("REVIEW_MODEL is required when REVIEW_PROVIDER=codex")
+  return "opencode-go/deepseek-v4-flash"
 }
 
 function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null {
@@ -76,13 +69,15 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
       help: { type: "boolean", short: "h" },
       model: { type: "string" },
       pr: { type: "string" },
-      provider: { type: "string" },
       publish: { type: "boolean" },
       repo: { type: "string" },
       workspace: { type: "string" }
     },
     strict: true
   })
+  if (env.REVIEW_PROVIDER?.trim()) {
+    throw new Error("REVIEW_PROVIDER is no longer supported; the reviewer uses OpenCode")
+  }
   if (values.help) {
     return null
   }
@@ -91,15 +86,11 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
     throw new Error("repository must use owner/name format")
   }
   const workspace = resolve(required(values.workspace || env.WORKSPACE || env.GITHUB_WORKSPACE, "WORKSPACE"))
-  const provider = parseReviewProvider(values.provider || env.REVIEW_PROVIDER)
-  const codexHome = env.REVIEW_CODEX_HOME?.trim()
   return {
     repository,
     prNumber: positiveInteger(values.pr || env.PR_NUMBER, "PR_NUMBER"),
     workspace,
-    provider,
-    model: model({ configured: values.model, env, provider }),
-    ...(codexHome ? { codexHome } : {}),
+    model: model({ configured: values.model, env }),
     concurrency: positiveInteger(values.concurrency || env.REVIEW_CONCURRENCY || "6", "concurrency"),
     // Live mutation requires an explicit CLI flag; ambient CI variables cannot
     // silently turn a benchmark or local invocation into a publishing run.
@@ -166,10 +157,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     },
     github,
     actionMode: options.publish ? "live" : "dry-run",
-    provider: options.provider,
     model: options.model,
     reviewEmojis: env.REVIEW_EMOJIS !== "false",
-    ...(options.codexHome ? { codexHome: options.codexHome } : {}),
     maximumConcurrency: options.concurrency,
     progress: line => process.stderr.write(`${line}\n`)
   })

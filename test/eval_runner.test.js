@@ -1,14 +1,16 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
 import { evalJobKey } from "../eval/lib/job-key.mjs"
+import { loadEvalConfig } from "../eval/lib/config.mjs"
 import { JudgeAttemptStore } from "../eval/lib/judge-attempts.mjs"
 import { normalizeEvalModel } from "../eval/lib/models.mjs"
 import { reviewCacheKey } from "../eval/lib/review-cache-key.mjs"
-import { normalizeReviewProvider, reviewerContainerConfig } from "../eval/lib/reviewer-runner.mjs"
+import { reviewerContainerConfig } from "../eval/lib/reviewer-runner.mjs"
 import {
   isOrphanedEvalContainer,
   runProcess,
@@ -28,6 +30,18 @@ const input = {
   baseSha: "1111111111111111111111111111111111111111",
   headSha: "2222222222222222222222222222222222222222"
 }
+
+test("eval rejects removed provider selection", async t => {
+  const option = spawnSync(process.execPath, ["eval/run.mjs", "--provider", "codex"], { encoding: "utf8" })
+  assert.equal(option.status, 1)
+  assert.match(option.stderr, /unknown option: --provider/u)
+
+  const directory = mkdtempSync(join(tmpdir(), "singular-eval-config-"))
+  const config = join(directory, "config.mjs")
+  writeFileSync(config, `export default { provider: "codex" }\n`)
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  await assert.rejects(loadEvalConfig(config), /eval config provider is no longer supported/u)
+})
 
 test("review process settles at the timeout even when the child ignores SIGTERM", async () => {
   const directory = mkdtempSync(join(tmpdir(), "singular-eval-runner-"))
@@ -221,24 +235,20 @@ test("canonical capture artifacts require provider completion evidence", () => {
   assert.equal(completedJobArtifacts(directory), false)
 })
 
-test("bare eval model names use the selected provider namespace", () => {
+test("bare eval model names use the OpenCode provider namespace", () => {
   assert.equal(normalizeEvalModel("deepseek-v4-flash"), "opencode-go/deepseek-v4-flash")
   assert.equal(normalizeEvalModel("deepseek-v4-flash", "model", "opencode-go"), "opencode-go/deepseek-v4-flash")
-  assert.equal(normalizeEvalModel("gpt-5.6-luna", "model", ""), "gpt-5.6-luna")
 })
 
-test("eval job identity separates provider captures", () => {
-  const opencode = evalJobKey({
+test("eval job identity includes the OpenCode provider", () => {
+  const key = evalJobKey({
     runner: "aml",
     provider: "opencode",
     model: "opencode/deepseek-v4-flash",
     input
   })
-  const codex = evalJobKey({ runner: "aml", provider: "codex", model: "gpt-5.6-luna", input })
 
-  assert.match(opencode, /^aml-opencode__/)
-  assert.match(codex, /^aml-codex__/)
-  assert.notEqual(opencode, codex)
+  assert.match(key, /^aml-opencode__/)
 })
 
 test("append reuse requires identical review-context semantics", () => {
@@ -281,15 +291,10 @@ test("append reuse requires immutable image identity for completed legacy jobs",
   )
 })
 
-test("eval reviewer selection maps both providers to the production executable", () => {
-  assert.equal(normalizeReviewProvider(undefined), "opencode")
-  assert.equal(normalizeReviewProvider("codex"), "codex")
-  assert.throws(() => normalizeReviewProvider("pi"), /must be opencode or codex/)
-
+test("eval reviewer selection maps OpenCode to the production executable", () => {
   assert.deepEqual(reviewerContainerConfig({ model: "opencode-go/deepseek-v4-flash" }), {
     command: "/usr/local/bin/review_runner",
     environment: {
-      REVIEW_PROVIDER: "opencode",
       REVIEW_MODEL: "opencode-go/deepseek-v4-flash"
     },
     inheritedEnvironment: [
@@ -303,37 +308,23 @@ test("eval reviewer selection maps both providers to the production executable",
     requiredEnvironment: [],
     usesOpenCodeAuth: true
   })
-
-  const codex = reviewerContainerConfig({ provider: "codex", model: "gpt-5.6-luna" })
-  assert.deepEqual(codex, {
-    command: "/usr/local/bin/review_runner",
-    environment: {
-      REVIEW_CODEX_HOME: "/tmp/.singular-code-review/eval-runtime/codex-home",
-      REVIEW_PROVIDER: "codex",
-      REVIEW_MODEL: "gpt-5.6-luna"
-    },
-    inheritedEnvironment: ["CONTEXT7_API_KEY"],
-    requiredEnvironment: [],
-    requiresCodexAuth: true
-  })
-  assert.equal(codex.environment.REVIEW_MODEL, "gpt-5.6-luna")
-  assert.equal(codex.inheritedEnvironment.includes("Z_AI_API_KEY"), false)
-  assert.equal(codex.inheritedEnvironment.includes("OPENCODE_API_KEY"), false)
-  assert.equal(codex.inheritedEnvironment.includes("OPENAI_API_KEY"), false)
-  assert.equal(codex.inheritedEnvironment.includes("CODEX_API_KEY"), false)
-  assert.doesNotMatch(JSON.stringify(codex), /gpt-5\.3|\bsol\b/iu)
 })
 
-test("review cache identity separates AML providers and reviewer images", () => {
+test("review cache identity separates OpenCode models and reviewer images", () => {
   const context = { baseSha: "base", headSha: "head" }
   const common = { input, context, diffText: "diff", reviewerImageId: "sha256:image-a" }
-  const opencode = reviewCacheKey({
+  const deepseek = reviewCacheKey({
     ...common,
     runner: "aml",
     provider: "opencode",
     model: "opencode-go/deepseek-v4-flash"
   })
-  const codex = reviewCacheKey({ ...common, runner: "aml", provider: "codex", model: "gpt-5.6-luna" })
+  const minimax = reviewCacheKey({
+    ...common,
+    runner: "aml",
+    provider: "opencode",
+    model: "opencode-go/minimax-m3"
+  })
   const rebuilt = reviewCacheKey({
     ...common,
     reviewerImageId: "sha256:image-b",
@@ -342,6 +333,6 @@ test("review cache identity separates AML providers and reviewer images", () => 
     model: "opencode-go/deepseek-v4-flash"
   })
 
-  assert.notEqual(opencode, codex)
-  assert.notEqual(opencode, rebuilt)
+  assert.notEqual(deepseek, minimax)
+  assert.notEqual(deepseek, rebuilt)
 })

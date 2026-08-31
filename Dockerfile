@@ -29,7 +29,6 @@ ARG SKILLS_CLI_VERSION=1.5.23
 ARG SINGULAR_SKILLS_REF=5be9e96f7423205fa9a01d7e448b69e2a3704ab5
 
 RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION} \
-    && npm cache clean --force \
     && rm -rf /root/.npm
 
 RUN mkdir -p /usr/local/lib/singular-code-review

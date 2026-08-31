@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url"
 import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
 import { ReviewContext, ReviewOutcome, ReviewRouting, type ReviewContextValue } from "./components/review-context.js"
-import { createReviewProvider, type ReviewProvider } from "./lib/review-provider.js"
+import { createReviewProvider } from "./lib/review-provider.js"
 import type { PublishedReview, ReviewAttempt, ReviewRequest, ReviewRunResult } from "./types/review.js"
 import { REVIEW_LANE_NAMES, ReviewQueue } from "./lib/review-queue.js"
 import { ReviewTelemetryCollector } from "./lib/review-telemetry.js"
@@ -16,14 +16,14 @@ export type ReviewRuntimeOptions = {
   request: ReviewRequest
   github: GitHubClient
   actionMode: GitHubActionMode
-  provider: ReviewProvider
   model: string
   reviewEmojis?: boolean
-  codexHome?: string
   maximumConcurrency: number
   progress?: (line: string) => unknown
   signal?: AbortSignal
 }
+
+const REVIEW_PROVIDER = "opencode"
 
 /** Preserves provider causes and names failed parallel lanes at the CLI boundary. */
 function errorMessage(error: unknown): string {
@@ -92,10 +92,8 @@ export async function runReview(
   let selected: { review: PublishedReview; publicationError: string | null } | null = null
   try {
     const provider = createProvider({
-      provider: options.provider,
       model: options.model,
-      workspace: options.request.workspace,
-      ...(options.codexHome ? { codexHome: options.codexHome } : {})
+      workspace: options.request.workspace
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,
@@ -117,7 +115,7 @@ export async function runReview(
     )
     attempts.push({
       number: 1,
-      provider: options.provider,
+      provider: REVIEW_PROVIDER,
       model: options.model,
       status: "completed",
       startedAt,
@@ -128,7 +126,7 @@ export async function runReview(
   } catch (error) {
     attempts.push({
       number: 1,
-      provider: options.provider,
+      provider: REVIEW_PROVIDER,
       model: options.model,
       status: "failed",
       startedAt,
@@ -147,7 +145,7 @@ export async function runReview(
     generatedAt: new Date().toISOString(),
     repository: options.request.repository,
     prNumber: options.request.prNumber,
-    provider: options.provider,
+    provider: REVIEW_PROVIDER,
     model: options.model,
     attempts,
     durationMs: Date.now() - started,

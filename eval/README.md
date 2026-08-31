@@ -62,11 +62,9 @@ This is one directly comparable before-and-after run, not a repeated-run confide
 - Docker;
 - installed repository dependencies;
 - `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI with read access to every input PR;
-- credentials for the selected Agent provider.
+- OpenCode credentials.
 
 OpenCode prefers `OPENCODE_API_KEY`. If it is absent, the framework stages disposable copies of the host OpenCode auth files in an isolated data directory and removes them before retaining scratch output.
-
-Codex uses the host ChatGPT login. The framework copies `auth.json` into a disposable writable `REVIEW_CODEX_HOME`, allows Codex to refresh that copy, and deletes it in `finally`. It does not forward `OPENAI_API_KEY` or `CODEX_API_KEY` to a Codex run.
 
 ## Configure a corpus
 
@@ -75,7 +73,6 @@ The committed [config.ts](config.ts) contains a small public example. Private an
 ```ts
 export default {
   concurrency: 1,
-  provider: "opencode",
   models: ["opencode-go/deepseek-v4-flash"],
   input: [
     {
@@ -201,7 +198,7 @@ Keep these fixed across the runs:
 
 The run manifest records both image IDs. `--skip-build` is safe only after verifying that the local tag still points at the image recorded by the first run.
 
-OpenCode production uses `opencode-go/deepseek-v4-flash`. Codex comparisons use provider `codex` with `gpt-5.6-luna`; maximum reasoning is set once at provider construction.
+Production and capture use OpenCode. Model comparisons remain explicit through `--model` and share the same provider boundary.
 
 ## What counts as a completed run
 

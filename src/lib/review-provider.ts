@@ -1,28 +1,12 @@
-import { codexAgent, opencodeAgent, type AgentProvider } from "@aml-jsx/sdk"
-
-export type ReviewProvider = "opencode" | "codex"
+import { opencodeAgent, type AgentProvider } from "@aml-jsx/sdk"
 
 export type CreateReviewProviderOptions = {
-  provider: ReviewProvider
   model: string
   workspace: string
-  codexHome?: string
 }
 
 /** Creates an AML provider using the ACP executables supplied by the runtime image. */
 export function createReviewProvider(options: CreateReviewProviderOptions): AgentProvider {
-  if (options.provider === "codex") {
-    const separator = options.model.indexOf(":")
-    const model = separator === -1 ? options.model : options.model.slice(0, separator)
-    const reasoningEffort = separator === -1 ? undefined : options.model.slice(separator + 1) || undefined
-    return codexAgent({
-      model,
-      workingDirectory: options.workspace,
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-      ...(options.codexHome ? { env: { CODEX_HOME: options.codexHome } } : {})
-    })
-  }
-
   return opencodeAgent({
     // The authored AML Parallel tree owns review fan-out. Native delegation
     // cannot access a parent session's invocation-scoped finding Tools.
@@ -41,13 +25,4 @@ export function createReviewProvider(options: CreateReviewProviderOptions): Agen
     },
     model: options.model
   })
-}
-
-/** Parses the provider once at the executable composition boundary. */
-export function parseReviewProvider(value: string | undefined): ReviewProvider {
-  const provider = (value || "opencode").trim().toLowerCase()
-  if (provider === "opencode" || provider === "codex") {
-    return provider
-  }
-  throw new Error(`review provider must be opencode or codex; received ${value}`)
 }

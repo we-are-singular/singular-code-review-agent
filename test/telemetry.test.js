@@ -126,7 +126,7 @@ test("review telemetry renders only review components and completed turn text", 
       name: "agent.session",
       spanId: "agent",
       parentSpanId: "audit",
-      attributes: { name: "code-path-bug-hunter", provider: "codex" }
+      attributes: { name: "code-path-bug-hunter", provider: "opencode" }
     })
   )
   telemetry.trace(
@@ -164,7 +164,7 @@ test("review telemetry renders only review components and completed turn text", 
       name: "agent.session",
       spanId: "agent",
       parentSpanId: "root",
-      attributes: { name: "code-path-bug-hunter", provider: "codex" }
+      attributes: { name: "code-path-bug-hunter", provider: "opencode" }
     })
   )
   telemetry.trace(spanEnd("hidden-run", { kind: "component", name: "Block", spanId: "block", parentSpanId: "audit" }))
