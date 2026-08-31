@@ -23,7 +23,7 @@ function result(overrides = {}) {
     repository: "owner/repository",
     prNumber: 42,
     provider: "codex",
-    model: "gpt/luna",
+    model: "gpt/luna:max",
     durationMs: 12_345,
     attempts: [],
     usage: {
@@ -61,7 +61,7 @@ function result(overrides = {}) {
 test("GitHub summary reports the typed review result without trace identities", () => {
   const summary = renderGitHubStepSummary(result())
 
-  assert.match(summary, /\| Model \| gpt\/luna \|/u)
+  assert.match(summary, /\| Model \| gpt\/luna:max \|/u)
   assert.match(summary, /\| Agent turns \| 9 \|/u)
   assert.match(summary, /\| Total tokens \| 1,250 \|/u)
   assert.match(summary, /\| Publication \| completed \(1 submitted operations\) \|/u)

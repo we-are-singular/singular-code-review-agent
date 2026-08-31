@@ -18,7 +18,6 @@ export type ReviewRuntimeOptions = {
   actionMode: GitHubActionMode
   provider: ReviewProvider
   model: string
-  reasoningEffort?: string
   codexHome?: string
   maximumConcurrency: number
   progress?: (line: string) => unknown
@@ -93,7 +92,6 @@ export async function runReview(
     const provider = createProvider({
       provider: options.provider,
       model: options.model,
-      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
       workspace: options.request.workspace,
       ...(options.codexHome ? { codexHome: options.codexHome } : {})
     })

@@ -351,8 +351,7 @@ test("runtime forwards Codex identity and its optional auth home to provider con
   const result = await runReview(
     options(github.client, workspace, {
       provider: "codex",
-      model: "gpt-5.6-luna",
-      reasoningEffort: "max",
+      model: "gpt-5.6-luna:max",
       codexHome
     }),
     providerOptions => {
@@ -365,12 +364,64 @@ test("runtime forwards Codex identity and its optional auth home to provider con
   )
 
   assert.equal(result.provider, "codex")
-  assert.equal(result.model, "gpt-5.6-luna")
+  assert.equal(result.model, "gpt-5.6-luna:max")
+  assert.match(result.body, /^> reviewer · gpt-5\.6-luna:max/u)
   assert.deepEqual(
-    created.map(item => [item.provider, item.model, item.reasoningEffort, item.workspace, item.codexHome]),
-    [["codex", "gpt-5.6-luna", "max", workspace, codexHome]]
+    created.map(item => [item.provider, item.model, item.workspace, item.codexHome]),
+    [["codex", "gpt-5.6-luna:max", workspace, codexHome]]
   )
   assert.doesNotMatch(JSON.stringify(result), /codex-home/u)
+})
+
+test("Codex provider splits reasoning beside its provider-native option", async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-provider-"))
+  const commandDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "aml-codex-"))
+  const capture = path.join(workspace, "codex-config.json")
+  const command = path.join(commandDirectory, "codex-acp")
+  const quoteShell = value => `'${value.replaceAll("'", "'\\''")}'`
+  fs.writeFileSync(
+    command,
+    `#!/bin/sh
+printf '%s' "$CODEX_CONFIG" > ${quoteShell(capture)}
+sleep 30
+`
+  )
+  fs.chmodSync(command, 0o755)
+  const previousPath = process.env.PATH
+  process.env.PATH = `${commandDirectory}${path.delimiter}${previousPath || ""}`
+  t.after(() => {
+    process.env.PATH = previousPath
+    fs.rmSync(commandDirectory, { recursive: true, force: true })
+    fs.rmSync(workspace, { recursive: true, force: true })
+  })
+
+  const provider = createReviewProvider({ provider: "codex", model: "gpt/luna:max", workspace })
+  const controller = new AbortController()
+  const run = provider.run(
+    {
+      prompt: "credential-free provider wiring check",
+      system: "",
+      mcpServers: [],
+      permissions: { filesystem: "read-only", network: false, shell: false },
+      tools: []
+    },
+    {
+      events: {
+        emit() {},
+        subscribe() {
+          return () => {}
+        }
+      },
+      signal: controller.signal,
+      trace: {}
+    }
+  )
+  setTimeout(() => controller.abort(), 100)
+  await assert.rejects(run)
+
+  const config = JSON.parse(fs.readFileSync(capture, "utf8"))
+  assert.equal(config.model, "gpt/luna")
+  assert.equal(config.model_reasoning_effort, "max")
 })
 
 test("OpenCode provider inherits AML permissions while preserving launch configuration", async t => {
