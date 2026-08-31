@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process"
-import { realpathSync } from "node:fs"
+import { appendFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
 import { parseReviewProvider, type ReviewProvider } from "../lib/review-provider.js"
+import { renderGitHubStepSummary } from "../lib/github-summary.js"
 import { runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github-client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN, ReviewEvidence } from "../services/review-evidence.js"
@@ -195,6 +196,10 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   // The result stays in memory; only the Agent-readable evidence files are
   // materialized in the isolated review checkout.
   process.stdout.write(`${JSON.stringify(result)}\n`)
+
+  if (env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(env.GITHUB_STEP_SUMMARY, `${renderGitHubStepSummary(result)}\n`)
+  }
 
   if (result.publicationStatus === "failed") {
     throw new Error(`review completed but publication failed: ${result.publicationError}`)
