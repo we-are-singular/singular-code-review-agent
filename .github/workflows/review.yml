@@ -46,6 +46,9 @@ jobs:
     runs-on: "${{ inputs.runner || 'ubuntu-latest' }}"
     container:
       image: ghcr.io/we-are-singular/singular-code-review-agent:latest
+      # GitHub mounts workspace and file-command paths with runner-owned
+      # permissions, so job containers must use the root user.
+      options: --user 0
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       PR_NUMBER: ${{ inputs.pr_number }}

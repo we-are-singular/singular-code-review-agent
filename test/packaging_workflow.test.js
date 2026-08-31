@@ -83,6 +83,10 @@ test("reusable workflow preflights once and publishes through the production rev
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "review.yml"), "utf8")
 
   assert.match(workflow, /image: ghcr\.io\/we-are-singular\/singular-code-review-agent:latest/)
+  assert.match(
+    workflow,
+    /container:\s*\n\s+image: ghcr\.io\/we-are-singular\/singular-code-review-agent:latest\s*\n(?:\s+#.*\n)+\s+options: --user 0/
+  )
   assert.doesNotMatch(workflow, /singular-code-review-agent:legacy/u)
   assert.match(workflow, /uses: actions\/create-github-app-token@v3/)
   assert.match(workflow, /uses: actions\/checkout@v7/)
