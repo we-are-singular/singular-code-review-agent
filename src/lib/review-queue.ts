@@ -22,6 +22,14 @@ export type ReviewSeverity = z.infer<typeof ReviewSeveritySchema>
 export const ReviewDemotionSeveritySchema = z.enum(["high", "low", "nit"])
 export type ReviewDemotionSeverity = z.infer<typeof ReviewDemotionSeveritySchema>
 
+const REVIEW_SEVERITY_EMOJI: Record<ReviewSeverity, string> = {
+  critical: ":stop_sign:",
+  high: ":red_circle:",
+  low: ":large_orange_diamond:",
+  question: ":question:",
+  nit: ":nerd_face::point_up_2:"
+}
+
 const REVIEW_SEVERITY_RANK = { critical: 3, high: 2, low: 1, nit: 0 } as const
 const NEXT_REVIEW_SEVERITY: Record<Exclude<ReviewSeverity, "question">, ReviewDemotionSeverity | null> = {
   critical: "high",
@@ -135,6 +143,7 @@ export type ValidatedReviewQueue = {
 export type ReviewQueueOptions = {
   botLogin: string
   commentRanges: ValidCommentRanges
+  reviewEmojis?: boolean
   reviewThreadsAvailable: boolean
   unresolvedBotThreads: ReviewThread[]
   reviewComments: ReviewComment[]
@@ -204,7 +213,7 @@ export class ReviewQueue {
     // Reject bad Tool arguments while the originating lane can still correct
     // them. Cross-lane and already-posted duplicates remain visible to audit.
     if (finding.kind === "inline") {
-      this.#assertAnchor(ReviewQueue.comment(finding))
+      this.#assertAnchor(ReviewQueue.comment(finding, this.#options.reviewEmojis !== false))
     } else if (finding.kind === "reply") {
       this.#assertReplyTarget(finding.to)
     }
@@ -336,7 +345,7 @@ export class ReviewQueue {
         continue
       }
 
-      const comment = ReviewQueue.comment(finding)
+      const comment = ReviewQueue.comment(finding, this.#options.reviewEmojis !== false)
       this.#assertAnchor(comment)
       const bodyKey = `${ReviewQueue.locationKey(comment)}\0${ReviewQueue.comparableBody(comment.body)}`
       const previousReason = previousComments.get(bodyKey)
@@ -487,7 +496,10 @@ export class ReviewQueue {
     })
   }
 
-  private static comment(finding: Extract<ReviewFinding, { kind: "inline" }>): ReviewInlineComment {
+  private static comment(
+    finding: Extract<ReviewFinding, { kind: "inline" }>,
+    reviewEmojis: boolean
+  ): ReviewInlineComment {
     return ReviewQueue.normalizeComment({
       kind: finding.comment_type || "comment",
       path: finding.path,
@@ -495,13 +507,14 @@ export class ReviewQueue {
       start_line: finding.start_line,
       side: finding.side,
       start_side: finding.start_side,
-      body: ReviewQueue.authorComment(finding)
+      body: ReviewQueue.authorComment(finding, reviewEmojis)
     })
   }
 
   /** Renders application-owned severity once in the eventual inline body. */
-  private static authorComment(finding: Extract<ReviewFinding, { kind: "inline" }>): string {
-    return `**${finding.severity}:** ${finding.body}`
+  private static authorComment(finding: Extract<ReviewFinding, { kind: "inline" }>, reviewEmojis: boolean): string {
+    const emoji = reviewEmojis ? `${REVIEW_SEVERITY_EMOJI[finding.severity]} ` : ""
+    return `${emoji}**${finding.severity}:** ${finding.body}`
   }
 
   /** Preserves Markdown fences while avoiding accidental setext headings. */
@@ -546,7 +559,11 @@ export class ReviewQueue {
   }
 
   private static comparableBody(body: string): string {
-    return body.replace(/\s+/gu, " ").trim()
+    // Severity emoji are presentation only; toggling them must not replay an
+    // otherwise identical finding from a previous review.
+    const emoji = Object.values(REVIEW_SEVERITY_EMOJI).find(value => body.startsWith(`${value} `))
+    const comparable = emoji ? body.slice(emoji.length).trimStart() : body
+    return comparable.replace(/\s+/gu, " ").trim()
   }
 
   private static locationKey(comment: ReviewInlineComment): string {

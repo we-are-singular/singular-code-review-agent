@@ -97,6 +97,7 @@ test("reusable workflow preflights once and publishes through the production rev
     workflow,
     /REVIEW_MODEL: \$\{\{ vars\.REVIEW_MODEL \|\| vars\.OPENCODE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/
   )
+  assert.match(workflow, /REVIEW_EMOJIS: \$\{\{ vars\.REVIEW_EMOJIS \|\| 'true' \}\}/)
   assert.match(workflow, /ref: refs\/pull\/\$\{\{ inputs\.pr_number \}\}\/head/)
   assert.doesNotMatch(workflow, /gh pr checkout/u)
   assert.match(workflow, /SINGULAR_CODE_REVIEW_INSTALL_DEPS: \$\{\{ inputs\.npm_install \}\}/)

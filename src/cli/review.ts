@@ -168,6 +168,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     actionMode: options.publish ? "live" : "dry-run",
     provider: options.provider,
     model: options.model,
+    reviewEmojis: env.REVIEW_EMOJIS !== "false",
     ...(options.codexHome ? { codexHome: options.codexHome } : {}),
     maximumConcurrency: options.concurrency,
     progress: line => process.stderr.write(`${line}\n`)

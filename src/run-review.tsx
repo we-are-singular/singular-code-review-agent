@@ -18,6 +18,7 @@ export type ReviewRuntimeOptions = {
   actionMode: GitHubActionMode
   provider: ReviewProvider
   model: string
+  reviewEmojis?: boolean
   codexHome?: string
   maximumConcurrency: number
   progress?: (line: string) => unknown
@@ -76,6 +77,7 @@ export async function runReview(
     queue: new ReviewQueue({
       botLogin: snapshot.botLogin,
       commentRanges: snapshot.diff.commentRanges,
+      reviewEmojis: options.reviewEmojis !== false,
       reviewThreadsAvailable: snapshot.reviewThreadsAvailable,
       unresolvedBotThreads: snapshot.unresolvedBotThreads,
       reviewComments: snapshot.reviewComments
