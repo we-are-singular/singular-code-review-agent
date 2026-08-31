@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=docker.io/wearesingular/aml-agent-sandbox:0.3.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2
+ARG BASE_IMAGE=wearesingular/aml-agent-sandbox:opencode
 FROM ${BASE_IMAGE} AS review-build
 
 USER root
@@ -28,7 +28,9 @@ ARG CONTEXT7_MCP_VERSION=3.2.4
 ARG SKILLS_CLI_VERSION=1.5.23
 ARG SINGULAR_SKILLS_REF=5be9e96f7423205fa9a01d7e448b69e2a3704ab5
 
-RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION}
+RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION} \
+    && npm cache clean --force \
+    && rm -rf /root/.npm
 
 RUN mkdir -p /usr/local/lib/singular-code-review
 

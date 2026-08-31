@@ -38,7 +38,7 @@ import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_BASE_IMAGE =
-  "docker.io/wearesingular/aml-agent-sandbox:0.3.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2"
+  "wearesingular/aml-agent-sandbox:opencode"
 const EXTRACTED_ARTIFACTS = [
   "review.md",
   "review_transcript.md",
@@ -442,7 +442,7 @@ Options:
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
   --image <tag>             Docker image tag. Default: singular-code-review:eval
-  --base-image <tag>        AML base image. Default: published sandbox 0.3.3 digest
+  --base-image <tag>        AML base image. Default: wearesingular/aml-agent-sandbox:opencode
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
 `)
