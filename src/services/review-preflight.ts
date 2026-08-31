@@ -75,9 +75,7 @@ export class ReviewPreflight {
       return { shouldReview: false, reason: "bot trigger comments are ignored" }
     }
 
-    const author = comment.user?.login
-    const isPullRequestAuthor = !!author && (author === pullRequest.user?.login || author === pullRequest.author?.login)
-    if (!TRUSTED_ASSOCIATIONS.has(comment.author_association || "") && !isPullRequestAuthor) {
+    if (!TRUSTED_ASSOCIATIONS.has(comment.author_association || "")) {
       return { shouldReview: false, reason: "trigger comment author is not trusted" }
     }
     if (!String(comment.body || "").includes(REVIEW_COMMAND)) {

@@ -433,7 +433,7 @@ test("OpenCode provider inherits AML permissions while preserving launch configu
   fs.writeFileSync(
     command,
     `#!/bin/sh
-printf '%s\\n%s\\n%s\\n' "$OPENCODE_CONFIG_CONTENT" "$OPENCODE_DISABLE_AUTOUPDATE" "$PWD" > ${quoteShell(capture)}
+printf '%s\\n%s\\n%s\\n%s\\n' "$OPENCODE_CONFIG_CONTENT" "$OPENCODE_DISABLE_AUTOUPDATE" "$OPENCODE_DISABLE_PROJECT_CONFIG" "$PWD" > ${quoteShell(capture)}
 sleep 30
 `
   )
@@ -474,7 +474,10 @@ sleep 30
   setTimeout(() => controller.abort(), 100)
   await assert.rejects(run)
 
-  const [configText, autoUpdate, launchDirectory] = fs.readFileSync(capture, "utf8").trimEnd().split("\n")
+  const [configText, autoUpdate, projectConfig, launchDirectory] = fs
+    .readFileSync(capture, "utf8")
+    .trimEnd()
+    .split("\n")
   const config = JSON.parse(configText)
   assert.equal(config.model, "opencode-go/deepseek-v4-flash")
   for (const tool of ["bash", "edit", "webfetch", "websearch"]) {
@@ -488,6 +491,7 @@ sleep 30
     assert.equal(config.agent.aml.tools[tool], false)
   }
   assert.equal(autoUpdate, "true")
+  assert.equal(projectConfig, "1")
   assert.equal(launchDirectory, workspace)
 })
 

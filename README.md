@@ -133,7 +133,7 @@ Repositories that can use the Singular-owned App need the App installed plus the
 - `OPENCODE_API_KEY` for the production model;
 - `CONTEXT7_API_KEY` when higher Context7 limits are needed.
 
-Copy [examples/singular-code-review.yml](examples/singular-code-review.yml) into the target repository under `.github/workflows/`. The workflow handles opened PRs, ready-for-review drafts, new heads, manual dispatches, and trusted `@singular-code-review` comments.
+Copy [examples/singular-code-review.yml](examples/singular-code-review.yml) into the target repository under `.github/workflows/`. The workflow handles opened PRs, ready-for-review drafts, new heads, manual dispatches, and `@singular-code-review` comments from repository owners, organization members, and collaborators.
 
 ### Fork it and make it yours
 
@@ -171,8 +171,9 @@ Start a PR title with `[skip]`, or put `@singular-code-review skip` on its own l
 ## Trust and failure boundaries
 
 - The caller and reusable workflow reject fork pull requests before trusted credentials reach PR code.
-- Mention triggers accept repository owners, members, collaborators, or the PR author and reject bot comments.
+- Mention triggers accept repository owners, organization members, and collaborators, and reject PR-author mentions without one of those trusted associations.
 - The workflow uses `pull_request` and `issue_comment`, never `pull_request_target`.
+- OpenCode project configuration is disabled so reviewed files cannot start repository-defined plugins or MCP processes with review credentials.
 - Every model phase sees the same cached GitHub snapshot and filtered diff.
 - A failed lane, audit, queue finalization, synthesis, or model run leaves no publishable review.
 - The CLI is dry-run by default; live GitHub mutations require `--publish`.
