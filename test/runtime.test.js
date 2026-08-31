@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -171,7 +171,6 @@ function options(github, workspace, overrides = {}) {
     },
     github,
     actionMode: "dry-run",
-    provider: "opencode",
     model: "opencode-go/deepseek-v4-flash",
     maximumConcurrency: 6,
     ...overrides
@@ -218,6 +217,19 @@ function completeProvider(publisher) {
     }
   })
 }
+
+test("review CLI rejects removed provider selection", () => {
+  const option = spawnSync(process.execPath, ["dist/cli/review.js", "--provider", "codex"], { encoding: "utf8" })
+  assert.equal(option.status, 1)
+  assert.match(option.stderr, /Unknown option '--provider'/u)
+
+  const environment = spawnSync(process.execPath, ["dist/cli/review.js", "--help"], {
+    encoding: "utf8",
+    env: { ...process.env, REVIEW_PROVIDER: "codex" }
+  })
+  assert.equal(environment.status, 1)
+  assert.match(environment.stderr, /REVIEW_PROVIDER is no longer supported/u)
+})
 
 test("runtime materializes only the three Agent-readable review context files", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
@@ -267,8 +279,8 @@ test("runtime materializes only the three Agent-readable review context files", 
     ["completed"]
   )
   assert.deepEqual(
-    created.map(item => [item.provider, item.model, item.workspace, item.codexHome]),
-    [["opencode", model, workspace, undefined]]
+    created.map(item => [item.model, item.workspace]),
+    [[model, workspace]]
   )
   const contextDirectory = path.join(workspace, ".singular-code-review")
   assert.deepEqual(fs.readdirSync(workspace), [".singular-code-review"])
@@ -341,89 +353,6 @@ test("runtime rejects a push during snapshot assembly before starting an Agent",
   assert.equal(providers, 0)
 })
 
-test("runtime forwards Codex identity and its optional auth home to provider construction", async t => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
-  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
-  const github = githubFixture()
-  const created = []
-  const codexHome = "/tmp/codex-home"
-
-  const result = await runReview(
-    options(github.client, workspace, {
-      provider: "codex",
-      model: "gpt-5.6-luna:max",
-      codexHome
-    }),
-    providerOptions => {
-      created.push(providerOptions)
-      return completeProvider(async (request, context) => {
-        await invoke(request, context, "submit_pull_request_review")
-        return { text: "", structured: { completed: true, operations: 1 } }
-      })
-    }
-  )
-
-  assert.equal(result.provider, "codex")
-  assert.equal(result.model, "gpt-5.6-luna:max")
-  assert.match(result.body, /^> reviewer · gpt-5\.6-luna:max/u)
-  assert.deepEqual(
-    created.map(item => [item.provider, item.model, item.workspace, item.codexHome]),
-    [["codex", "gpt-5.6-luna:max", workspace, codexHome]]
-  )
-  assert.doesNotMatch(JSON.stringify(result), /codex-home/u)
-})
-
-test("Codex provider splits reasoning beside its provider-native option", async t => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-provider-"))
-  const commandDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "aml-codex-"))
-  const capture = path.join(workspace, "codex-config.json")
-  const command = path.join(commandDirectory, "codex-acp")
-  const quoteShell = value => `'${value.replaceAll("'", "'\\''")}'`
-  fs.writeFileSync(
-    command,
-    `#!/bin/sh
-printf '%s' "$CODEX_CONFIG" > ${quoteShell(capture)}
-sleep 30
-`
-  )
-  fs.chmodSync(command, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${commandDirectory}${path.delimiter}${previousPath || ""}`
-  t.after(() => {
-    process.env.PATH = previousPath
-    fs.rmSync(commandDirectory, { recursive: true, force: true })
-    fs.rmSync(workspace, { recursive: true, force: true })
-  })
-
-  const provider = createReviewProvider({ provider: "codex", model: "gpt/luna:max", workspace })
-  const controller = new AbortController()
-  const run = provider.run(
-    {
-      prompt: "credential-free provider wiring check",
-      system: "",
-      mcpServers: [],
-      permissions: { filesystem: "read-only", network: false, shell: false },
-      tools: []
-    },
-    {
-      events: {
-        emit() {},
-        subscribe() {
-          return () => {}
-        }
-      },
-      signal: controller.signal,
-      trace: {}
-    }
-  )
-  setTimeout(() => controller.abort(), 100)
-  await assert.rejects(run)
-
-  const config = JSON.parse(fs.readFileSync(capture, "utf8"))
-  assert.equal(config.model, "gpt/luna")
-  assert.equal(config.model_reasoning_effort, "max")
-})
-
 test("OpenCode provider inherits AML permissions while preserving launch configuration", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-provider-"))
   const commandDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "aml-opencode-"))
@@ -447,7 +376,6 @@ sleep 30
   })
 
   const provider = createReviewProvider({
-    provider: "opencode",
     model: "opencode-go/deepseek-v4-flash",
     workspace
   })

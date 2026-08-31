@@ -1,6 +1,4 @@
 import {
-  chmodSync,
-  copyFileSync,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -11,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { randomUUID } from "node:crypto"
-import { homedir, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawn, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -27,18 +25,15 @@ import { loadPullRequestInput, preparePullRequestWorkspace, resolveGitHubToken }
 import { normalizeEvalModels } from "./lib/models.mjs"
 import { normalizeEvalInput, normalizeEvalInputs, parsePrReference } from "./lib/pr-input.mjs"
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs"
-import {
-  normalizeReviewProvider,
-  reviewerContainerConfig,
-} from "./lib/reviewer-runner.mjs"
+import { reviewerContainerConfig } from "./lib/reviewer-runner.mjs"
 import { evalJobKey } from "./lib/job-key.mjs"
 import { readReviewResult, writeReviewArtifacts } from "./lib/review-artifacts.mjs"
 import { canonicalJobArtifacts, completedJobArtifacts } from "./lib/job-artifacts.mjs"
 import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const DEFAULT_BASE_IMAGE =
-  "docker.io/wearesingular/aml-agent-sandbox:0.3.3@sha256:cc4ab80e39c861ec2f59e0f2fd319de0c3801a7d863dab21ae7857e96a6794d2"
+const DEFAULT_BASE_IMAGE = "wearesingular/aml-agent-sandbox:opencode"
+const REVIEW_PROVIDER = "opencode"
 const EXTRACTED_ARTIFACTS = [
   "review.md",
   "review_transcript.md",
@@ -364,7 +359,6 @@ function parseArgs(argv) {
     outDir: resolve(repoRoot, "eval", "runs", timestamp()),
     configFile: resolve(repoRoot, "eval", "config.ts"),
     models: [],
-    provider: undefined,
     prs: [],
     concurrency: undefined,
     targetDurationMs: undefined,
@@ -387,8 +381,6 @@ function parseArgs(argv) {
       options.configFile = resolve(argv[++index])
     } else if (arg === "--model") {
       options.models.push(argv[++index])
-    } else if (arg === "--provider") {
-      options.provider = argv[++index] || ""
     } else if (arg === "--pr") {
       options.prs.push(argv[++index])
     } else if (arg === "--concurrency") {
@@ -433,7 +425,6 @@ Options:
   --config <file>           Eval config. Default: eval/config.ts
   --pr <owner/repo/123>     Add one PR without editing config. Can repeat.
   --model <model>           Override model matrix. Can repeat.
-  --provider <name>         Agent provider: opencode or codex. Default: opencode.
   --concurrency <n>         Concurrent captures. Default: config or 1
   --target-duration-ms <ms> Advisory duration target. Default: config or 600000
   --review-timeout-ms <ms>  Hard per-review safety timeout. Default: config or 1800000 (30 minutes)
@@ -442,7 +433,7 @@ Options:
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
   --image <tag>             Docker image tag. Default: singular-code-review:eval
-  --base-image <tag>        AML base image. Default: published sandbox 0.3.3 digest
+  --base-image <tag>        AML base image. Default: wearesingular/aml-agent-sandbox:opencode
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
 `)
@@ -456,7 +447,7 @@ function positiveInteger(value, fallback, name) {
   return number
 }
 
-function resolveModels(options, config, provider) {
+function resolveModels(options, config) {
   let models = []
   if (options.models.length > 0) {
     models = options.models
@@ -466,8 +457,7 @@ function resolveModels(options, config, provider) {
   if (models.length === 0) {
     throw new Error("no models configured; set config.models or pass --model")
   }
-  const defaultProvider = provider === "codex" ? "" : "opencode-go"
-  return normalizeEvalModels(models, defaultProvider)
+  return normalizeEvalModels(models, "opencode-go")
 }
 
 function resolveInputs(options, config) {
@@ -701,23 +691,6 @@ async function runJob(job, options) {
       mkdirSync(join(runtimeDir, directory), { recursive: true })
     }
 
-    if (reviewer.requiresCodexAuth) {
-      const sourceHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")
-      const sourceAuth = join(sourceHome, "auth.json")
-      if (!existsSync(sourceAuth)) {
-        throw new Error("Codex ChatGPT authentication is required; run codex login")
-      }
-
-      const targetHome = join(runtimeDir, "codex-home")
-      const targetAuth = join(targetHome, "auth.json")
-      // Codex may refresh ChatGPT credentials during a session. Give it an
-      // ephemeral writable copy so the container cannot mutate host auth.
-      mkdirSync(targetHome, { recursive: true, mode: 0o700 })
-      chmodSync(targetHome, 0o700)
-      copyFileSync(sourceAuth, targetAuth)
-      chmodSync(targetAuth, 0o600)
-    }
-
     if (reviewer.usesOpenCodeAuth) {
       stagedOpenCodeAuth = stageOpenCodeAuth(join(runtimeDir, "xdg", "data"))
     }
@@ -858,8 +831,6 @@ async function runJob(job, options) {
     return result
   } finally {
     removeDockerContainer(containerName)
-    // A retained Codex workspace must never retain the staged ChatGPT login.
-    rmSync(join(runtimeDir, "codex-home"), { recursive: true, force: true })
     // OpenCode auth is equally sensitive when --keep-scratch preserves logs.
     for (const authFile of stagedOpenCodeAuth) {
       rmSync(authFile, { force: true })
@@ -878,8 +849,7 @@ async function main() {
   }
 
   const config = await loadEvalConfig(options.configFile)
-  const provider = normalizeReviewProvider(options.provider || config.provider)
-  const models = resolveModels(options, config, provider)
+  const models = resolveModels(options, config)
   const inputs = resolveInputs(options, config)
   const concurrency = positiveInteger(options.concurrency, config.concurrency, "concurrency")
   const targetDurationMs = positiveInteger(options.targetDurationMs, config.targetDurationMs, "targetDurationMs")
@@ -897,7 +867,7 @@ async function main() {
   if (existingRun) {
     const requestedIdentity = {
       runner: "aml",
-      provider,
+      provider: REVIEW_PROVIDER,
       image: options.image,
       baseImage,
     }
@@ -922,7 +892,7 @@ async function main() {
     configFile: options.configFile,
     models: uniqueStrings([...(existingRun?.models || []), ...models]),
     runner: "aml",
-    provider,
+    provider: REVIEW_PROVIDER,
     inputs: mergeInputs(existingRun?.inputs || [], inputs),
     concurrency,
     targetDurationMs,
@@ -945,7 +915,7 @@ async function main() {
           job.status === "completed" && completedJobArtifacts(join(options.outDir, "jobs", evalJobKey(job)))
       )
   const requestedJobs = inputs.flatMap(input =>
-    models.map(model => ({ input, model, runner: "aml", provider }))
+    models.map(model => ({ input, model, runner: "aml", provider: REVIEW_PROVIDER }))
   )
   const duplicateJobs = requestedJobs.filter(requested => reusableJobs.some(existing => sameCaptureJob(existing, requested)))
   const jobs = requestedJobs.filter(requested => !reusableJobs.some(existing => sameCaptureJob(existing, requested)))

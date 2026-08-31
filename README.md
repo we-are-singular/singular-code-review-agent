@@ -158,7 +158,7 @@ The reusable workflow accepts:
 | `runner`             | `ubuntu-latest` | GitHub Actions runner label                          |
 | `npm_install`        | `false`         | Install target-repository dependencies before review |
 
-Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible. Codex models accept an optional reasoning-effort suffix such as `gpt/luna:max`.
+Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible.
 
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
