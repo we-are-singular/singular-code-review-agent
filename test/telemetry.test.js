@@ -180,6 +180,7 @@ test("review telemetry renders only review components and completed turn text", 
   assert.match(lines.join("\n"), /│ Useful lane result\./u)
   assert.match(lines.join("\n"), /✓ component ReviewAudit 10ms/u)
   assert.doesNotMatch(lines.join("\n"), /Block|agent\.session|hidden-run|hidden-session|hidden prompt|hidden usage/u)
+  assert.doesNotMatch(JSON.stringify(telemetry.summaries()), /Useful lane result\./u)
 })
 
 test("review telemetry stays content-free without progress output", () => {
