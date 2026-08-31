@@ -1,5 +1,6 @@
-import { Agent, evaluate, Skill, Tool } from "@aml-jsx/sdk"
+import { Agent, evaluate, Skill, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
+import { Block } from "../block.js"
 import { Context7 } from "../context7.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { useReviewContext } from "../review-context.js"
@@ -9,19 +10,18 @@ import { createReviewTools } from "../../tools/review.js"
 
 export type ReviewLaneProps = {
   lane: ReviewLaneName
-  system: string
-  prompt: string
+  children: AmlRenderable
 }
 
 /** Runs one focused specialist and hands its non-canonical assessment to audit. */
-export async function ReviewLane({ lane, system, prompt }: ReviewLaneProps) {
+export async function ReviewLane({ lane, children }: ReviewLaneProps) {
   const { github, queue, snapshot } = useReviewContext()
   const tools = createReviewTools(queue, lane)
   const githubTools = createGitHubReadTools(github)
   const changedFiles = snapshot.diff.files.map(path => `- ${path}`).join("\n") || "- (none)"
 
   const assessment = await evaluate(
-    <Agent name={lane} permissions={{ filesystem: "read-only", network: false, shell: false }} system={system}>
+    <Agent name={lane} permissions={{ filesystem: "read-only", network: false, shell: false }}>
       <Skill name="Evidence-first review lane" src="./skills/lane.md" />
       <Context7 />
       <Tool use={githubTools.getPullRequest} />
@@ -32,27 +32,23 @@ export async function ReviewLane({ lane, system, prompt }: ReviewLaneProps) {
       <Tool use={tools.addReviewComment} />
       <Tool use={tools.addReviewReply} />
       <Tool use={tools.addReviewBlocker} />
-      {`
-## Review context
-
-The review is materialized in these workspace-relative files:
-- ${REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
-- ${REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
-- ${REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
-
-Changed files:
-${changedFiles}
-
-Begin with ${REVIEW_CONTEXT_PATHS.pullRequest} and ${REVIEW_CONTEXT_PATHS.diff}. Read ${REVIEW_CONTEXT_PATHS.history} when the trigger, prior feedback, or author decisions matter.
-
-## Lane assignment
-
-Your lane is \`${lane}\`.
-
-${prompt}`}
+      {/* prettier-ignore */}
+      <Block>
+        ## Review context
+        The review is materialized in these workspace-relative files:
+        - {REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
+        - {REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
+        - {REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
+        Changed files:
+        <Block>{changedFiles}</Block>
+        Begin with {REVIEW_CONTEXT_PATHS.pullRequest} and {REVIEW_CONTEXT_PATHS.diff}. Read {REVIEW_CONTEXT_PATHS.history} when the trigger, prior feedback, or author decisions matter.
+        ## Lane assignment
+        Your lane is `{lane}`.
+      </Block>
+      {children}
     </Agent>
   )
 
   queue.complete(lane, assessment)
-  return `\n\n## ${lane} specialist handoff\n\n${assessment}\n`
+  return <Block>{assessment}</Block>
 }

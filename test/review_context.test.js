@@ -19,7 +19,7 @@ function reviewValue(id) {
   return {
     github: service,
     actions: service,
-    findings: service,
+    queue: service,
     outcome: new ReviewOutcome(),
     snapshot: { id },
     model: id,
@@ -32,16 +32,13 @@ function ReadReview() {
   return JSON.stringify({
     github: review.github.id,
     model: review.model,
-    gate: review.gate,
-    audit: review.audit,
-    validated: review.validated
+    gate: review.gate
   })
 }
 
-function RecordReviewResults() {
+function RecordGateResult() {
   const review = useReviewContext()
-  review.audit = { findings: [] }
-  review.validated = { findings: [], queue: { version: 1 } }
+  review.gate = { decision: "no-review", answer: "No review needed.", source: "deterministic" }
   return ""
 }
 
@@ -51,14 +48,13 @@ function provided(value, children) {
 
 test("nested Context Providers preserve the flat request-scoped review context", async () => {
   const initial = reviewValue("request-1")
-  const audit = { summary: "audit" }
-  const value = await runtime().evaluate(provided(initial, provided({ ...initial, audit }, jsx(ReadReview, {}))))
+  const gate = { decision: "no-review", answer: "Nested route.", source: "deterministic" }
+  const value = await runtime().evaluate(provided(initial, provided({ ...initial, gate }, jsx(ReadReview, {}))))
 
   assert.deepEqual(JSON.parse(value), {
     github: "request-1",
     model: "request-1",
-    gate: { decision: "review", reason: "request-1", source: "deterministic" },
-    audit
+    gate
   })
 })
 
@@ -72,20 +68,18 @@ test("simultaneous evaluations isolate review context values", async () => {
   assert.equal(JSON.parse(second).github, "second")
 })
 
-test("authored phases share structured results through the request-scoped Context", async () => {
+test("authored routers share their gate decision through the request-scoped Context", async () => {
   const initial = reviewValue("request-1")
-  const value = await runtime().evaluate(provided(initial, [jsx(RecordReviewResults, {}), jsx(ReadReview, {})]))
+  const value = await runtime().evaluate(provided(initial, [jsx(RecordGateResult, {}), jsx(ReadReview, {})]))
 
   assert.deepEqual(JSON.parse(value), {
     github: "request-1",
     model: "request-1",
-    gate: { decision: "review", reason: "request-1", source: "deterministic" },
-    audit: { findings: [] },
-    validated: { findings: [], queue: { version: 1 } }
+    gate: { decision: "no-review", answer: "No review needed.", source: "deterministic" }
   })
 })
 
-test("ReviewOutcome selects and publishes exactly once", () => {
+test("ReviewOutcome publishes exactly once", () => {
   const outcome = new ReviewOutcome()
   const draft = {
     status: "no-review",
@@ -93,12 +87,7 @@ test("ReviewOutcome selects and publishes exactly once", () => {
     body: "Already reviewed.\n\n✅ LGTM"
   }
 
-  assert.throws(() => outcome.selected(), /without selecting a draft/u)
   assert.throws(() => outcome.result(), /without a publication outcome/u)
-
-  outcome.select(draft)
-  assert.deepEqual(outcome.selected(), draft)
-  assert.throws(() => outcome.select(draft), /already selected a draft/u)
 
   outcome.publish(draft, null)
   assert.deepEqual(outcome.result(), { review: draft, publicationError: null })

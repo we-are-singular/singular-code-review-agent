@@ -13,7 +13,6 @@ import { ReviewAudit } from "./components/phases/review-audit.js"
 import { ReviewGate } from "./components/phases/review-gate.js"
 import { ReviewPublication } from "./components/phases/review-publication.js"
 import { ReviewSynthesis } from "./components/phases/review-synthesis.js"
-import { ReviewValidation } from "./components/phases/review-validation.js"
 
 /** The complete review workflow, including its deterministic publication edge. */
 export function Review() {
@@ -24,23 +23,40 @@ export function Review() {
     <Workspace id={workspaceId} load={false} lock={false} save={false}>
       <ReviewContextFiles />
       <ReviewAcknowledgement />
-      <ReviewGate>
-        <ReviewSynthesis>
-          <ReviewValidation>
+      <ReviewPublication>
+        <ReviewGate>
+          <ReviewSynthesis>
             <ReviewAudit>
               <Parallel>
-                <IntentContractLane />
-                <StandardsArchitectureLane />
-                <CodePathBugHunterLane />
-                <CorrectnessRiskTestingLane />
-                <DocumentationCommentaryLane />
-                <MaintainabilityEleganceLane />
+                <>
+                  ## Intent
+                  <IntentContractLane />
+                </>
+                <>
+                  ## Standards and architecture
+                  <StandardsArchitectureLane />
+                </>
+                <>
+                  ## Bug hunting and correctness
+                  <CodePathBugHunterLane />
+                </>
+                <>
+                  ## Risk and testing
+                  <CorrectnessRiskTestingLane />
+                </>
+                <>
+                  ## Documentation and commentary
+                  <DocumentationCommentaryLane />
+                </>
+                <>
+                  ## Maintainability and elegance
+                  <MaintainabilityEleganceLane />
+                </>
               </Parallel>
             </ReviewAudit>
-          </ReviewValidation>
-        </ReviewSynthesis>
-      </ReviewGate>
-      <ReviewPublication />
+          </ReviewSynthesis>
+        </ReviewGate>
+      </ReviewPublication>
     </Workspace>
   )
 }

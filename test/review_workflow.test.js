@@ -21,6 +21,15 @@ const laneNames = [
   "maintainability-elegance"
 ]
 
+const laneHeadings = {
+  "intent-contract": "Intent",
+  "standards-architecture": "Standards and architecture",
+  "code-path-bug-hunter": "Bug hunting and correctness",
+  "correctness-risk-testing": "Risk and testing",
+  "documentation-commentary": "Documentation and commentary",
+  "maintainability-elegance": "Maintainability and elegance"
+}
+
 const diff = `diff --git a/src/example.ts b/src/example.ts
 index 1111111..2222222 100644
 --- a/src/example.ts
@@ -146,6 +155,31 @@ function commentInput(value) {
   return input
 }
 
+test("GitHub review sessions acknowledge comments only when live mutations are enabled", async () => {
+  const reactions = []
+  const client = {
+    async createIssueCommentReaction(commentId, content) {
+      reactions.push({ commentId, content })
+    }
+  }
+  const request = {
+    repository: "owner/repository",
+    prNumber: 42,
+    workspace: "/tmp/review",
+    workspaceHeadSha: "2222222222222222222222222222222222222222",
+    botLogin: "singular-code-review[bot]",
+    eventName: null,
+    eventPath: null,
+    actor: "author",
+    ignoreHistory: false
+  }
+
+  await new GitHubReviewSession(client, request).reactToIssueComment(76)
+  await new GitHubReviewSession(client, request, true).reactToIssueComment(77)
+
+  assert.deepEqual(reactions, [{ commentId: 77, content: "eyes" }])
+})
+
 test("GitHub reference Tools resolve linked evidence through the cached read boundary", async () => {
   const calls = []
   const session = new GitHubReviewSession(
@@ -248,7 +282,7 @@ function reviewProvider(options = {}) {
   })
 }
 
-test("the declarative tree carries Tool findings through audit, validation, synthesis, and publication", async t => {
+test("the declarative tree carries Tool findings through audit, finalization, synthesis, and publication", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     laneSummaries: {
@@ -357,7 +391,7 @@ test("the declarative tree carries Tool findings through audit, validation, synt
     ["merge_review_findings", "demote_review_finding", "drop_review_findings"]
   )
   assert.deepEqual(audit.request.mcpServers, [])
-  assert.match(audit.request.prompt, /staged_findings/u)
+  assert.match(audit.request.prompt, /"findings"/u)
   assert.match(audit.request.prompt, /"id": "BUG-1"/u)
   assert.match(audit.request.prompt, /This branch accepts stale state/u)
   assert.match(audit.request.prompt, /`critical` → `high` → `low` → `nit` → drop/u)
@@ -372,9 +406,11 @@ test("the declarative tree carries Tool findings through audit, validation, synt
   assert.doesNotMatch(audit.request.prompt, /hard safety ceiling/u)
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
   assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)
+  assert.match(audit.request.prompt, /author\.\n\n\{\n  "findings"/u)
+  assert.match(audit.request.prompt, /\n\}\n\nYou may read only/u)
   let previousHandoff = -1
   for (const lane of laneNames) {
-    const handoff = audit.request.prompt.indexOf(`## ${lane} specialist handoff`)
+    const handoff = audit.request.prompt.indexOf(`## ${laneHeadings[lane]}`)
     assert.ok(handoff > previousHandoff, `${lane} handoff did not reach audit in authored order`)
     previousHandoff = handoff
   }
@@ -733,7 +769,7 @@ test("an audit failure is terminal and never falls back to unaudited lane findin
   assert.deepEqual(github.writes, [])
 })
 
-test("zero-finding reviews still pass specialist handoffs through the audit parent", async t => {
+test("zero-finding reviews skip the audit Agent and pass specialist handoffs to synthesis", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     laneInputs: {},
@@ -745,11 +781,11 @@ test("zero-finding reviews still pass specialist handoffs through the audit pare
   })
   const result = await runReview(reviewOptions(t, github.client), () => provider)
 
-  const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
-  assert.ok(audit)
-  assert.deepEqual(audit.request.tools, [])
-  assert.match(audit.request.prompt, /No specialist staged a typed finding/u)
-  assert.match(audit.request.prompt, /## intent-contract specialist handoff/u)
+  assert.equal(provider.calls.filter(call => call.request.system.includes("calibrate pull-request findings")).length, 0)
+  const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
+  assert.ok(synthesis)
+  assert.match(synthesis.request.prompt, /No specialist staged a typed finding/u)
+  assert.match(synthesis.request.prompt, /## Intent\n\n/u)
   assert.equal(provider.calls.filter(call => Boolean(laneName(call.request.prompt))).length, 6)
   assert.equal(
     provider.calls.filter(call => call.request.system.includes("concise pull-request review summary")).length,
@@ -781,7 +817,7 @@ test("the audit count preference never discards or rejects distinct retained fin
   assert.match(result.body, /## Verdict\n\n⚠️ Request changes$/u)
 })
 
-test("lane terminal prose reaches audit but is never promoted into the canonical findings queue", async t => {
+test("zero-finding lane prose reaches synthesis but is never promoted into the canonical findings queue", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     laneInputs: {},
@@ -800,11 +836,14 @@ test("lane terminal prose reaches audit but is never promoted into the canonical
   assert.equal(result.audit.findings.length, 0)
   assert.equal(result.validated.inlineComments.length, 0)
   assert.match(result.body, /## Verdict\n\n✅ LGTM$/u)
-  const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
-  assert.ok(audit)
-  assert.deepEqual(audit.request.tools, [])
-  assert.match(audit.request.prompt, /A possible regression was observed but was not staged through a review Tool\./u)
-  assert.match(audit.request.prompt, /Do not invent one from terminal prose/u)
+  const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
+  assert.ok(synthesis)
+  assert.match(
+    synthesis.request.prompt,
+    /A possible regression was observed but was not staged through a review Tool\./u
+  )
+  assert.match(synthesis.request.prompt, /No specialist staged a typed finding/u)
+  assert.equal(provider.calls.filter(call => call.request.system.includes("calibrate pull-request findings")).length, 0)
 })
 
 test("typed retained severity owns the verdict instead of synthesis prose", async t => {

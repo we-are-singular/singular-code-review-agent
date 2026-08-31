@@ -1,9 +1,8 @@
 import { useReviewContext } from "../review-context.js"
-import { createGitHubAcknowledgementTools } from "../../tools/github-write.js"
 
 /** Adds the courteous eyes reaction when needed without blocking the review. */
 export async function ReviewAcknowledgement() {
-  const { actions, github, snapshot } = useReviewContext()
+  const { github, snapshot } = useReviewContext()
   const trigger = snapshot.trigger.comment
 
   if (trigger) {
@@ -13,7 +12,7 @@ export async function ReviewAcknowledgement() {
         reaction => reaction.content === "eyes" && reaction.user?.login === github.request.botLogin
       )
       if (!acknowledged) {
-        await createGitHubAcknowledgementTools(actions, trigger.id).reactToIssueComment({})
+        await github.reactToIssueComment(trigger.id)
       }
     } catch {
       // Acknowledgement is courteous and never blocks the requested review.

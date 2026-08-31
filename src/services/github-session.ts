@@ -13,17 +13,20 @@ import type { ReviewRequest, ReviewSnapshot } from "../types/review.js"
 const TRIGGER_TEXT_LIMIT = 1_600
 
 /**
- * One request-scoped GitHub read model. Every Tool and deterministic phase sees
- * the same cached values, so parallel lanes never repeat API pagination.
+ * One request-scoped GitHub boundary. Every Tool and deterministic phase sees
+ * the same cached reads, while narrow deterministic mutations remain disabled
+ * unless the caller explicitly enables publication.
  */
 export class GitHubReviewSession {
   readonly #github: GitHubClient
   readonly #request: ReviewRequest
+  readonly #allowMutations: boolean
   readonly #cache = new Map<string, Promise<unknown>>()
 
-  constructor(github: GitHubClient, request: ReviewRequest) {
+  constructor(github: GitHubClient, request: ReviewRequest, allowMutations = false) {
     this.#github = github
     this.#request = request
+    this.#allowMutations = allowMutations
   }
 
   get request(): ReviewRequest {
@@ -110,6 +113,13 @@ export class GitHubReviewSession {
   /** Reads acknowledgement state so repeated runs do not duplicate reactions. */
   listIssueCommentReactions(commentId: number): Promise<Reaction[]> {
     return this.#once(`issue-comment-reactions:${commentId}`, () => this.#github.listIssueCommentReactions(commentId))
+  }
+
+  /** Adds the deterministic acknowledgement only when live mutations are enabled. */
+  async reactToIssueComment(commentId: number): Promise<void> {
+    if (this.#allowMutations) {
+      await this.#github.createIssueCommentReaction(commentId, "eyes")
+    }
   }
 
   /** Refuses to publish evidence collected for a head GitHub has since replaced. */

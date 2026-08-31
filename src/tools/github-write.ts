@@ -14,18 +14,6 @@ function json(value: unknown): AmlJsonValue {
   return JSON.parse(JSON.stringify(value)) as AmlJsonValue
 }
 
-/** The acknowledgement capability is scoped to the triggering comment only. */
-export function createGitHubAcknowledgementTools(actions: GitHubActions, commentId: number) {
-  return {
-    reactToIssueComment: defineTool({
-      name: "react_to_issue_comment",
-      description: "Acknowledge the triggering review request with an eyes reaction",
-      input: z.object({}).strict(),
-      execute: async () => json(await actions.reactToIssueComment(commentId))
-    })
-  }
-}
-
 /**
  * Creates mutation Tools closed over one validated plan. The publication
  * component owns ordering and cannot alter comment bodies, anchors, or targets.

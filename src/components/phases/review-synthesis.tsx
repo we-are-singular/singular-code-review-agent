@@ -1,9 +1,9 @@
 import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
+import { Block } from "../block.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { useReviewContext } from "../review-context.js"
-import type { ReviewDraft } from "../../types/review.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 
 const SynthesisSchema = z
@@ -14,40 +14,7 @@ const SynthesisSchema = z
   })
   .strict()
 
-function SynthesisEvidence() {
-  const review = useReviewContext()
-  if (!review.gate || !review.audit || !review.validated) {
-    throw new Error("ReviewSynthesis requires gate, audit, and validation results")
-  }
-
-  const lanes = review.queue.completed()
-  const finalVerdict = verdict(review.validated.findings)
-  const topLevelActionItems = review.snapshot.actionItems.filter(
-    item => item.kind === "trigger_request" || item.kind === "mentioned"
-  )
-
-  return `\n\nWrite the author-facing main review body from this application-owned final evidence:
-
-${JSON.stringify(
-  {
-    lane_assessments: lanes,
-    final_review: {
-      findings: review.validated.findings,
-      verdict: finalVerdict
-    },
-    conversation: {
-      participants: review.snapshot.participants,
-      top_level_action_items: topLevelActionItems
-    }
-  },
-  null,
-  2
-)}
-
-Use ${REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and ${REVIEW_CONTEXT_PATHS.history} when the trigger or prior discussion matters.`
-}
-
-function SynthesisAgent({ children }: { children: AmlRenderable }) {
+function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evidence: unknown }) {
   return (
     <Agent
       name="review-synthesis"
@@ -55,9 +22,17 @@ function SynthesisAgent({ children }: { children: AmlRenderable }) {
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
       <Skill name="Review synthesis policy" src="./skills/synthesis.md" />
-      {`\n\nThe validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the application-owned final evidence that follows is authoritative.`}
+      <Block>
+        The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
+        application-owned final evidence that follows is authoritative.
+      </Block>
       {children}
-      <SynthesisEvidence />
+      <Block>
+        Write the author-facing main review body from this application-owned final evidence:
+        <Block>{JSON.stringify(evidence, null, 2)}</Block>
+        Use {REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and {REVIEW_CONTEXT_PATHS.history} when the
+        trigger or prior discussion matters.
+      </Block>
     </Agent>
   )
 }
@@ -76,24 +51,37 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
   return "✅ LGTM"
 }
 
-/** Collects one typed synthesis result after validation resolves the nested audit tree. */
+/** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
 export async function ReviewSynthesis({ children }: { children: AmlRenderable }) {
   const review = useReviewContext()
-  if (!review.gate) {
+  if (review.gate?.decision !== "review") {
     throw new Error("ReviewSynthesis requires a full-review gate decision")
   }
 
-  const synthesis = await evaluate(<SynthesisAgent>{children}</SynthesisAgent>, SynthesisSchema)
-  if (!review.audit || !review.validated) {
-    throw new Error("ReviewSynthesis completed without audit and validation results")
-  }
-
+  const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()
-  const audit = review.audit
-  const validated = review.validated
+  const validated = review.queue.finalize()
   const finalVerdict = verdict(validated.findings)
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
+  )
+  const synthesis = await evaluate(
+    <SynthesisAgent
+      evidence={{
+        lane_assessments: lanes,
+        final_review: {
+          findings: validated.findings,
+          verdict: finalVerdict
+        },
+        conversation: {
+          participants: review.snapshot.participants,
+          top_level_action_items: topLevelActionItems
+        }
+      }}
+    >
+      {auditHandoff}
+    </SynthesisAgent>,
+    SynthesisSchema
   )
   const blockers = validated.findings.filter(finding => finding.kind === "blocker")
   // Thread replies are published beside their original comment. Even if a
@@ -102,32 +90,27 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
   // Recommendations coordinate requested work; an LGTM has no required work
   // regardless of prose a provider returns against the structured contract.
   const nextSteps = finalVerdict === "✅ LGTM" ? null : synthesis.next_steps
-  const body = directAnswer
-    ? [directAnswer, "", "## Review Summary", "", synthesis.summary]
-    : ["## Review Summary", "", synthesis.summary]
-  if (blockers.length > 0 || nextSteps) {
-    body.push("", "## Recommendations", "")
-    for (const blocker of blockers) {
-      body.push(`- ${blocker.body}`)
+  const recommendations = blockers.map(blocker => `- ${blocker.body}`)
+  if (nextSteps) {
+    if (recommendations.length > 0) {
+      recommendations.push("")
     }
-    if (blockers.length > 0 && nextSteps) {
-      body.push("")
-    }
-    if (nextSteps) {
-      body.push(nextSteps)
-    }
-  }
-  body.push("", "## Verdict", "", finalVerdict)
-
-  const draft: ReviewDraft = {
-    status: "reviewed",
-    gate: review.gate,
-    lanes,
-    audit,
-    validated: validated.queue,
-    body: body.join("\n")
+    recommendations.push(nextSteps)
   }
 
-  review.outcome.select(draft)
-  return ""
+  return (
+    <>
+      {directAnswer ? <Block>{directAnswer}</Block> : null}
+      ## Review Summary
+      <Block>{synthesis.summary}</Block>
+      {recommendations.length > 0 ? (
+        <>
+          ## Recommendations
+          <Block>{recommendations.join("\n")}</Block>
+        </>
+      ) : null}
+      ## Verdict
+      <Block>{finalVerdict}</Block>
+    </>
+  )
 }

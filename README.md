@@ -37,15 +37,14 @@ flowchart TB
       direction TB
       context["Materialize pr.md, pr.diff,<br/>and history.md"] --> acknowledgement["Acknowledge the request<br/>(best effort)"]
       acknowledgement --> gate{"ReviewGate"}
-      gate -->|Answer or safe follow-up| outcome["Select answer or LGTM"]
+      gate -->|Answer or safe follow-up| publication
       gate -->|Full review| parallel["Parallel: six specialist lanes"]
       parallel --> queue["ReviewQueue: typed findings"]
       parallel --> audit
       queue --> audit["ReviewAudit: merge, demote, drop"]
-      audit --> validation["ReviewValidation: anchors,<br/>reply targets, duplicates"]
-      validation --> synthesis["ReviewSynthesis: summary<br/>and optional next steps"]
-      synthesis --> outcome
-      outcome --> publication["ReviewPublication: verify head<br/>and execute one plan"]
+      audit --> finalization["ReviewQueue: finalize anchors,<br/>reply targets, duplicates"]
+      finalization --> synthesis["ReviewSynthesis: summary,<br/>next steps, and verdict"]
+      synthesis --> publication["ReviewPublication: verify head<br/>and execute one plan"]
     end
 
     snapshot --> context
@@ -58,9 +57,9 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
 <Workspace>
   <ReviewContextFiles />
   <ReviewAcknowledgement />
-  <ReviewGate>
-    <ReviewSynthesis>
-      <ReviewValidation>
+  <ReviewPublication>
+    <ReviewGate>
+      <ReviewSynthesis>
         <ReviewAudit>
           <Parallel>
             <IntentContractLane />
@@ -71,21 +70,21 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
             <MaintainabilityEleganceLane />
           </Parallel>
         </ReviewAudit>
-      </ReviewValidation>
-    </ReviewSynthesis>
-  </ReviewGate>
-  <ReviewPublication />
+      </ReviewSynthesis>
+    </ReviewGate>
+  </ReviewPublication>
 </Workspace>
 ```
 
 AML reads the model tree from the leaves back to the trunk. The nesting defines the review and publication boundaries:
 
-- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails. Each lane records its typed findings through Tools and returns a short terminal handoff.
-- `<ReviewAudit>` is the parent Agent for those lanes. It starts only after all six settle, receives their handoffs in authored order, and can mutate only the application-owned staged finding queue. A full review still runs this parent when the queue is empty, but grants it no finding Tools.
-- `<ReviewValidation>` evaluates the nested audit subtree, stores the audited and validated structures in the shared review Context, and returns the audit handoff as synthesis input. Anchor, reply-target, duplicate, and final queue validation remain ordinary TypeScript.
-- `<ReviewSynthesis>` is the trunk Agent. It starts after validation and is collected directly through `evaluate(agent, schema)`; TypeScript derives the verdict and publication draft from the validated Context state.
-- `<ReviewGate>` is the intentional router/orchestrator. It resolves the deterministic or typed gate decision, selects a cheap terminal response when possible, and otherwise evaluates the full-review route inside one gate-scoped review Context.
-- `<ReviewPublication>` sits outside the gate and verifies that GitHub still points to the reviewed commit before it writes anything.
+- `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails. Native fragments keep each authored heading and lane in one branch; every lane records typed findings through Tools and returns a short terminal handoff.
+- `<ReviewAudit>` explicitly resolves all six children before it freezes the staged queue. It skips the audit Agent when no finding exists and otherwise gives that Agent the ordered lane handoffs plus only the merge, demote, and drop Tools.
+- Finding anchors and reply targets are validated when lane Tools add them. `<ReviewSynthesis>` finalizes duplicate and prior-comment handling directly from the queue, runs the typed synthesis Agent, derives the verdict, and returns the composed JSX body to its parent.
+- `<ReviewGate>` is the intentional router/orchestrator. It records the deterministic or typed gate decision in the request Context, returns a cheap terminal response when possible, and otherwise returns the evaluated full-review route.
+- `<ReviewPublication>` is the trunk component. It receives the rendered child body, derives the publication draft from the gate and queue, verifies that GitHub still points to the reviewed commit, and executes one deterministic write plan.
+
+The shared review Context now carries only request-scoped dependencies, the typed queue, the gate decision, and the final publication outcome. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
 The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Parallel`, `Skill`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
 
@@ -172,7 +171,7 @@ Start a PR title with `[skip]`, or put `@singular-code-review skip` on its own l
 - Mention triggers accept repository owners, members, collaborators, or the PR author and reject bot comments.
 - The workflow uses `pull_request` and `issue_comment`, never `pull_request_target`.
 - Every model phase sees the same cached GitHub snapshot and filtered diff.
-- A failed lane, audit, validation, or model run leaves no publishable review.
+- A failed lane, audit, queue finalization, synthesis, or model run leaves no publishable review.
 - The CLI is dry-run by default; live GitHub mutations require `--publish`.
 - Publication checks the PR head again and does not replay an ambiguous failed mutation.
 
