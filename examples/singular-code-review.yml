@@ -35,6 +35,7 @@ jobs:
     with:
       pr_number: ${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
       trigger_comment_id: ${{ github.event.comment.id || '' }}
+      runner: singular-code-review
     secrets:
       SINGULAR_CODE_REVIEW_PRIVATE_KEY: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
