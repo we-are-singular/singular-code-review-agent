@@ -51,18 +51,25 @@ test("Dockerfile packages only the canonical AML-backed reviewer surface", () =>
 
 test("example trigger workflow reviews new heads and trusted mentions", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, "examples", "singular-code-review.yml"), "utf8")
+  const activeWorkflow = fs.readFileSync(
+    path.join(repoRoot, ".github", "workflows", "singular-code-review.yml"),
+    "utf8"
+  )
 
+  assert.equal(activeWorkflow, workflow)
   assert.match(workflow, /pull_request:\s*\n\s*types: \[opened, ready_for_review, synchronize\]/)
   assert.match(workflow, /issue_comment:\s*\n\s*types: \[created\]/)
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/)
   assert.match(workflow, /contains\(github\.event\.comment\.body, '@singular-code-review'\)/)
   assert.match(workflow, /github\.event\.comment\.user\.type != 'Bot'/)
-  assert.match(workflow, /github\.event\.comment\.user\.login == github\.event\.issue\.user\.login/)
+  assert.match(workflow, /\["OWNER","MEMBER","COLLABORATOR"\]/)
+  assert.doesNotMatch(workflow, /github\.event\.comment\.user\.login == github\.event\.issue\.user\.login/)
   assert.match(
     workflow,
     /concurrency:\s*\n\s+group: singular-code-review-\$\{\{ github\.event\.issue\.number \|\| github\.event\.pull_request\.number \|\| github\.event\.inputs\.pr_number \}\}/
   )
   assert.match(workflow, /uses: we-are-singular\/singular-code-review-agent\/\.github\/workflows\/review\.yml@main/)
+  assert.doesNotMatch(workflow, /^\s+runner:/mu)
   assert.doesNotMatch(workflow, /review-legacy\.yml/u)
 })
 

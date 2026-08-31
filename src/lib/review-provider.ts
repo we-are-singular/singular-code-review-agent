@@ -33,6 +33,9 @@ export function createReviewProvider(options: CreateReviewProviderOptions): Agen
     env: {
       OPENCODE_DISABLE_AUTOUPDATE: "true",
       OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: "1",
+      // Reviewed repositories are untrusted input. Do not let their OpenCode
+      // configuration start plugins or MCP processes with review credentials.
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       // Eval runs point this at an ephemeral OpenCode login copy.
       ...(process.env.XDG_DATA_HOME ? { XDG_DATA_HOME: process.env.XDG_DATA_HOME } : {})
     },

@@ -88,7 +88,7 @@ test("guard rethrows unavailable trigger comment lookups", async () => {
   )
 })
 
-test("guard allows a contributor PR author to trigger a review", async () => {
+test("guard does not let an untrusted PR author trigger a review", async () => {
   const result = await evaluateGuard({
     repository: "owner/repo",
     prNumber: 42,
@@ -113,7 +113,7 @@ test("guard allows a contributor PR author to trigger a review", async () => {
     }
   })
 
-  assert.deepEqual(result, { shouldReview: true, reason: "allowed" })
+  assert.deepEqual(result, { shouldReview: false, reason: "trigger comment author is not trusted" })
 })
 
 test("guard deterministically skips trusted skip commands", async () => {
