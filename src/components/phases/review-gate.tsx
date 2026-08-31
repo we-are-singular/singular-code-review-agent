@@ -1,4 +1,4 @@
-import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, evaluate, Skill } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import { Block } from "../block.js"
@@ -37,21 +37,8 @@ function GateAgent({ context, delta }: { context: unknown; delta: string }) {
   )
 }
 
-/** Gives every confident no-review decision the same idempotent approval marker. */
-function gateBody(gate: Extract<ReviewGateResult, { decision: "answer" | "no-review" }>): string {
-  const answer = gate.answer.trim()
-  if (gate.decision === "answer") {
-    return answer
-  }
-
-  // Providers occasionally include the marker despite the prompt. Normalize
-  // only that exact terminal contract before appending the application-owned line.
-  const withoutExistingVerdict = answer.replace(/(?:^|\n+)\s*✅\s*LGTM\.?\s*$/u, "").trim()
-  return withoutExistingVerdict ? `${withoutExistingVerdict}\n\n✅ LGTM` : "✅ LGTM"
-}
-
 /** Uses deterministic event/history rules before paying for an Agent decision. */
-async function decideGate(): Promise<ReviewGateResult> {
+export async function decideReviewGate(): Promise<ReviewGateResult> {
   const { github, snapshot } = useReviewContext()
   const prepared = prepareGate(snapshot, github.request.workspace)
 
@@ -71,22 +58,4 @@ async function decideGate(): Promise<ReviewGateResult> {
     GateDecisionSchema
   )
   return { ...decision, source: "agent" }
-}
-
-/**
- * Routes cheap events to a final response or evaluates the full-review subtree.
- *
- * This component is the workflow's intentional router/orchestrator: it owns the
- * conditional evaluation boundary while Agents below it retain post-order flow.
- */
-export async function ReviewGate({ children }: { children: AmlRenderable }) {
-  const review = useReviewContext()
-  const gate = await decideGate()
-  review.gate = gate
-
-  if (gate.decision !== "review") {
-    return gateBody(gate)
-  }
-
-  return evaluate(children)
 }

@@ -1,20 +1,14 @@
-import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
-
 import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../../lib/review-body.js"
 import type { PublishedReview, ReviewDraft } from "../../types/review.js"
 import type { PublicationExpectation } from "../../services/github-actions.js"
 import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/github-write.js"
 import { useReviewContext } from "../review-context.js"
 
-/** Resolves the routed review body and publishes it through deterministic application-owned Tools. */
-export async function ReviewPublication({ children }: { children: AmlRenderable }) {
+/** Reads the completed route and publishes it through deterministic application-owned Tools. */
+export async function ReviewPublication() {
   const review = useReviewContext()
-  const { actions, github, model, outcome } = review
-  const body = (await evaluate(children)).trim()
-  const gate = review.gate
-  if (!gate) {
-    throw new Error("ReviewPublication requires a completed gate decision")
-  }
+  const { actions, github, model, outcome, routing } = review
+  const { gate, body } = routing.get()
 
   let draft: ReviewDraft
   if (gate.decision === "review") {

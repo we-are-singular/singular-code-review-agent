@@ -36,9 +36,9 @@ flowchart TB
     subgraph review["src/review.tsx"]
       direction TB
       context["Materialize pr.md, pr.diff,<br/>and history.md"] --> acknowledgement["Acknowledge the request<br/>(best effort)"]
-      acknowledgement --> gate{"ReviewGate"}
-      gate -->|Answer or safe follow-up| publication
-      gate -->|Full review| parallel["Parallel: six specialist lanes"]
+      acknowledgement --> router{"ReviewRouter"}
+      router -->|Gate: answer or safe follow-up| publication
+      router -->|Gate: full review| parallel["Parallel: six specialist lanes"]
       parallel --> queue["ReviewQueue: typed findings"]
       parallel --> audit
       queue --> audit["ReviewAudit: merge, demote, drop"]
@@ -57,22 +57,21 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
 <Workspace>
   <ReviewContextFiles />
   <ReviewAcknowledgement />
-  <ReviewPublication>
-    <ReviewGate>
-      <ReviewSynthesis>
-        <ReviewAudit>
-          <Parallel>
-            <IntentContractLane />
-            <StandardsArchitectureLane />
-            <CodePathBugHunterLane />
-            <CorrectnessRiskTestingLane />
-            <DocumentationCommentaryLane />
-            <MaintainabilityEleganceLane />
-          </Parallel>
-        </ReviewAudit>
-      </ReviewSynthesis>
-    </ReviewGate>
-  </ReviewPublication>
+  <ReviewRouter>
+    <ReviewSynthesis>
+      <ReviewAudit>
+        <Parallel>
+          <IntentContractLane />
+          <StandardsArchitectureLane />
+          <CodePathBugHunterLane />
+          <CorrectnessRiskTestingLane />
+          <DocumentationCommentaryLane />
+          <MaintainabilityEleganceLane />
+        </Parallel>
+      </ReviewAudit>
+    </ReviewSynthesis>
+  </ReviewRouter>
+  <ReviewPublication />
 </Workspace>
 ```
 
@@ -81,10 +80,10 @@ AML reads the model tree from the leaves back to the trunk. The nesting defines 
 - `<Parallel>` makes the six investigations concurrent and fails the review if any lane fails. Native fragments keep each authored heading and lane in one branch; every lane records typed findings through Tools and returns a short terminal handoff.
 - `<ReviewAudit>` explicitly resolves all six children before it freezes the staged queue. It skips the audit Agent when no finding exists and otherwise gives that Agent the ordered lane handoffs plus only the merge, demote, and drop Tools.
 - Finding anchors and reply targets are validated when lane Tools add them. `<ReviewSynthesis>` finalizes duplicate and prior-comment handling directly from the queue, runs the typed synthesis Agent, derives the verdict, and returns the composed JSX body to its parent.
-- `<ReviewGate>` is the intentional router/orchestrator. It records the deterministic or typed gate decision in the request Context, returns a cheap terminal response when possible, and otherwise returns the evaluated full-review route.
-- `<ReviewPublication>` is the trunk component. It receives the rendered child body, derives the publication draft from the gate and queue, verifies that GitHub still points to the reviewed commit, and executes one deterministic write plan.
+- `<ReviewRouter>` is the intentional conditional boundary. It obtains the deterministic or typed gate decision, evaluates only the selected route, and completes one routed body through the request Context API.
+- AML evaluates `<ReviewPublication>` next in authored order. Publication reads the completed route, derives the publication draft from it and the queue, verifies that GitHub still points to the reviewed commit, and executes one deterministic write plan.
 
-The shared review Context now carries only request-scoped dependencies, the typed queue, the gate decision, and the final publication outcome. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
+The shared review Context carries request-scoped dependencies plus small APIs for the typed queue, completed routing handoff, and final publication outcome. Its top-level value is not reactive state: components share the same request binding, and mutable workflow transitions remain behind the owning APIs. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
 The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Parallel`, `Skill`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
 
@@ -185,17 +184,19 @@ It is not a foolproof benchmark. The corpus reflects the code and review problem
 
 Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed snapshot, not a same-revision model comparison.
 
-| Model                | Score |    Time |    Cost |
-| -------------------- | ----: | ------: | ------: |
-| DeepSeek V4 Flash    |  88.0 |  3m 49s | $0.0088 |
-| GLM 5.3 Flash        |  87.8 |  5m 43s | $0.0108 |
-| MiMo V2.5            |  86.0 |  7m 32s | $0.0128 |
-| HY3                  |  83.0 |  3m 23s | $0.0307 |
-| Qwen 3.7 Max         |  83.0 | 18m 41s | $0.9504 |
-| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s | $0.0838 |
-| MiniMax M3           |  74.7 |  9m 42s | $0.6012 |
+| Model                | Score |    Time |              Cost |
+| -------------------- | ----: | ------: | ----------------: |
+| DeepSeek V4 Flash    |  87.6 |  5m 45s | $0.0129–$0.0258\* |
+| GLM 5.3 Flash        |  87.8 |  5m 43s |           $0.0108 |
+| MiMo V2.5            |  86.0 |  7m 32s |           $0.0128 |
+| HY3                  |  83.0 |  3m 23s |           $0.0307 |
+| Qwen 3.7 Max         |  83.0 | 18m 41s |           $0.9504 |
+| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
+| MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
 
-The DeepSeek row was refreshed on 2026-08-30 after moving the review phases into AML's leaf-first tree and sharing structured review state through a gate-scoped Context. On the same pinned, history-blind ten-PR corpus and unchanged rubric, the score moved from 86.9 to 88.0 while mean reviewer time fell from 5m 32s to 3m 49s. That is one directly comparable run, not a repeated-run confidence interval.
+\* DeepSeek V4 Flash uses separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The range applies both prices to this snapshot's measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
+
+The DeepSeek row was refreshed on 2026-08-31 after separating conditional routing into `<ReviewRouter>`, keeping publication as the next authored component, and allowing review handoffs to resolve natively from the specialist leaves through audit and synthesis. On the same pinned, history-blind ten-PR corpus and unchanged rubric, all ten reviews completed and the score moved from 88.0 to 87.6 while mean reviewer time moved from 3m 49s to 5m 45s. The reviewer used 79 model completions instead of 80; total reviewer token volume increased 4.8%, while the combined audit and synthesis volume remained effectively flat. This is one directly comparable run, not a repeated-run confidence interval, and observed latency varies with provider load.
 
 See [eval/README.md](eval/README.md) for the capture, judgment, reporting, comparison, and private-corpus rules.
 

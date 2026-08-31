@@ -54,10 +54,6 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
 /** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
 export async function ReviewSynthesis({ children }: { children: AmlRenderable }) {
   const review = useReviewContext()
-  if (review.gate?.decision !== "review") {
-    throw new Error("ReviewSynthesis requires a full-review gate decision")
-  }
-
   const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()
   const validated = review.queue.finalize()

@@ -6,6 +6,32 @@ import type { ReviewGitHubActions } from "../services/github-actions.js"
 import type { GitHubReviewSession } from "../services/github-session.js"
 import type { ReviewGateResult } from "./phases/review-gate.js"
 
+export type RoutedReview = {
+  gate: ReviewGateResult
+  body: string
+}
+
+/** Owns the one completed router handoff consumed by publication. */
+export class ReviewRouting {
+  #routed: RoutedReview | undefined
+
+  /** Records the gate decision and the body produced by its selected route. */
+  complete(gate: ReviewGateResult, body: string): void {
+    if (this.#routed) {
+      throw new Error("review routing is already complete")
+    }
+    this.#routed = { gate: structuredClone(gate), body: body.trim() }
+  }
+
+  /** Returns the completed route after the router has resolved. */
+  get(): RoutedReview {
+    if (!this.#routed) {
+      throw new Error("review routing has not completed")
+    }
+    return structuredClone(this.#routed)
+  }
+}
+
 /** Owns the one deterministic publication outcome returned to the runtime. */
 export class ReviewOutcome {
   #published: PublishedReview | undefined
@@ -29,16 +55,16 @@ export class ReviewOutcome {
   }
 }
 
-/** Request-scoped dependencies and route state for one reviewed PR head. */
-export type ReviewContextValue = {
+/** Request-scoped dependencies and workflow APIs for one reviewed PR head. */
+export type ReviewContextValue = Readonly<{
   github: GitHubReviewSession
   actions: ReviewGitHubActions
   queue: ReviewQueue
+  routing: ReviewRouting
   outcome: ReviewOutcome
   snapshot: ReviewSnapshot
   model: string
-  gate?: ReviewGateResult
-}
+}>
 
 export const ReviewContext = createContext<ReviewContextValue>("SingularReview")
 

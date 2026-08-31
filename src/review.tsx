@@ -10,8 +10,8 @@ import { MaintainabilityEleganceLane } from "./components/lanes/maintainability-
 import { StandardsArchitectureLane } from "./components/lanes/standards-architecture.js"
 import { ReviewAcknowledgement } from "./components/phases/review-acknowledgement.js"
 import { ReviewAudit } from "./components/phases/review-audit.js"
-import { ReviewGate } from "./components/phases/review-gate.js"
 import { ReviewPublication } from "./components/phases/review-publication.js"
+import { ReviewRouter } from "./components/phases/review-router.js"
 import { ReviewSynthesis } from "./components/phases/review-synthesis.js"
 
 /** The complete review workflow, including its deterministic publication edge. */
@@ -23,22 +23,21 @@ export function Review() {
     <Workspace id={workspaceId} load={false} lock={false} save={false}>
       <ReviewContextFiles />
       <ReviewAcknowledgement />
-      <ReviewPublication>
-        <ReviewGate>
-          <ReviewSynthesis>
-            <ReviewAudit>
-              <Parallel>
-                <IntentContractLane />
-                <StandardsArchitectureLane />
-                <CodePathBugHunterLane />
-                <CorrectnessRiskTestingLane />
-                <DocumentationCommentaryLane />
-                <MaintainabilityEleganceLane />
-              </Parallel>
-            </ReviewAudit>
-          </ReviewSynthesis>
-        </ReviewGate>
-      </ReviewPublication>
+      <ReviewRouter>
+        <ReviewSynthesis>
+          <ReviewAudit>
+            <Parallel>
+              <IntentContractLane />
+              <StandardsArchitectureLane />
+              <CodePathBugHunterLane />
+              <CorrectnessRiskTestingLane />
+              <DocumentationCommentaryLane />
+              <MaintainabilityEleganceLane />
+            </Parallel>
+          </ReviewAudit>
+        </ReviewSynthesis>
+      </ReviewRouter>
+      <ReviewPublication />
     </Workspace>
   )
 }
