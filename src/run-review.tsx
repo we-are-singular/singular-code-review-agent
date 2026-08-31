@@ -21,6 +21,7 @@ export type ReviewRuntimeOptions = {
   reasoningEffort?: string
   codexHome?: string
   maximumConcurrency: number
+  progress?: (line: string) => unknown
   signal?: AbortSignal
 }
 
@@ -50,7 +51,7 @@ export async function runReview(
 ): Promise<ReviewRunResult> {
   const started = Date.now()
   const signal = options.signal || new AbortController().signal
-  const telemetry = new ReviewTelemetryCollector()
+  const telemetry = new ReviewTelemetryCollector({ ...(options.progress ? { progress: options.progress } : {}) })
   const github = new GitHubReviewSession(options.github, options.request, options.actionMode === "live")
   const snapshot = await github.snapshot()
   const pullRequestHead = snapshot.pullRequest.headRefOid

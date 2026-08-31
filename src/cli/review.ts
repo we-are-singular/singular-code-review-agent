@@ -68,11 +68,10 @@ export function parseModelSpec(value: string): { model: string; reasoningEffort?
   return reasoningEffort ? { model, reasoningEffort } : { model }
 }
 
-function model(options: {
-  configured?: string
-  env: NodeJS.ProcessEnv
-  provider: ReviewProvider
-}): { model: string; reasoningEffort?: string } {
+function model(options: { configured?: string; env: NodeJS.ProcessEnv; provider: ReviewProvider }): {
+  model: string
+  reasoningEffort?: string
+} {
   const modelEnv = options.env.REVIEW_MODEL || options.env.OPENCODE_MODEL
   const configured = options.configured || modelEnv
   if (configured) {
@@ -190,7 +189,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     model: options.model,
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
     ...(options.codexHome ? { codexHome: options.codexHome } : {}),
-    maximumConcurrency: options.concurrency
+    maximumConcurrency: options.concurrency,
+    progress: line => process.stderr.write(`${line}\n`)
   })
 
   // The result stays in memory; only the Agent-readable evidence files are

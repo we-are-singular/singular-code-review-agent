@@ -17,6 +17,18 @@ function spanEnd(runId, overrides) {
   }
 }
 
+function spanStart(runId, overrides) {
+  return {
+    type: "span.start",
+    runId,
+    spanId: `${overrides.kind}-${overrides.name}`,
+    sequence: 1,
+    timestamp: Date.now(),
+    attributes: {},
+    ...overrides
+  }
+}
+
 function event(runId, name, attributes) {
   return {
     type: "event",
@@ -86,4 +98,40 @@ test("review telemetry ignores incomplete provider completion events", () => {
   telemetry.trace(event("review-run", "unrelated", { sessionId: "session-2", stopReason: "end_turn" }))
 
   assert.deepEqual(telemetry.providerCompletions(), [])
+})
+
+test("review telemetry renders nested lifecycle progress without identities or content", () => {
+  const lines = []
+  const telemetry = new ReviewTelemetryCollector({ progress: line => lines.push(line) })
+  telemetry.trace(spanStart("hidden-run", { kind: "evaluation", name: "evaluation", spanId: "root" }))
+  telemetry.trace(
+    spanStart("hidden-run", {
+      kind: "agent",
+      name: "agent.session",
+      spanId: "agent",
+      parentSpanId: "root",
+      attributes: { name: "code-path-bug-hunter", provider: "codex" }
+    })
+  )
+  telemetry.trace(
+    event("hidden-run", "acp.session.update", {
+      sessionId: "hidden-session",
+      sessionUpdate: "agent_message_chunk",
+      content: "hidden model output"
+    })
+  )
+  telemetry.trace(
+    spanEnd("hidden-run", {
+      kind: "agent",
+      name: "agent.session",
+      spanId: "agent",
+      parentSpanId: "root",
+      attributes: { name: "code-path-bug-hunter", provider: "codex" }
+    })
+  )
+  telemetry.trace(spanEnd("hidden-run", { kind: "evaluation", name: "evaluation", spanId: "root" }))
+
+  assert.match(lines.join("\n"), /▶ agent\.session name="code-path-bug-hunter" provider="codex"/u)
+  assert.match(lines.join("\n"), /✓ agent\.session 10ms/u)
+  assert.doesNotMatch(lines.join("\n"), /hidden-run|hidden-session|hidden model output/u)
 })

@@ -160,6 +160,8 @@ The reusable workflow accepts:
 
 Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible. Codex models accept an optional reasoning-effort suffix such as `gpt/luna:max`; OpenCode variants are not available through AML's current ACP provider.
 
+The runner writes AML lifecycle progress to standard error while keeping its complete JSON result on standard output. Progress includes nested workflow, Agent, and Tool spans with durations, but excludes trace identities, prompts, model text, and streamed reasoning. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.
+
 Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
 
 Start a PR title with `[skip]`, or put `@singular-code-review skip` on its own line in the PR body, to stop before App-token creation, checkout, dependency installation, and model work.
