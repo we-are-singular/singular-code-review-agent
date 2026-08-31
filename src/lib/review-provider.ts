@@ -12,10 +12,13 @@ export type CreateReviewProviderOptions = {
 /** Creates an AML provider using the ACP executables supplied by the runtime image. */
 export function createReviewProvider(options: CreateReviewProviderOptions): AgentProvider {
   if (options.provider === "codex") {
+    const separator = options.model.indexOf(":")
+    const model = separator === -1 ? options.model : options.model.slice(0, separator)
+    const reasoningEffort = separator === -1 ? undefined : options.model.slice(separator + 1) || undefined
     return codexAgent({
-      model: options.model,
+      model,
       workingDirectory: options.workspace,
-      config: { model_reasoning_effort: "max" },
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(options.codexHome ? { env: { CODEX_HOME: options.codexHome } } : {})
     })
   }

@@ -1,4 +1,10 @@
-import { createTraceSummaryCollector, type AmlTraceEvent, type TraceSink, type TraceSummary } from "@aml-jsx/sdk"
+import {
+  createConsoleTracer,
+  createTraceSummaryCollector,
+  type AmlTraceEvent,
+  type TraceSink,
+  type TraceSummary
+} from "@aml-jsx/sdk"
 
 export type ReviewUsage = {
   agentCalls: number
@@ -17,15 +23,23 @@ export type ReviewProviderCompletion = {
   stopReason: string
 }
 
+export type ReviewTelemetryOptions = {
+  progress?: (line: string) => unknown
+}
+
 /** Collects content-free AML summaries and provider-optional usage per evaluation. */
 export class ReviewTelemetryCollector {
   readonly #collector = createTraceSummaryCollector()
   readonly #completed: TraceSummary[] = []
   readonly #providerCompletions: ReviewProviderCompletion[] = []
+  readonly #progress?: TraceSink
 
   readonly trace: TraceSink
 
-  constructor() {
+  constructor(options: ReviewTelemetryOptions = {}) {
+    if (options.progress) {
+      this.#progress = createConsoleTracer({ captureContent: false, write: options.progress })
+    }
     const sink = ((event: AmlTraceEvent) => this.#record(event)) as TraceSink
     Object.defineProperty(sink, "captureContent", {
       configurable: false,
@@ -39,6 +53,11 @@ export class ReviewTelemetryCollector {
   /** Captures a summary only after AML has closed the complete evaluation span. */
   #record(event: AmlTraceEvent): void {
     this.#collector.trace(event)
+    // Lifecycle spans show the authored AML tree without trace identities,
+    // prompts, model text, or repetitive provider stream events.
+    if (event.type !== "event") {
+      this.#progress?.(event)
+    }
     if (event.type === "event" && event.name === "acp.session.prompt.completed") {
       const sessionId = event.attributes.sessionId
       const stopReason = event.attributes.stopReason
