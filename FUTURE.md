@@ -58,4 +58,4 @@ The engine can stage replies and recognize outstanding thread work, but the exam
 
 ## Provider support
 
-OpenCode remains the production provider. Revisit Codex or Pi only after their ACP paths can match OpenCode's Tool reliability and practical latency on the same fixed PR set. Provider adoption must not add provider details to lane or phase components.
+OpenCode remains the production provider. Revisit Pi only after its ACP path can match OpenCode's Tool reliability and practical latency on the same fixed PR set. Provider adoption must not add provider details to lane or phase components.

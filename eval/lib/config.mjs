@@ -53,9 +53,6 @@ function normalizeInput(value) {
 function normalizeConfig(value) {
   const config = value && typeof value === "object" ? value : {};
   const judge = config.judge && typeof config.judge === "object" ? config.judge : {};
-  if (config.provider !== undefined) {
-    throw new Error("eval config provider is no longer supported; captures use OpenCode");
-  }
   return {
     models: normalizeStringArray(config.models, "models"),
     baseImage: optionalString(config.baseImage, "baseImage"),
