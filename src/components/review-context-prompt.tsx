@@ -6,7 +6,6 @@ import { useReviewContext } from "./review-context.js"
 import { textFileCache } from "../services/text-file-cache.js"
 
 export type ReviewContextPromptProps = {
-  files?: boolean
   diff?: boolean
   history?: boolean
 }
@@ -48,15 +47,13 @@ async function PromptContextSection({
 }
 
 /** Projects the materialized review files into an Agent prompt without duplicating large evidence. */
-export function ReviewContextPrompt({ files = false, diff = false, history = false }: ReviewContextPromptProps) {
+export function ReviewContextPrompt({ diff = false, history = false }: ReviewContextPromptProps) {
   const { github } = useReviewContext()
   const sections: PromptSection[] = [
     {
-      label: files ? "pull-request context and changed files" : "pull-request context",
+      label: "pull-request context and changed files",
       path: REVIEW_CONTEXT_PATHS.pullRequest,
-      instruction: files
-        ? "Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence."
-        : "Use the PR description, refs, and commits as intent and scope evidence.",
+      instruction: "Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence.",
       readInstruction: "Read before judging intent or scope."
     }
   ]

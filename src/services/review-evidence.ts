@@ -298,15 +298,9 @@ export class ReviewEvidence {
       }
     }
 
-    const reviewsWithInlineComments = new Set(
-      this.#input.reviewComments
-        .map(comment => comment.pull_request_review_id)
-        .filter((reviewId): reviewId is number => typeof reviewId === "number")
-    )
     for (const review of this.#input.reviews) {
       // GitHub creates a COMMENTED review shell for inline comments and replies; the thread events already carry more detail.
-      const hasInlineComments = typeof review.id === "number" && reviewsWithInlineComments.has(review.id)
-      const body = hasInlineComments ? "" : String(review.body || "").trim()
+      const body = String(review.body || "").trim()
       if (!body && review.state?.toUpperCase() === "COMMENTED") {
         continue
       }

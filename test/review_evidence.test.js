@@ -100,8 +100,9 @@ test("review history compacts long bodies to a bounded single line", () => {
   assert.match(entry, /… \(truncated\)$/u)
 })
 
-test("review history retains standalone review bodies and bodyless decisions", () => {
+test("review history retains substantive review bodies and bodyless decisions", () => {
   const result = snapshot({
+    reviewComments: [{ id: 42, pull_request_review_id: 40 }],
     reviews: [
       {
         id: 40,

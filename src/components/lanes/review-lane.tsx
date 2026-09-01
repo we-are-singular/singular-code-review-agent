@@ -39,7 +39,7 @@ export async function ReviewLane({ lane, children }: ReviewLaneProps) {
         - {REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
         - {REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
         - {REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
-        <ReviewContextPrompt files diff history />
+        <ReviewContextPrompt diff history />
         ## Lane assignment
         Your lane is `{lane}`.
       </Block>

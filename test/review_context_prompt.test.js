@@ -61,7 +61,7 @@ async function render(workspace, props) {
 
 test("ReviewContextPrompt renders selected materialized files with statistics", async t => {
   const workspace = materializeContext(t, "one two\nthree")
-  const output = await render(workspace, { files: true, diff: true, history: true })
+  const output = await render(workspace, { diff: true, history: true })
 
   assert.match(
     output,
@@ -114,7 +114,7 @@ test("ReviewContextPrompt references materialized files larger than the inline l
   )
   assert.match(output, /Read completely before staging findings\./u)
   assert.doesNotMatch(output, /private-tail-marker/u)
-  assert.doesNotMatch(output, /changed-file inventory/u)
+  assert.match(output, /changed-file inventory/u)
   assert.doesNotMatch(output, /pull-request history/u)
   assert.doesNotMatch(output, /not inlined|at least [\d,]+/u)
 })
