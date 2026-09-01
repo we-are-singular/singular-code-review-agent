@@ -3,6 +3,7 @@ import { Agent, evaluate, Skill, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 import { Block } from "../block.js"
 import { Context7 } from "../context7.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
+import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
 import type { ReviewLaneName } from "../../lib/review-queue.js"
 import { createGitHubReadTools } from "../../tools/github-read.js"
@@ -15,10 +16,9 @@ export type ReviewLaneProps = {
 
 /** Runs one focused specialist and hands its non-canonical assessment to audit. */
 export async function ReviewLane({ lane, children }: ReviewLaneProps) {
-  const { github, queue, snapshot } = useReviewContext()
+  const { github, queue } = useReviewContext()
   const tools = createReviewTools(queue, lane)
   const githubTools = createGitHubReadTools(github)
-  const changedFiles = snapshot.diff.files.map(path => `- ${path}`).join("\n") || "- (none)"
 
   const assessment = await evaluate(
     <Agent name={lane} permissions={{ filesystem: "read-only", network: false, shell: false }}>
@@ -39,9 +39,7 @@ export async function ReviewLane({ lane, children }: ReviewLaneProps) {
         - {REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
         - {REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
         - {REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
-        Changed files:
-        <Block>{changedFiles}</Block>
-        Begin with {REVIEW_CONTEXT_PATHS.pullRequest} and {REVIEW_CONTEXT_PATHS.diff}. Read {REVIEW_CONTEXT_PATHS.history} when the trigger, prior feedback, or author decisions matter.
+        <ReviewContextPrompt files diff history />
         ## Lane assignment
         Your lane is `{lane}`.
       </Block>

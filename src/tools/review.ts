@@ -1,4 +1,4 @@
-import { defineTool } from "@aml-jsx/sdk"
+import { defineTool, type AmlJsonValue } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import {
@@ -11,6 +11,7 @@ import {
   type ReviewLaneName,
   type StagedReviewFinding
 } from "../lib/review-queue.js"
+import type { ReviewSnapshot } from "../types/review.js"
 
 const ReviewLineSchema = z
   .union([z.number().int().positive(), z.string().trim().min(1), z.array(z.number().int().positive()).min(1)])
@@ -29,6 +30,12 @@ const AddReviewReplySchema = ReplyFindingSchema.omit({ kind: true, to: true })
   .extend({ comment_id: ReplyFindingSchema.shape.to })
   .strict()
 const AddReviewBlockerSchema = ReviewBlockerSchema.omit({ kind: true, severity: true, confidence: true })
+const FullCommentSchema = z
+  .object({
+    kind: z.enum(["issue_comment", "review_comment", "review"]),
+    id: z.number().int().positive()
+  })
+  .strict()
 
 /** Converts forgiving Agent line notation into GitHub's terminal line and optional same-side range start. */
 function normalizeReviewLine(value: z.infer<typeof ReviewLineSchema>): { line: number; start_line?: number } {
@@ -106,7 +113,11 @@ export function createReviewTools(review: ReviewQueue, lane: ReviewLaneName) {
 }
 
 /** Grants audit its complete calibration surface over staged findings. */
-export function createReviewAuditTools(review: ReviewQueue, candidates: readonly StagedReviewFinding[]) {
+export function createReviewAuditTools(
+  review: ReviewQueue,
+  candidates: readonly StagedReviewFinding[],
+  snapshot: ReviewSnapshot
+) {
   if (candidates.length === 0) {
     throw new Error("review audit tools require at least one staged finding")
   }
@@ -147,6 +158,74 @@ export function createReviewAuditTools(review: ReviewQueue, candidates: readonly
       execute: ({ ids }) => {
         review.drop(ids)
         return { ok: true }
+      }
+    }),
+    getFullComment: defineTool({
+      name: "get_full_comment",
+      description: "Read one complete captured comment or review, including the surrounding review thread when present",
+      input: FullCommentSchema,
+      execute: ({ kind, id }): AmlJsonValue => {
+        if (kind === "issue_comment") {
+          const comment = snapshot.issueComments.find(candidate => candidate.id === id)
+          if (!comment) throw new Error(`issue comment #${id} is not present in the captured history`)
+          return {
+            kind,
+            id,
+            actor: comment.user?.login || null,
+            created_at: comment.created_at || null,
+            updated_at: comment.updated_at || null,
+            body: comment.body || "",
+            url: comment.html_url || null
+          }
+        }
+
+        if (kind === "review") {
+          const capturedReview = snapshot.reviews.find(candidate => candidate.id === id)
+          if (!capturedReview) throw new Error(`review #${id} is not present in the captured history`)
+          return {
+            kind,
+            id,
+            actor: capturedReview.user?.login || null,
+            submitted_at: capturedReview.submitted_at || capturedReview.submittedAt || null,
+            state: capturedReview.state || null,
+            commit_id: capturedReview.commit_id || capturedReview.commitId || null,
+            body: capturedReview.body || "",
+            url: capturedReview.html_url || capturedReview.url || null
+          }
+        }
+
+        const thread = snapshot.reviewThreads.find(candidate => candidate.comments.some(comment => comment.id === id))
+        const comment =
+          thread?.comments.find(candidate => candidate.id === id) ||
+          snapshot.reviewComments.find(candidate => candidate.id === id)
+        if (!comment) throw new Error(`review comment #${id} is not present in the captured history`)
+        return {
+          kind,
+          id,
+          actor: comment.user?.login || null,
+          created_at: comment.created_at || null,
+          body: comment.body || "",
+          url: comment.html_url || null,
+          path: comment.path || thread?.path || null,
+          start_line: comment.start_line || thread?.start_line || null,
+          line: comment.line || thread?.line || null,
+          thread: thread
+            ? {
+                id: thread.id,
+                state: thread.is_resolved ? "resolved" : thread.is_outdated ? "outdated" : "unresolved",
+                path: thread.path || null,
+                start_line: thread.start_line || null,
+                line: thread.line || null,
+                comments: thread.comments.map(candidate => ({
+                  id: candidate.id,
+                  actor: candidate.user.login || null,
+                  created_at: candidate.created_at || null,
+                  body: candidate.body || "",
+                  url: candidate.html_url || null
+                }))
+              }
+            : null
+        }
       }
     })
   }

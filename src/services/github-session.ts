@@ -2,6 +2,7 @@ import type {
   GitHubClient,
   IssueComment,
   PullRequestReview,
+  PullRequestTimelineEvent,
   Reaction,
   ReviewComment,
   ReviewThreadsResult
@@ -98,6 +99,13 @@ export class GitHubReviewSession {
       : this.#once("reviews", () => this.#github.listReviews(this.#request.prNumber))
   }
 
+  /** Loads non-comment pull-request lifecycle and scope changes. */
+  listPullRequestTimeline(): Promise<PullRequestTimelineEvent[]> {
+    return this.#request.ignoreHistory
+      ? Promise.resolve([])
+      : this.#once("pull-request-timeline", () => this.#github.listPullRequestTimeline(this.#request.prNumber))
+  }
+
   /** Loads commit messages and authors for the durable PR evidence file. */
   listPullRequestCommits() {
     return this.#once("commits", () => this.#github.listPullRequestCommits(this.#request.prNumber))
@@ -140,16 +148,25 @@ export class GitHubReviewSession {
   /** Builds the one evidence snapshot consumed by every deterministic and AML phase. */
   snapshot(): Promise<ReviewSnapshot> {
     return this.#once("snapshot", async () => {
-      const [pullRequest, filteredDiff, commits, issueComments, reviewComments, reviews, threadsResult] =
-        await Promise.all([
-          this.getPullRequest(),
-          this.getPullRequestDiff(),
-          this.listPullRequestCommits(),
-          this.listIssueComments(),
-          this.listReviewComments(),
-          this.listReviews(),
-          this.listReviewThreads()
-        ])
+      const [
+        pullRequest,
+        filteredDiff,
+        commits,
+        issueComments,
+        reviewComments,
+        reviews,
+        timelineEvents,
+        threadsResult
+      ] = await Promise.all([
+        this.getPullRequest(),
+        this.getPullRequestDiff(),
+        this.listPullRequestCommits(),
+        this.listIssueComments(),
+        this.listReviewComments(),
+        this.listReviews(),
+        this.listPullRequestTimeline(),
+        this.listReviewThreads()
+      ])
       let trigger = ReviewEvidence.trigger(this.#request)
       if (!trigger.comment && this.#request.triggerCommentId) {
         const comment =
@@ -180,6 +197,7 @@ export class GitHubReviewSession {
         issueComments,
         reviewComments,
         reviews,
+        timelineEvents,
         commits,
         reviewThreadsAvailable: threadsResult.available,
         reviewThreads: threadsResult.threads
