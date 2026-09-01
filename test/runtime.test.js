@@ -401,6 +401,7 @@ sleep 30
       system: "",
       mcpServers: [],
       permissions: { filesystem: "read-only", network: false, shell: false },
+      skills: [],
       tools: []
     },
     {
@@ -612,6 +613,10 @@ test("gate answers publish through post_issue_comment without starting review la
   const provider = new DeterministicAgentProvider({
     async respond(request) {
       if (request.system.includes("route pull-request follow-up")) {
+        assert.deepEqual(request.skills, [])
+        assert.match(request.prompt, /<gate-policy>\n# Review gate/u)
+        assert.match(request.prompt, /<gate-context>/u)
+        assert.match(request.prompt, /<review-delta>/u)
         return {
           text: "",
           structured: { decision: "answer", answer: "This change keeps the cached result fresh." }

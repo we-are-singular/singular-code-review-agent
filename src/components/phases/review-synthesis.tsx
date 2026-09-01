@@ -1,7 +1,6 @@
-import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import { Block } from "../block.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
@@ -21,15 +20,17 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
       permissions={{ filesystem: "read-only", network: false, shell: false }}
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
-      <Skill name="Review synthesis policy" src="./skills/synthesis.md" />
-      <Block>
+      <Block tag="synthesis-policy">
+        <Include src="./instructions/synthesis.md" maxBytes={32_768} title={false} />
+      </Block>
+      <Block tag="audit-handoff">
         The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
         application-owned final evidence that follows is authoritative.
+        <Block>{children}</Block>
       </Block>
-      {children}
       <Block>
         Write the author-facing main review body from this application-owned final evidence:
-        <Block>{JSON.stringify(evidence, null, 2)}</Block>
+        <Block tag="validated-review">{JSON.stringify(evidence, null, 2)}</Block>
         Use the pull-request context below to understand the change. The application-owned conversation above contains
         the only prior discussion relevant to this top-level response.
         <ReviewContextPrompt />

@@ -1,9 +1,8 @@
-import { resolve } from "node:path"
+import { Block, Include } from "@aml-jsx/sdk"
 
-import { Block } from "./block.js"
 import { REVIEW_CONTEXT_PATHS } from "./review-context-files.js"
-import { useReviewContext } from "./review-context.js"
-import { textFileCache } from "../services/text-file-cache.js"
+
+const REVIEW_CONTEXT_INLINE_LIMIT_BYTES = 50_000
 
 export type ReviewContextPromptProps = {
   diff?: boolean
@@ -14,47 +13,28 @@ type PromptSection = {
   label: string
   path: string
   instruction: string
-  readInstruction: string
+  tag: string
 }
 
-async function PromptContextSection({
-  instruction,
-  label,
-  path,
-  readInstruction,
-  workspace
-}: PromptSection & { workspace: string }) {
-  const file = await textFileCache.read(resolve(workspace, path))
-  const stats = `${file.characters.toLocaleString("en-US")} characters, ${file.words.toLocaleString("en-US")} words, ${file.lines.toLocaleString("en-US")} lines`
-
-  if (file.content !== null) {
-    return (
-      <Block>
-        ### File: `{path}` — {label} ({stats})
-        <Block>
-          {instruction} The complete contents follow; do not read this path or fetch the same PR data again.
-        </Block>
-        <Block>{file.content || "(Empty.)"}</Block>
-      </Block>
-    )
-  }
-
+function PromptContextSection({ instruction, label, path, tag }: PromptSection) {
   return (
-    <Block>
-      ### File: `{path}` — {label} ({stats})<Block>{readInstruction}</Block>
+    <Block tag={tag}>
+      ### File: `{path}` — {label}
+      <Block>{instruction} Do not fetch the same pull-request data again.</Block>
+      <Include path={path} maxBytes={REVIEW_CONTEXT_INLINE_LIMIT_BYTES} title={false} />
     </Block>
   )
 }
 
-/** Projects the materialized review files into an Agent prompt without duplicating large evidence. */
+/** Projects selected materialized review files through AML's bounded Include boundary. */
 export function ReviewContextPrompt({ diff = false, history = false }: ReviewContextPromptProps) {
-  const { github } = useReviewContext()
   const sections: PromptSection[] = [
     {
       label: "pull-request context and changed files",
       path: REVIEW_CONTEXT_PATHS.pullRequest,
-      instruction: "Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence.",
-      readInstruction: "Read before judging intent or scope."
+      instruction:
+        "Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence. If AML supplies a staged path instead of inline contents, read it before judging intent or scope.",
+      tag: "pull-request-context"
     }
   ]
 
@@ -62,23 +42,25 @@ export function ReviewContextPrompt({ diff = false, history = false }: ReviewCon
     sections.push({
       label: "pull-request diff",
       path: REVIEW_CONTEXT_PATHS.diff,
-      instruction: "Review before staging findings.",
-      readInstruction: "Read completely before staging findings."
+      instruction:
+        "Review before staging findings. If AML supplies a staged path instead of inline contents, read it completely before staging findings.",
+      tag: "pull-request-diff"
     })
   }
   if (history) {
     sections.push({
       label: "pull-request history",
       path: REVIEW_CONTEXT_PATHS.history,
-      instruction: "Check prior decisions and thread state before staging or retaining findings.",
-      readInstruction: "Read completely before staging or retaining findings; check prior decisions and thread state."
+      instruction:
+        "Check prior decisions and thread state before staging or retaining findings. If AML supplies a staged path instead of inline contents, read it completely before staging or retaining findings.",
+      tag: "pull-request-history"
     })
   }
 
   return (
     <Block>
       {sections.map(section => (
-        <PromptContextSection {...section} workspace={github.request.workspace} />
+        <PromptContextSection {...section} />
       ))}
     </Block>
   )

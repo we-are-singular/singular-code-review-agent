@@ -85,7 +85,7 @@ AML reads the model tree from the leaves back to the trunk. The nesting defines 
 
 The shared review Context carries request-scoped dependencies plus small APIs for the typed queue, completed routing handoff, and final publication outcome. Its top-level value is not reactive state: components share the same request binding, and mutable workflow transitions remain behind the owning APIs. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
-The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Parallel`, `Skill`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
+The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Block`, `File`, `Include`, `Parallel`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
 
 ### The six lanes
 

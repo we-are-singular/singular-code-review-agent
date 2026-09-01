@@ -1,7 +1,6 @@
-import { File, type AmlRenderable } from "@aml-jsx/sdk"
+import { Block, File, type AmlRenderable } from "@aml-jsx/sdk"
 
 import type { ReviewSnapshot } from "../types/review.js"
-import { Block } from "./block.js"
 import { useReviewContext } from "./review-context.js"
 
 export const REVIEW_CONTEXT_PATHS = {

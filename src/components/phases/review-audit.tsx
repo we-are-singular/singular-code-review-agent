@@ -1,6 +1,5 @@
-import { Agent, evaluate, Skill, Tool, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
-import { Block } from "../block.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
@@ -27,15 +26,17 @@ function AuditAgent({ children, findings }: { children: AmlRenderable; findings:
       <Tool use={tools.demoteReviewFinding} />
       <Tool use={tools.dropReviewFindings} />
       <Tool use={tools.getFullComment} />
-      <Skill name="Review audit policy" src="./skills/audit.md" />
-      <Block>
+      <Block tag="audit-policy">
+        <Include src="./instructions/audit.md" maxBytes={32_768} title={false} />
+      </Block>
+      <Block tag="specialist-handoffs">
         The specialist Agents resolve below before this audit session starts. Their terminal handoffs may explain their
         coverage, but only the application-owned staged finding list that follows is eligible for audit.
+        <Block>{children}</Block>
       </Block>
-      {children}
       <Block>
         Consolidate only the typed staged findings below into the review that should reach the author.
-        <Block>{JSON.stringify({ findings }, null, 2)}</Block>
+        <Block tag="staged-findings">{JSON.stringify({ findings }, null, 2)}</Block>
         You may read only {REVIEW_CONTEXT_PATHS.pullRequest} for the author's stated intent and the history context
         below for accepted decisions, prior feedback, or existing threads. Read the complete history before deciding
         whether any staged finding remains relevant. If a `(truncated)` entry could change retention, use

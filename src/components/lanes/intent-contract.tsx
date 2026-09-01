@@ -1,6 +1,5 @@
-import { System } from "@aml-jsx/sdk"
+import { Block, System } from "@aml-jsx/sdk"
 
-import { Block } from "../block.js"
 import { ReviewLane } from "./review-lane.js"
 
 /** Checks that the patch satisfies its stated and repository-inferred contract. */

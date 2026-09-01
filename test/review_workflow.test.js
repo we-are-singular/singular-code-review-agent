@@ -52,7 +52,7 @@ const finding = {
 }
 
 function laneName(prompt) {
-  return laneNames.find(name => prompt.includes(`Your lane is \`${name}\`.`))
+  return laneNames.find(name => prompt.includes(`## Your lane is \`${name}\``))
 }
 
 function fakeGitHub(overrides = {}) {
@@ -369,6 +369,9 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
 
   const laneCalls = provider.calls.filter(call => Boolean(laneName(call.request.prompt)))
   assert.equal(laneCalls.length, 6)
+  for (const call of provider.calls) {
+    assert.deepEqual(call.request.skills, [])
+  }
   for (const call of laneCalls) {
     assert.deepEqual(
       call.request.tools.map(tool => tool.name),
@@ -384,13 +387,19 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
       ]
     )
     assert.doesNotMatch(call.request.system, /add_review_comment/u)
-    const policyIndex = call.request.prompt.indexOf("# Evidence-first review lane")
-    const contextIndex = call.request.prompt.indexOf("## Review context")
-    const assignmentIndex = call.request.prompt.indexOf("## Lane assignment")
+    const lane = laneName(call.request.prompt)
+    assert.ok(lane)
+    const policyIndex = call.request.prompt.indexOf("<review-policy>")
+    const contextIndex = call.request.prompt.indexOf("<review-context>")
+    const assignmentIndex = call.request.prompt.indexOf(`## Your lane is \`${lane}\``)
     assert.ok(policyIndex >= 0)
     assert.ok(policyIndex < contextIndex)
     assert.ok(contextIndex < assignmentIndex)
-    assert.match(call.request.prompt, /\n\n## Review context/u)
+    assert.match(call.request.prompt, /<review-policy>/u)
+    assert.match(call.request.prompt, /# Evidence-first review lane/u)
+    assert.match(call.request.prompt, /<review-context>/u)
+    assert.match(call.request.prompt, /<review-context>\n## Review context/u)
+    assert.doesNotMatch(call.request.prompt, /<[a-z-]+-assignment>/u)
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.md/u)
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.diff/u)
     assert.match(call.request.prompt, /\.singular-code-review\/history\.md/u)
@@ -398,16 +407,16 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /Do not repeat, rephrase, or insist on a semantically equivalent finding/u)
     assert.match(
       call.request.prompt,
-      /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+      /<pull-request-diff>[\s\S]*### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u
     )
     assert.match(
       call.request.prompt,
-      /### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u
+      /<pull-request-context>[\s\S]*### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u
     )
     assert.match(call.request.prompt, /Use the PR description, refs, commits, and changed-file inventory/u)
     assert.match(
       call.request.prompt,
-      /### File: `\.singular-code-review\/history\.md` — pull-request history \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+      /<pull-request-history>[\s\S]*### File: `\.singular-code-review\/history\.md` — pull-request history/u
     )
     assert.match(call.request.prompt, /Audit owns retention, semantic deduplication, and calibration/u)
     assert.match(call.request.prompt, /Synthesis writes the top-level review summary/u)
@@ -468,6 +477,9 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     ["merge_review_findings", "demote_review_finding", "drop_review_findings", "get_full_comment"]
   )
   assert.deepEqual(audit.request.mcpServers, [])
+  assert.match(audit.request.prompt, /<audit-policy>/u)
+  assert.match(audit.request.prompt, /<specialist-handoffs>/u)
+  assert.match(audit.request.prompt, /<staged-findings>/u)
   assert.match(audit.request.prompt, /"findings"/u)
   assert.match(audit.request.prompt, /"id": "BUG-1"/u)
   assert.match(audit.request.prompt, /This branch accepts stale state/u)
@@ -484,15 +496,15 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.match(audit.request.prompt, /`get_full_comment` with its `#ID` and kind/u)
   assert.match(
     audit.request.prompt,
-    /### File: `\.singular-code-review\/history\.md` — pull-request history \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+    /<pull-request-history>[\s\S]*### File: `\.singular-code-review\/history\.md` — pull-request history/u
   )
   assert.match(audit.request.prompt, /Prefer retaining no more than 24 findings/u)
   assert.match(audit.request.prompt, /Do not discard distinct material feedback merely to reach this preference/u)
   assert.doesNotMatch(audit.request.prompt, /hard safety ceiling/u)
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
   assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)
-  assert.match(audit.request.prompt, /author\.\n\n\{\n  "findings"/u)
-  assert.match(audit.request.prompt, /\n\}\n\nYou may read only/u)
+  assert.match(audit.request.prompt, /author\.\n\n<staged-findings>\n\{\n  "findings"/u)
+  assert.match(audit.request.prompt, /\n\}\n<\/staged-findings>\n\nYou may read only/u)
   let previousHandoff = -1
   for (const lane of laneNames) {
     const handoff = audit.request.prompt.indexOf(`## ${laneHeadings[lane]}`)
@@ -504,6 +516,9 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
   assert.ok(synthesis)
   assert.deepEqual(synthesis.request.tools, [])
+  assert.match(synthesis.request.prompt, /<synthesis-policy>/u)
+  assert.match(synthesis.request.prompt, /<audit-handoff>/u)
+  assert.match(synthesis.request.prompt, /<validated-review>/u)
   assert.match(synthesis.request.prompt, /The staged findings were consolidated\./u)
   assert.match(synthesis.request.prompt, /lane_assessments/u)
   assert.match(synthesis.request.prompt, /"final_review"/u)
