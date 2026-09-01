@@ -97,7 +97,7 @@ export async function runReview(
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,
-      // Skill paths resolve beside the compiled reviewer while the provider
+      // Application-owned Include sources resolve beside the compiled reviewer while the provider
       // remains pinned to the repository under review.
       cwd: fileURLToPath(new URL(".", import.meta.url)),
       maxConcurrentAgents: options.maximumConcurrency,

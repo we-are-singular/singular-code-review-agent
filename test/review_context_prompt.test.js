@@ -4,37 +4,11 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { AmlRuntime } from "@aml-jsx/sdk"
+import { Agent, AmlRuntime, localWorkspace, Workspace } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
+import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContext } from "../dist/components/review-context.js"
 import { ReviewContextPrompt } from "../dist/components/review-context-prompt.js"
-
-function snapshot() {
-  return {
-    generatedAt: "2026-08-31T00:00:00.000Z",
-    trigger: { reason: "manual", actor: null },
-    pullRequest: {
-      number: 42,
-      title: "Keep review context composable",
-      body: "Explain the intended change.",
-      author: { login: "author" },
-      baseRefName: "main",
-      headRefName: "feature",
-      baseRefOid: "a".repeat(40),
-      headRefOid: "b".repeat(40),
-      isDraft: false
-    },
-    commits: [],
-    actionItems: [],
-    timeline: { olderEntriesOmitted: 0, entries: [] },
-    issueComments: [],
-    reviews: [],
-    reviewThreads: [],
-    reviewComments: [],
-    diff: { text: "", files: [], ignoredFiles: [] }
-  }
-}
 
 function materializeContext(t, diff) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "review-context-prompt-"))
@@ -50,71 +24,94 @@ function materializeContext(t, diff) {
   return workspace
 }
 
-async function render(workspace, props) {
-  return new AmlRuntime().evaluate(
-    jsx(ReviewContext.Provider, {
-      value: { github: { request: { workspace } }, snapshot: snapshot() },
-      children: jsx(ReviewContextPrompt, props)
+async function render(workspace, props, inspectPrompt) {
+  const provider = new DeterministicAgentProvider({
+    async respond(request) {
+      await inspectPrompt?.(request.prompt)
+      return { text: request.prompt }
+    }
+  })
+  const runtime = new AmlRuntime({
+    agentProvider: provider,
+    workspaceProvider: localWorkspace({ directory: workspace })
+  })
+  const output = await runtime.evaluate(
+    jsx(Workspace, {
+      id: "review-context-prompt-test",
+      load: false,
+      lock: false,
+      save: false,
+      children: jsx(Agent, {
+        permissions: { filesystem: "read-only", network: false, shell: false },
+        children: jsx(ReviewContextPrompt, props)
+      })
     })
   )
+
+  return { output, request: provider.calls[0].request }
 }
 
-test("ReviewContextPrompt renders selected materialized files with statistics", async t => {
+test("ReviewContextPrompt includes selected materialized files in tagged sections", async t => {
   const workspace = materializeContext(t, "one two\nthree")
-  const output = await render(workspace, { diff: true, history: true })
+  const { output, request } = await render(workspace, { diff: true, history: true })
 
-  assert.match(
-    output,
-    /### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
-  )
+  assert.deepEqual(request.skills, [])
+  assert.match(output, /<pull-request-context>/u)
+  assert.match(output, /### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u)
   assert.match(
     output,
     /Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence/u
   )
-  assert.match(output, /The complete contents follow; do not read this path or fetch the same PR data again\./u)
+  assert.match(output, /Do not fetch the same pull-request data again\./u)
   assert.match(output, /Explain the intended change\./u)
   assert.match(output, /src\/example\.ts/u)
-  assert.match(
-    output,
-    /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \(13 characters, 3 words, 2 lines\)/u
-  )
+  assert.match(output, /<pull-request-diff>/u)
+  assert.match(output, /### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u)
+  assert.match(output, /one two\nthree/u)
+  assert.match(output, /<pull-request-history>/u)
   assert.match(output, /### File: `\.singular-code-review\/history\.md` — pull-request history/u)
-  assert.doesNotMatch(output, /Inline|not inlined|at least [\d,]+/u)
+  assert.doesNotMatch(output, /exceeding the 50000-byte inline limit/u)
 })
 
-test("ReviewContextPrompt invalidates a cached file when its metadata changes", async t => {
+test("ReviewContextPrompt reads each materialized file live for every evaluation", async t => {
   const workspace = materializeContext(t, "one two\nthree")
   const historyPath = path.join(workspace, ".singular-code-review", "history.md")
 
-  const first = await render(workspace, { history: true })
+  const { output: first } = await render(workspace, { history: true })
   fs.writeFileSync(historyPath, "# Pull request history\n\nA new decision was recorded.\n")
-  const second = await render(workspace, { history: true })
+  const { output: second } = await render(workspace, { history: true })
 
   assert.doesNotMatch(first, /A new decision was recorded/u)
   assert.match(second, /A new decision was recorded/u)
 })
 
-test("ReviewContextPrompt distinguishes an empty file from an omitted large file", async t => {
+test("ReviewContextPrompt keeps an empty materialized file inline", async t => {
   const workspace = materializeContext(t, "")
-  const output = await render(workspace, { diff: true })
+  const { output } = await render(workspace, { diff: true })
 
-  assert.match(output, /pull-request diff \(0 characters, 0 words, 0 lines\)/u)
-  assert.match(output, /\(Empty\.\)/u)
-  assert.doesNotMatch(output, /Read completely before staging findings/u)
+  assert.match(output, /<pull-request-diff>/u)
+  assert.match(output, /### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u)
+  assert.doesNotMatch(output, /exceeding the 50000-byte inline limit/u)
+  assert.doesNotMatch(output, /\(Empty\.\)/u)
 })
 
-test("ReviewContextPrompt references materialized files larger than the inline limit", async t => {
+test("ReviewContextPrompt gives its Agent a readable path for oversized materialized files", async t => {
   const largeDiff = `${"changed line\n".repeat(4_000)}private-tail-marker`
   const workspace = materializeContext(t, largeDiff)
-  const output = await render(workspace, { diff: true })
+  let stagedContent
+  const { output } = await render(workspace, { diff: true }, prompt => {
+    const stagedPath = prompt.match(/Read it at `([^`]+)`\./u)?.[1]
+    assert.ok(stagedPath, "AML did not provide a staged path for the oversized diff")
+    stagedContent = fs.readFileSync(stagedPath, "utf8")
+  })
 
   assert.match(
     output,
-    /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \([\d,]+ characters, [\d,]+ words, 4,001 lines\)/u
+    new RegExp(`The file is ${Buffer.byteLength(largeDiff)} bytes, exceeding the 50000-byte inline limit`, "u")
   )
-  assert.match(output, /Read completely before staging findings\./u)
+  assert.match(output, /read it completely before staging findings/u)
   assert.doesNotMatch(output, /private-tail-marker/u)
+  assert.match(stagedContent, /private-tail-marker$/u)
   assert.match(output, /changed-file inventory/u)
   assert.doesNotMatch(output, /pull-request history/u)
-  assert.doesNotMatch(output, /not inlined|at least [\d,]+/u)
 })

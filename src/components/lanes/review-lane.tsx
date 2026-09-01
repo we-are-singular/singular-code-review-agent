@@ -1,6 +1,5 @@
-import { Agent, evaluate, Skill, Tool, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
-import { Block } from "../block.js"
 import { Context7 } from "../context7.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
@@ -22,7 +21,9 @@ export async function ReviewLane({ lane, children }: ReviewLaneProps) {
 
   const assessment = await evaluate(
     <Agent name={lane} permissions={{ filesystem: "read-only", network: false, shell: false }}>
-      <Skill name="Evidence-first review lane" src="./skills/lane.md" />
+      <Block tag="review-policy">
+        <Include src="./instructions/lane.md" maxBytes={32_768} title={false} />
+      </Block>
       <Context7 />
       <Tool use={githubTools.getPullRequest} />
       <Tool use={githubTools.getPullRequestDiff} />
@@ -33,15 +34,15 @@ export async function ReviewLane({ lane, children }: ReviewLaneProps) {
       <Tool use={tools.addReviewReply} />
       <Tool use={tools.addReviewBlocker} />
       {/* prettier-ignore */}
-      <Block>
+      <Block tag="review-context">
         ## Review context
         The review is materialized in these workspace-relative files:
         - {REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
         - {REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
         - {REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
         <ReviewContextPrompt diff history />
-        ## Lane assignment
-        Your lane is `{lane}`.
+
+        ## Your lane is `{lane}`
       </Block>
       {children}
     </Agent>

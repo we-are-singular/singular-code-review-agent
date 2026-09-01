@@ -1,6 +1,5 @@
-import { System } from "@aml-jsx/sdk"
+import { Block, System } from "@aml-jsx/sdk"
 
-import { Block } from "../block.js"
 import { ReviewLane } from "./review-lane.js"
 
 /** Checks the patch against repository-local rules, ownership, and design. */
