@@ -70,7 +70,7 @@ test("ReviewContextPrompt includes selected materialized files in tagged section
   assert.match(output, /one two\nthree/u)
   assert.match(output, /<pull-request-history>/u)
   assert.match(output, /### File: `\.singular-code-review\/history\.md` — pull-request history/u)
-  assert.doesNotMatch(output, /exceeding the 50000-byte inline limit/u)
+  assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
 })
 
 test("ReviewContextPrompt reads each materialized file live for every evaluation", async t => {
@@ -91,7 +91,7 @@ test("ReviewContextPrompt keeps an empty materialized file inline", async t => {
 
   assert.match(output, /<pull-request-diff>/u)
   assert.match(output, /### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u)
-  assert.doesNotMatch(output, /exceeding the 50000-byte inline limit/u)
+  assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
   assert.doesNotMatch(output, /\(Empty\.\)/u)
 })
 
@@ -107,7 +107,7 @@ test("ReviewContextPrompt gives its Agent a readable path for oversized material
 
   assert.match(
     output,
-    new RegExp(`The file is ${Buffer.byteLength(largeDiff)} bytes, exceeding the 50000-byte inline limit`, "u")
+    new RegExp(`The file is ${Buffer.byteLength(largeDiff)} bytes, exceeding the 32768-byte inline limit`, "u")
   )
   assert.match(output, /read it completely before staging findings/u)
   assert.doesNotMatch(output, /private-tail-marker/u)

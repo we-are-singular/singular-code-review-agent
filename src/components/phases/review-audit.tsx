@@ -1,6 +1,6 @@
 import { Agent, Block, evaluate, Include, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
-import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../prompt-limits.js"
+import { REVIEW_INCLUDE_MAX_BYTES } from "../../config.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
@@ -28,7 +28,7 @@ function AuditAgent({ children, findings }: { children: AmlRenderable; findings:
       <Tool use={tools.dropReviewFindings} />
       <Tool use={tools.getFullComment} />
       <Block tag="audit-policy">
-        <Include src="./instructions/audit.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        <Include src="./instructions/audit.md" maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
       </Block>
       <Block tag="specialist-handoffs">
         The specialist Agents resolve below before this audit session starts. Their terminal handoffs may explain their

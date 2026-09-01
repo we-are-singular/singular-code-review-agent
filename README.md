@@ -160,6 +160,8 @@ The reusable workflow accepts:
 
 Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4-flash`. The older `OPENCODE_MODEL` variable remains compatible.
 
+If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/minimax-m3`. Each attempt has a 20-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
+
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
 The runner writes concise review progress to standard error while keeping its complete JSON result on standard output. Progress includes the main review components, Agent turn boundaries, durations, and each completed turn's response. It excludes framework plumbing, trace identities, prompts, streamed reasoning, and usage payloads. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.

@@ -1,7 +1,7 @@
 import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../prompt-limits.js"
+import { REVIEW_INCLUDE_MAX_BYTES } from "../../config.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
@@ -22,7 +22,7 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
       <Block tag="synthesis-policy">
-        <Include src="./instructions/synthesis.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        <Include src="./instructions/synthesis.md" maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
       </Block>
       <Block tag="audit-handoff">
         The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the

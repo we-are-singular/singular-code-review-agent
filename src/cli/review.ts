@@ -5,8 +5,9 @@ import { resolve } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
+import { DEFAULT_REVIEW_CONCURRENCY, DEFAULT_REVIEW_MODEL } from "../config.js"
 import { renderGitHubStepSummary } from "../lib/github-summary.js"
-import { runReview } from "../run-review.js"
+import { ReviewUnavailableError, runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github-client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN, ReviewEvidence } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
@@ -30,8 +31,8 @@ Runs the review in memory. GitHub mutations are recorded by default; pass
 
 Options:
   --workspace <path>          checked-out pull request workspace
-  --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-v4-flash)
-  --concurrency <number>      maximum parallel AML Agents (default: 6)
+  --model <model>             reviewer model (OpenCode default: ${DEFAULT_REVIEW_MODEL})
+  --concurrency <number>      maximum parallel AML Agents (default: ${DEFAULT_REVIEW_CONCURRENCY})
   --publish                   allow live GitHub mutations
 `
 }
@@ -58,7 +59,7 @@ function model(options: { configured?: string; env: NodeJS.ProcessEnv }): string
   if (configured) {
     return required(configured, "REVIEW_MODEL")
   }
-  return "opencode-go/deepseek-v4-flash"
+  return DEFAULT_REVIEW_MODEL
 }
 
 function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null {
@@ -91,7 +92,10 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
     prNumber: positiveInteger(values.pr || env.PR_NUMBER, "PR_NUMBER"),
     workspace,
     model: model({ configured: values.model, env }),
-    concurrency: positiveInteger(values.concurrency || env.REVIEW_CONCURRENCY || "6", "concurrency"),
+    concurrency: positiveInteger(
+      values.concurrency || env.REVIEW_CONCURRENCY || String(DEFAULT_REVIEW_CONCURRENCY),
+      "concurrency"
+    ),
     // Live mutation requires an explicit CLI flag; ambient CI variables cannot
     // silently turn a benchmark or local invocation into a publishing run.
     publish: values.publish || false
@@ -176,11 +180,16 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 }
 
+/** Reserves exit code 2 for failures that happened before a publishable review existed. */
+export function reviewExitCode(error: unknown): number {
+  return error instanceof ReviewUnavailableError ? 2 : 1
+}
+
 // Packaged commands enter through a symlink, so compare canonical paths.
 const entrypoint = process.argv[1]
 if (entrypoint && realpathSync(entrypoint) === realpathSync(fileURLToPath(import.meta.url))) {
   main().catch(error => {
     process.stderr.write(`review_runner: ${error instanceof Error ? error.message : String(error)}\n`)
-    process.exitCode = 1
+    process.exitCode = reviewExitCode(error)
   })
 }

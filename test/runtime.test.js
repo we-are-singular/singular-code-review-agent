@@ -8,7 +8,8 @@ import test from "node:test"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
 import { createReviewProvider } from "../dist/lib/review-provider.js"
-import { runReview } from "../dist/run-review.js"
+import { reviewExitCode } from "../dist/cli/review.js"
+import { ReviewUnavailableError, runReview } from "../dist/run-review.js"
 import { ReviewGitHubActions } from "../dist/services/github-actions.js"
 import { createGitHubClient } from "../dist/services/github-client.js"
 import { createGitHubWriteTools } from "../dist/tools/github-write.js"
@@ -232,6 +233,11 @@ test("review CLI rejects removed provider selection", () => {
   })
   assert.equal(environment.status, 1)
   assert.match(environment.stderr, /REVIEW_PROVIDER is no longer supported/u)
+})
+
+test("review CLI reserves fallback exit status for pre-publication review failure", () => {
+  assert.equal(reviewExitCode(new ReviewUnavailableError("provider failed")), 2)
+  assert.equal(reviewExitCode(new Error("publication failed")), 1)
 })
 
 test("runtime materializes only the three Agent-readable review context files", async t => {
@@ -847,7 +853,8 @@ test("all failed attempts stop before any GitHub publication", async t => {
       providers += 1
       return new DeterministicAgentProvider({ respond: () => Promise.reject(new Error("offline")) })
     }),
-    /attempt 1: intent-contract: .*failed: offline/u
+    error =>
+      error instanceof ReviewUnavailableError && /attempt 1: intent-contract: .*failed: offline/u.test(error.message)
   )
   assert.equal(providers, 1)
   assert.deepEqual(github.writes, [])
