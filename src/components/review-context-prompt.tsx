@@ -1,8 +1,7 @@
 import { Block, Include } from "@aml-jsx/sdk"
 
+import { REVIEW_CONTEXT_INLINE_LIMIT_BYTES } from "./prompt-limits.js"
 import { REVIEW_CONTEXT_PATHS } from "./review-context-files.js"
-
-const REVIEW_CONTEXT_INLINE_LIMIT_BYTES = 50_000
 
 export type ReviewContextPromptProps = {
   diff?: boolean
