@@ -34,7 +34,7 @@ const reviewDiff = [
 ].join("\n")
 
 function lane(prompt) {
-  return lanes.find(name => prompt.includes("Your lane is `" + name + "`."))
+  return lanes.find(name => prompt.includes("## Your lane is `" + name + "`"))
 }
 
 function githubFixture(overrides = {}) {
