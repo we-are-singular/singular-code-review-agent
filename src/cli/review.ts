@@ -76,9 +76,6 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
     },
     strict: true
   })
-  if (env.REVIEW_PROVIDER?.trim()) {
-    throw new Error("REVIEW_PROVIDER is no longer supported; the reviewer uses OpenCode")
-  }
   if (values.help) {
     return null
   }

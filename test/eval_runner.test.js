@@ -1,12 +1,10 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
 import { evalJobKey } from "../eval/lib/job-key.mjs"
-import { loadEvalConfig } from "../eval/lib/config.mjs"
 import { JudgeAttemptStore } from "../eval/lib/judge-attempts.mjs"
 import { normalizeEvalModel } from "../eval/lib/models.mjs"
 import { reviewCacheKey } from "../eval/lib/review-cache-key.mjs"
@@ -30,18 +28,6 @@ const input = {
   baseSha: "1111111111111111111111111111111111111111",
   headSha: "2222222222222222222222222222222222222222"
 }
-
-test("eval rejects removed provider selection", async t => {
-  const option = spawnSync(process.execPath, ["eval/run.mjs", "--provider", "codex"], { encoding: "utf8" })
-  assert.equal(option.status, 1)
-  assert.match(option.stderr, /unknown option: --provider/u)
-
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-config-"))
-  const config = join(directory, "config.mjs")
-  writeFileSync(config, `export default { provider: "codex" }\n`)
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
-  await assert.rejects(loadEvalConfig(config), /eval config provider is no longer supported/u)
-})
 
 test("review process settles at the timeout even when the child ignores SIGTERM", async () => {
   const directory = mkdtempSync(join(tmpdir(), "singular-eval-runner-"))

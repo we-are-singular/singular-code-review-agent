@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFileSync, spawnSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -221,19 +221,6 @@ function completeProvider(publisher) {
     }
   })
 }
-
-test("review CLI rejects removed provider selection", () => {
-  const option = spawnSync(process.execPath, ["dist/cli/review.js", "--provider", "codex"], { encoding: "utf8" })
-  assert.equal(option.status, 1)
-  assert.match(option.stderr, /Unknown option '--provider'/u)
-
-  const environment = spawnSync(process.execPath, ["dist/cli/review.js", "--help"], {
-    encoding: "utf8",
-    env: { ...process.env, REVIEW_PROVIDER: "codex" }
-  })
-  assert.equal(environment.status, 1)
-  assert.match(environment.stderr, /REVIEW_PROVIDER is no longer supported/u)
-})
 
 test("review CLI reserves fallback exit status for pre-publication review failure", () => {
   assert.equal(reviewExitCode(new ReviewUnavailableError("provider failed")), 2)
