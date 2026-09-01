@@ -67,6 +67,9 @@ function githubFixture(overrides = {}) {
       async listReviews() {
         return overrides.reviews ?? []
       },
+      async listPullRequestTimeline() {
+        return overrides.timelineEvents ?? []
+      },
       async listPullRequestCommits() {
         return overrides.commits ?? []
       },
@@ -235,6 +238,7 @@ test("runtime materializes only the three Agent-readable review context files", 
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
   const github = githubFixture({
+    pullRequest: { created_at: "2026-08-29T10:00:00Z", isDraft: false },
     issueComments: [
       {
         id: 700,
@@ -250,6 +254,14 @@ test("runtime materializes only the three Agent-readable review context files", 
         state: "COMMENTED",
         body: "The first push needed a clearer boundary.",
         submitted_at: "2026-08-29T11:30:00Z"
+      }
+    ],
+    timelineEvents: [
+      {
+        id: 699,
+        event: "ready_for_review",
+        actor: { login: "author" },
+        created_at: "2026-08-29T10:30:00Z"
       }
     ],
     commits: [
@@ -293,6 +305,8 @@ test("runtime materializes only the three Agent-readable review context files", 
   assert.match(historyContext, /## Chronological timeline/u)
   assert.match(historyContext, /Keep the public contract unchanged\./u)
   assert.match(historyContext, /The first push needed a clearer boundary\./u)
+  assert.match(historyContext, /pull request opened \| @author \| draft/u)
+  assert.match(historyContext, /ready for review \| @author/u)
   assert.deepEqual(github.writes, [])
 })
 

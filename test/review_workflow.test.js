@@ -10,7 +10,7 @@ import { ReviewQueue } from "../dist/lib/review-queue.js"
 import { runReview } from "../dist/run-review.js"
 import { GitHubReviewSession } from "../dist/services/github-session.js"
 import { createGitHubReadTools } from "../dist/tools/github-read.js"
-import { createReviewTools } from "../dist/tools/review.js"
+import { createReviewAuditTools, createReviewTools } from "../dist/tools/review.js"
 
 const laneNames = [
   "intent-contract",
@@ -86,6 +86,9 @@ function fakeGitHub(overrides = {}) {
     },
     async listReviews() {
       return overrides.reviews ?? []
+    },
+    async listPullRequestTimeline() {
+      return overrides.timelineEvents ?? []
     },
     async listPullRequestCommits() {
       return (
@@ -229,6 +232,65 @@ test("GitHub reference Tools resolve linked evidence through the cached read bou
   ])
 })
 
+test("audit can expand a compact review comment from the captured thread", async () => {
+  const queue = new ReviewQueue(queueOptions())
+  queue.add("code-path-bug-hunter", finding)
+  const tools = createReviewAuditTools(queue, queue.beginAudit(), {
+    issueComments: [],
+    reviews: [],
+    reviewComments: [],
+    reviewThreads: [
+      {
+        id: "thread-1",
+        is_resolved: true,
+        is_outdated: false,
+        path: "src/example.ts",
+        line: 12,
+        start_line: 10,
+        comments: [
+          {
+            id: 76,
+            user: { login: "reviewer" },
+            body: "The complete rationale that was truncated in history.",
+            created_at: "2026-09-01T10:00:00Z",
+            path: "src/example.ts",
+            line: 12,
+            start_line: 10
+          }
+        ]
+      }
+    ]
+  })
+
+  assert.deepEqual(await tools.getFullComment.execute({ kind: "review_comment", id: 76 }), {
+    kind: "review_comment",
+    id: 76,
+    actor: "reviewer",
+    created_at: "2026-09-01T10:00:00Z",
+    body: "The complete rationale that was truncated in history.",
+    url: null,
+    path: "src/example.ts",
+    start_line: 10,
+    line: 12,
+    thread: {
+      id: "thread-1",
+      state: "resolved",
+      path: "src/example.ts",
+      start_line: 10,
+      line: 12,
+      comments: [
+        {
+          id: 76,
+          actor: "reviewer",
+          created_at: "2026-09-01T10:00:00Z",
+          body: "The complete rationale that was truncated in history.",
+          url: null
+        }
+      ]
+    }
+  })
+})
+
 function reviewProvider(options = {}) {
   const laneInputs = options.laneInputs ?? { "code-path-bug-hunter": [commentInput(finding)] }
 
@@ -332,6 +394,21 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.md/u)
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.diff/u)
     assert.match(call.request.prompt, /\.singular-code-review\/history\.md/u)
+    assert.match(call.request.prompt, /Read the complete pull-request history before staging any finding/u)
+    assert.match(call.request.prompt, /Do not repeat, rephrase, or insist on a semantically equivalent finding/u)
+    assert.match(
+      call.request.prompt,
+      /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+    )
+    assert.match(
+      call.request.prompt,
+      /### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u
+    )
+    assert.match(call.request.prompt, /Use the PR description, refs, commits, and changed-file inventory/u)
+    assert.match(
+      call.request.prompt,
+      /### File: `\.singular-code-review\/history\.md` — pull-request history \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+    )
     assert.match(call.request.prompt, /Audit owns retention, semantic deduplication, and calibration/u)
     assert.match(call.request.prompt, /Synthesis writes the top-level review summary/u)
     assert.match(call.request.prompt, /A `low` finding never describes itself as optional/u)
@@ -350,7 +427,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /fenced `suggestion` block inside `body`/u)
     assert.match(call.request.prompt, /a reply has no severity or confidence/u)
     assert.match(call.request.prompt, /explicitly references another pull request, issue, or commit/u)
-    assert.doesNotMatch(call.request.prompt, /const changed = true/u)
+    assert.match(call.request.prompt, /const changed = true/u)
   }
 
   for (const call of laneCalls) {
@@ -388,7 +465,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.ok(audit)
   assert.deepEqual(
     audit.request.tools.map(tool => tool.name),
-    ["merge_review_findings", "demote_review_finding", "drop_review_findings"]
+    ["merge_review_findings", "demote_review_finding", "drop_review_findings", "get_full_comment"]
   )
   assert.deepEqual(audit.request.mcpServers, [])
   assert.match(audit.request.prompt, /"findings"/u)
@@ -401,6 +478,14 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.match(audit.request.prompt, /Treat factuality and merge action separately/u)
   assert.match(audit.request.prompt, /undocumented older or third-party compatibility/u)
   assert.match(audit.request.prompt, /An anchorless blocker can only remain `critical` or be dropped/u)
+  assert.match(audit.request.prompt, /repeats or rephrases a settled review decision/u)
+  assert.match(audit.request.prompt, /Read the complete history/u)
+  assert.match(audit.request.prompt, /If a `\(truncated\)` entry could change retention/u)
+  assert.match(audit.request.prompt, /`get_full_comment` with its `#ID` and kind/u)
+  assert.match(
+    audit.request.prompt,
+    /### File: `\.singular-code-review\/history\.md` — pull-request history \([\d,]+ characters, [\d,]+ words, [\d,]+ lines\)/u
+  )
   assert.match(audit.request.prompt, /Prefer retaining no more than 24 findings/u)
   assert.match(audit.request.prompt, /Do not discard distinct material feedback merely to reach this preference/u)
   assert.doesNotMatch(audit.request.prompt, /hard safety ceiling/u)
@@ -701,7 +786,7 @@ test("audit merges semantic duplicates without rewriting the retained finding", 
   assert.deepEqual(github.writes, [])
 })
 
-test("audit demotes a useful optional low to nit without rewriting it", async t => {
+test("verdict uses the post-audit queue when lows are dropped or demoted to a nit", async t => {
   const github = fakeGitHub()
   const optionalLow = {
     ...finding,
@@ -709,8 +794,14 @@ test("audit demotes a useful optional low to nit without rewriting it", async t 
     body: "Consider aligning this local name with the surrounding terminology; the pull request may merge unchanged."
   }
   const provider = reviewProvider({
-    laneInputs: { "maintainability-elegance": [commentInput(optionalLow)] },
-    auditActions: [{ tool: "demote_review_finding", input: { id: "ELE-1" } }],
+    laneInputs: {
+      "code-path-bug-hunter": [commentInput(finding)],
+      "maintainability-elegance": [commentInput(optionalLow)]
+    },
+    auditActions: [
+      { tool: "drop_review_findings", input: { ids: ["BUG-1"] } },
+      { tool: "demote_review_finding", input: { id: "ELE-1" } }
+    ],
     synthesis: {
       direct_answer: null,
       summary: "The focused change is ready to land with one optional cleanup note.",
@@ -720,6 +811,7 @@ test("audit demotes a useful optional low to nit without rewriting it", async t 
 
   const result = await runReview(reviewOptions(t, github.client), () => provider)
   assert.deepEqual(result.audit.findings, [{ ...optionalLow, severity: "nit" }])
+  assert.equal(result.validated.inlineComments.length, 1)
   assert.match(
     result.validated.inlineComments[0].body,
     /^:nerd_face::point_up_2: \*\*nit:\*\* Consider aligning this local name/u

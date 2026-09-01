@@ -83,7 +83,9 @@ Keep one issue per finding. Lead `body` with the changed mechanism, concrete imp
 
 ## Prior findings and replies
 
-Reply only when the normalized context identifies an existing top-level review comment and the response advances that exact thread. Do not recreate an unresolved prior bot finding with the same location and body. Raise a resolved finding again only when the current diff reintroduces the problem.
+Read the complete pull-request history before staging any finding. Treat a resolved thread and its replies as a settled review decision, including when the author rejected or declined a recommendation with a concrete rationale. Do not repeat, rephrase, or insist on a semantically equivalent finding merely because you disagree with that decision.
+
+Raise a settled concern again only when the current change reintroduces its mechanism, new concrete evidence invalidates the recorded rationale, or the concern is a high-confidence `critical` issue. In that exceptional case, identify the prior thread and the new evidence in private `evidence`. Reply only when the normalized context identifies an existing top-level review comment and the response advances that exact thread. Do not recreate an unresolved prior bot finding with different wording.
 
 ## Complete the lane
 

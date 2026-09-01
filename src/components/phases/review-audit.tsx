@@ -2,6 +2,7 @@ import { Agent, evaluate, Skill, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
 import { Block } from "../block.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
+import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
 import type { ReviewFinding, StagedReviewFinding } from "../../lib/review-queue.js"
 import { createReviewAuditTools } from "../../tools/review.js"
@@ -14,7 +15,7 @@ export type AuditedReview = {
 
 function AuditAgent({ children, findings }: { children: AmlRenderable; findings: readonly StagedReviewFinding[] }) {
   const review = useReviewContext()
-  const tools = createReviewAuditTools(review.queue, findings)
+  const tools = createReviewAuditTools(review.queue, findings, review.snapshot)
 
   return (
     <Agent
@@ -25,6 +26,7 @@ function AuditAgent({ children, findings }: { children: AmlRenderable; findings:
       <Tool use={tools.mergeReviewFindings} />
       <Tool use={tools.demoteReviewFinding} />
       <Tool use={tools.dropReviewFindings} />
+      <Tool use={tools.getFullComment} />
       <Skill name="Review audit policy" src="./skills/audit.md" />
       <Block>
         The specialist Agents resolve below before this audit session starts. Their terminal handoffs may explain their
@@ -34,11 +36,14 @@ function AuditAgent({ children, findings }: { children: AmlRenderable; findings:
       <Block>
         Consolidate only the typed staged findings below into the review that should reach the author.
         <Block>{JSON.stringify({ findings }, null, 2)}</Block>
-        You may read only {REVIEW_CONTEXT_PATHS.pullRequest} for the author's stated intent and{" "}
-        {REVIEW_CONTEXT_PATHS.history} for accepted decisions, prior feedback, or existing threads. Use them only to
-        decide whether a staged finding remains relevant. Prefer retaining no more than {MAX_REVIEW_FINDINGS} findings.
-        When more remain, drop the least useful redundant or non-material findings first. Do not discard distinct
-        material feedback merely to reach this preference, and never treat the number as a target.
+        You may read only {REVIEW_CONTEXT_PATHS.pullRequest} for the author's stated intent and the history context
+        below for accepted decisions, prior feedback, or existing threads. Read the complete history before deciding
+        whether any staged finding remains relevant. If a `(truncated)` entry could change retention, use
+        `get_full_comment` with its `#ID` and kind: `issue_comment`, `review_comment`, or `review`.
+        <ReviewContextPrompt history />
+        Prefer retaining no more than {MAX_REVIEW_FINDINGS} findings. When more remain, drop the least useful redundant
+        or non-material findings first. Do not discard distinct material feedback merely to reach this preference, and
+        never treat the number as a target.
       </Block>
     </Agent>
   )

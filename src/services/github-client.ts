@@ -49,6 +49,23 @@ export type PullRequestReview = {
   user?: GitHubUser | null
 }
 
+export type PullRequestTimelineEvent = {
+  id?: number | null
+  event?: string | null
+  actor?: GitHubUser | null
+  created_at?: string | null
+  commit_id?: string | null
+  assignee?: GitHubUser | null
+  label?: { name?: string | null } | null
+  requested_reviewer?: GitHubUser | null
+  requested_team?: { name?: string | null; slug?: string | null } | null
+  rename?: { from?: string | null; to?: string | null } | null
+  dismissed_review?: {
+    review_id?: number | null
+    dismissal_message?: string | null
+  } | null
+}
+
 export type PullRequestCommit = {
   sha?: string | null
   html_url?: string | null
@@ -122,6 +139,8 @@ export type PullRequestSummary = {
   isDraft?: boolean
   draft?: boolean
   reviewDecision?: string | null
+  created_at?: string | null
+  createdAt?: string | null
   base?: {
     ref?: string | null
     sha?: string | null
@@ -161,6 +180,7 @@ export type GitHubClient = {
   listIssueComments(issueNumber: number, repository?: string): Promise<IssueComment[]>
   listReviewComments(prNumber: number): Promise<ReviewComment[]>
   listReviews(prNumber: number): Promise<PullRequestReview[]>
+  listPullRequestTimeline(prNumber: number): Promise<PullRequestTimelineEvent[]>
   listPullRequestCommits(prNumber: number): Promise<PullRequestCommit[]>
   listReviewThreads(prNumber: number): Promise<ReviewThreadsResult>
   listIssueCommentReactions(commentId: number): Promise<Reaction[]>
@@ -363,6 +383,16 @@ export function createGitHubClient(options: { token: string; repository: string 
         pull_number: prNumber,
         per_page: 100
       })) as PullRequestReview[]
+    },
+
+    async listPullRequestTimeline(prNumber) {
+      const { owner, repo } = splitRepository(options.repository)
+      return (await octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", {
+        owner,
+        repo,
+        issue_number: prNumber,
+        per_page: 100
+      })) as PullRequestTimelineEvent[]
     },
 
     async listPullRequestCommits(prNumber) {

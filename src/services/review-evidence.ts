@@ -5,6 +5,7 @@ import type {
   PullRequestCommit,
   PullRequestReview,
   PullRequestSummary,
+  PullRequestTimelineEvent,
   ReviewComment,
   ReviewThread
 } from "./github-client.js"
@@ -14,9 +15,40 @@ import type { ValidCommentRanges } from "../lib/review-diff.js"
 export const REVIEW_COMMAND = "@singular-code-review"
 export const DEFAULT_REVIEW_BOT_LOGIN = "singular-code-review[bot]"
 
-const HISTORY_ENTRY_LIMIT = 60
-const HISTORY_TEXT_LIMIT = 240
+// Preserve enough compact events for long-running PRs without allowing history to dominate the review context.
+const HISTORY_ENTRY_LIMIT = 200
+// Event bodies retain useful rationale and suggestions while staying cheaper than complete GitHub payloads.
+const HISTORY_TEXT_LIMIT = 500
+// Active requests need more room than historical events because the current run must answer them accurately.
 const ACTION_TEXT_LIMIT = 1_600
+// Comments, reviews, and commits come from richer dedicated reads; keep only non-duplicative lifecycle and scope events.
+const INCLUDED_TIMELINE_EVENTS = new Set([
+  "added_to_merge_queue",
+  "assigned",
+  "auto_merge_disabled",
+  "auto_merge_enabled",
+  "base_ref_changed",
+  "closed",
+  "convert_to_draft",
+  "demilestoned",
+  "head_ref_deleted",
+  "head_ref_force_pushed",
+  "head_ref_restored",
+  "labeled",
+  "locked",
+  "merged",
+  "milestoned",
+  "ready_for_review",
+  "removed_from_merge_queue",
+  "renamed",
+  "reopened",
+  "review_dismissed",
+  "review_request_removed",
+  "review_requested",
+  "unassigned",
+  "unlabeled",
+  "unlocked"
+])
 
 type GitHubEventPayload = {
   action?: string
@@ -41,6 +73,7 @@ type ReviewEvidenceInput = {
   issueComments: IssueComment[]
   reviewComments: ReviewComment[]
   reviews: PullRequestReview[]
+  timelineEvents?: PullRequestTimelineEvent[]
   commits: PullRequestCommit[]
   reviewThreadsAvailable: boolean
   reviewThreads: ReviewThread[]
@@ -130,68 +163,154 @@ export class ReviewEvidence {
   /** Keeps history useful to models without copying full comments into summaries. */
   static #compact(value: unknown, limit: number): string {
     const text = String(value || "")
+      .replace(/<!--[\s\S]*?-->/gu, " ")
+      .replace(/```suggestion\s*([\s\S]*?)```/giu, " suggestion: $1 ")
+      .replace(/```[^\n]*\s*([\s\S]*?)```/gu, " code: $1 ")
+      .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1")
       .replace(/\s+/gu, " ")
       .trim()
-    return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`
+    const suffix = "… (truncated)"
+    return text.length <= limit ? text : `${text.slice(0, limit - suffix.length).trimEnd()}${suffix}`
   }
 
   /** Produces the ordered, bounded timeline written to history.md. */
   #timeline(): ReviewTimeline {
     const entries: Array<{ at: string; text: string }> = []
+    const location = (path?: string | null, start?: number | null, end?: number | null) => {
+      if (!path) return null
+      if (start && end && start !== end) return `${path}:${start}-${end}`
+      return end || start ? `${path}:${end || start}` : path
+    }
+
+    const add = (entry: {
+      at?: string | null
+      kind: string
+      ref?: string | number | null
+      actor?: string | null
+      state?: string | null
+      location?: string | null
+      body?: unknown
+    }) => {
+      const body = ReviewEvidence.#compact(entry.body, HISTORY_TEXT_LIMIT)
+      const metadata = [
+        entry.kind,
+        entry.ref ? (entry.kind === "commit" ? String(entry.ref) : `#${entry.ref}`) : null,
+        entry.actor ? `@${entry.actor}` : null,
+        entry.state,
+        entry.location
+      ]
+        .filter(Boolean)
+        .join(" | ")
+      entries.push({ at: entry.at || "", text: body ? `${metadata}\n> ${body}` : metadata })
+    }
 
     for (const commit of this.#input.commits) {
-      entries.push({
+      add({
         at: commit.commit?.committer?.date || commit.commit?.author?.date || "",
-        text: [
-          "commit",
-          commit.sha?.slice(0, 7),
-          commit.author?.login,
-          ReviewEvidence.#compact(commit.commit?.message, HISTORY_TEXT_LIMIT)
-        ]
-          .filter(Boolean)
-          .join(" | ")
+        kind: "commit",
+        ref: commit.sha?.slice(0, 7),
+        actor: commit.author?.login || commit.committer?.login,
+        body: String(commit.commit?.message || "").split(/\r?\n/u)[0]
       })
     }
+
+    const timelineEvents = this.#input.timelineEvents || []
+    // A first ready event proves the PR opened as draft; a first draft conversion proves it opened ready.
+    const firstDraftTransition = timelineEvents
+      .filter(event => event.event === "convert_to_draft" || event.event === "ready_for_review")
+      .sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || "")))[0]
+    const initiallyDraft = firstDraftTransition
+      ? firstDraftTransition.event === "ready_for_review"
+      : Boolean(this.#input.pullRequest.isDraft ?? this.#input.pullRequest.draft)
+    const createdAt = this.#input.pullRequest.createdAt || this.#input.pullRequest.created_at
+    if (createdAt) {
+      add({
+        at: createdAt,
+        kind: "pull request opened",
+        actor: this.#input.pullRequest.author?.login || this.#input.pullRequest.user?.login,
+        state: initiallyDraft ? "draft" : "ready"
+      })
+    }
+
+    for (const event of timelineEvents) {
+      if (!event.event || !INCLUDED_TIMELINE_EVENTS.has(event.event)) continue
+
+      const subject =
+        event.label?.name ||
+        event.assignee?.login ||
+        event.requested_reviewer?.login ||
+        event.requested_team?.slug ||
+        event.requested_team?.name ||
+        event.commit_id?.slice(0, 7) ||
+        (event.dismissed_review?.review_id ? `review #${event.dismissed_review.review_id}` : null)
+      const body = event.rename
+        ? `${event.rename.from || "unknown"} → ${event.rename.to || "unknown"}`
+        : event.dismissed_review?.dismissal_message
+
+      add({
+        at: event.created_at,
+        kind: event.event.replaceAll("_", " "),
+        actor: event.actor?.login,
+        state: subject,
+        body
+      })
+    }
+
     for (const comment of this.#input.issueComments) {
-      entries.push({
+      add({
         at: comment.created_at || comment.updated_at || "",
-        text: [
-          "issue comment",
-          `#${comment.id}`,
-          comment.user?.login,
-          ReviewEvidence.#compact(comment.body, HISTORY_TEXT_LIMIT)
-        ]
-          .filter(Boolean)
-          .join(" | ")
+        kind: "issue comment",
+        ref: comment.id,
+        actor: comment.user?.login,
+        state: comment.author_association,
+        body: comment.body
       })
     }
-    for (const comment of this.#input.reviewComments) {
-      entries.push({
-        at: comment.created_at || comment.updated_at || "",
-        text: [
-          "review comment",
-          `#${comment.id}`,
-          comment.user?.login,
-          comment.path,
-          comment.line,
-          ReviewEvidence.#compact(comment.body, HISTORY_TEXT_LIMIT)
-        ]
-          .filter(Boolean)
-          .join(" | ")
-      })
+
+    if (this.#input.reviewThreadsAvailable) {
+      // GraphQL is the only source of resolved and outdated thread state, so prefer it over flat REST comments.
+      for (const thread of this.#input.reviewThreads) {
+        const state = thread.is_resolved ? "resolved" : thread.is_outdated ? "outdated" : "unresolved"
+        for (const comment of thread.comments) {
+          const path = comment.path || thread.path
+          add({
+            at: comment.created_at,
+            kind: "review comment",
+            ref: comment.id,
+            actor: comment.user.login,
+            state,
+            location: location(path, comment.start_line || thread.start_line, comment.line || thread.line),
+            body: comment.body
+          })
+        }
+      }
+    } else {
+      for (const comment of this.#input.reviewComments) {
+        add({
+          at: comment.created_at || comment.updated_at,
+          kind: "review comment",
+          ref: comment.id,
+          actor: comment.user?.login,
+          state: comment.in_reply_to_id ? "reply" : "comment",
+          location: location(comment.path, comment.start_line || comment.startLine, comment.line),
+          body: comment.body
+        })
+      }
     }
+
     for (const review of this.#input.reviews) {
-      entries.push({
+      // GitHub creates a COMMENTED review shell for inline comments and replies; the thread events already carry more detail.
+      const body = String(review.body || "").trim()
+      if (!body && review.state?.toUpperCase() === "COMMENTED") {
+        continue
+      }
+      add({
         at: review.submitted_at || review.submittedAt || "",
-        text: [
-          "review",
-          review.user?.login,
-          review.state,
-          (review.commit_id || review.commitId)?.slice(0, 7),
-          ReviewEvidence.#compact(review.body, HISTORY_TEXT_LIMIT)
-        ]
-          .filter(Boolean)
-          .join(" | ")
+        kind: "review",
+        ref: review.id,
+        actor: review.user?.login,
+        state: review.state,
+        body
       })
     }
 
