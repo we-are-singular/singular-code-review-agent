@@ -19,8 +19,8 @@ function Section({ children, title }: { children: AmlRenderable; title: string }
   )
 }
 
-/** Renders pull-request identity, intent, refs, and commit messages. */
-export function PullRequestContext({ snapshot }: { snapshot: ReviewSnapshot }) {
+/** Renders pull-request identity, intent, refs, and commit subjects. */
+function PullRequestContext({ snapshot }: { snapshot: ReviewSnapshot }) {
   const { pullRequest } = snapshot
   const author = pullRequest.author?.login || pullRequest.user?.login || "unknown"
   const base = pullRequest.baseRefName || "unknown-base"
@@ -52,7 +52,7 @@ export function PullRequestContext({ snapshot }: { snapshot: ReviewSnapshot }) {
 }
 
 /** Renders the changed-file inventory shared by the PR file and Agent prompts. */
-export function ChangedFilesContext({ snapshot }: { snapshot: ReviewSnapshot }) {
+function ChangedFilesContext({ snapshot }: { snapshot: ReviewSnapshot }) {
   return (
     <>
       <Section title="Changed files">
@@ -68,7 +68,7 @@ export function ChangedFilesContext({ snapshot }: { snapshot: ReviewSnapshot }) 
 }
 
 /** Renders the chronological discussion and review-thread evidence. */
-export function HistoryContext({ snapshot }: { snapshot: ReviewSnapshot }) {
+function HistoryContext({ snapshot }: { snapshot: ReviewSnapshot }) {
   return (
     <>
       # Pull request history

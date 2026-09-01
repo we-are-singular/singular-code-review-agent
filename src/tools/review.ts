@@ -162,7 +162,8 @@ export function createReviewAuditTools(
     }),
     getFullComment: defineTool({
       name: "get_full_comment",
-      description: "Read one complete captured comment or review, including the surrounding review thread when present",
+      description:
+        "Read one complete captured comment or review; review comments include their surrounding thread when present",
       input: FullCommentSchema,
       execute: ({ kind, id }): AmlJsonValue => {
         if (kind === "issue_comment") {
