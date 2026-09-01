@@ -269,7 +269,7 @@ test("runtime materializes only the three Agent-readable review context files", 
         sha: "2222222222222222222222222222222222222222",
         author: { login: "author" },
         commit: {
-          author: { name: "Author", date: "2026-08-29T12:00:00Z" },
+          author: { name: "Author Person", date: "2026-08-29T12:00:00Z" },
           message: "Keep the review context readable"
         }
       }
@@ -300,6 +300,7 @@ test("runtime materializes only the three Agent-readable review context files", 
   const pullRequestContext = fs.readFileSync(path.join(contextDirectory, "pr.md"), "utf8")
   assert.match(pullRequestContext, /Review this change\./u)
   assert.match(pullRequestContext, /Keep the review context readable/u)
+  assert.match(pullRequestContext, /## Participants\n\nAuthor Person <@author>\n<@maintainer>\n<@reviewer>/u)
   assert.equal(fs.readFileSync(path.join(contextDirectory, "pr.diff"), "utf8").trimEnd(), reviewDiff.trimEnd())
   const historyContext = fs.readFileSync(path.join(contextDirectory, "history.md"), "utf8")
   assert.match(historyContext, /## Chronological timeline/u)
@@ -725,7 +726,8 @@ test("contained fixes use one gate Agent and fast-track without starting review 
     diff: history.diff,
     pullRequest: {
       baseRefOid: history.base,
-      headRefOid: history.head
+      headRefOid: history.head,
+      html_url: "https://github.com/owner/repository/pull/42"
     },
     reviews: history.reviews,
     reviewComments: history.reviewComments,
@@ -738,6 +740,8 @@ test("contained fixes use one gate Agent and fast-track without starting review 
         assert.match(request.prompt, /cross runtime component boundaries/u)
         assert.match(request.prompt, /Release the previous socket before starting another retry/u)
         assert.match(request.prompt, /releaseRetriedSocket = true/u)
+        assert.match(request.prompt, /https:\/\/github\.com\/owner\/repository\/pull\/42#discussion_r\d+/u)
+        assert.match(request.prompt, /never as bare internal or API IDs/u)
         return {
           text: "",
           structured: {

@@ -49,6 +49,7 @@ export type GateContext = {
   actionItems: ReviewSnapshot["actionItems"]
   previousBotFindings: Array<{
     id: number
+    url: string | null
     path: string | null
     line: number | null
     body: string
@@ -273,6 +274,8 @@ function latestBotReview(snapshot: ReviewSnapshot): BotReview | null {
 
 /** Builds only the history needed by the routing Agent; full evidence lives in files. */
 function gateContext(snapshot: ReviewSnapshot, lastBotReview: BotReview | null, delta: GateDelta): GateContext {
+  const pullRequestUrl = snapshot.pullRequest.html_url || snapshot.pullRequest.url || null
+
   return {
     trigger: snapshot.trigger,
     pullRequest: {
@@ -286,6 +289,7 @@ function gateContext(snapshot: ReviewSnapshot, lastBotReview: BotReview | null, 
     actionItems: snapshot.actionItems,
     previousBotFindings: snapshot.previousBotFindings.map(finding => ({
       id: finding.id,
+      url: finding.html_url || (pullRequestUrl ? `${pullRequestUrl}#discussion_r${finding.id}` : null),
       path: finding.path || null,
       line: finding.line || null,
       body: finding.body || ""

@@ -80,6 +80,25 @@ test("review history is a chronological GraphQL-thread-aware event stream", () =
   assert.doesNotMatch(result.timeline.entries.join("\n"), /Long commit body/u)
 })
 
+test("participants preserve exact human handles and prefer commit names", () => {
+  const result = snapshot({
+    reviewThreadsAvailable: false,
+    commits: [
+      {
+        author: { login: "author" },
+        commit: { author: { name: "Author Person" } }
+      }
+    ],
+    issueComments: [{ id: 1, user: { login: "singular-code-review" } }],
+    reviewComments: [
+      { id: 2, user: { login: "reviewer" } },
+      { id: 3, user: { login: "linear-code[bot]" } }
+    ]
+  })
+
+  assert.deepEqual(result.participants, ["Author Person <@author>", "<@reviewer>"])
+})
+
 test("review history compacts long bodies to a bounded single line", () => {
   const result = snapshot({
     issueComments: [

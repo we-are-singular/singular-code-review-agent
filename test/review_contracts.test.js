@@ -338,5 +338,5 @@ test("evidence participants exclude bot logins with or without the bot suffix", 
     commits: []
   }).snapshot()
 
-  assert.deepEqual(snapshot.participants, ["@fthemudo"])
+  assert.deepEqual(snapshot.participants, ["<@fthemudo>"])
 })
