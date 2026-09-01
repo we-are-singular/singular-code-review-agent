@@ -25,6 +25,11 @@ export type ReviewRuntimeOptions = {
 
 const REVIEW_PROVIDER = "opencode"
 
+/** Signals that no publishable review exists, so an outer model fallback may start safely. */
+export class ReviewUnavailableError extends Error {
+  override readonly name = "ReviewUnavailableError"
+}
+
 /** Preserves provider causes and names failed parallel lanes at the CLI boundary. */
 function errorMessage(error: unknown): string {
   if (error instanceof ParallelError) {
@@ -137,7 +142,7 @@ export async function runReview(
 
   if (!selected) {
     const failures = attempts.map(attempt => `attempt ${attempt.number}: ${attempt.error}`).join("; ")
-    throw new Error(`review unsuccessful: ${failures}`)
+    throw new ReviewUnavailableError(`review unsuccessful: ${failures}`)
   }
 
   return {

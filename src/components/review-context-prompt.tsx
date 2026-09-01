@@ -1,6 +1,6 @@
 import { Block, Include } from "@aml-jsx/sdk"
 
-import { REVIEW_CONTEXT_INLINE_LIMIT_BYTES } from "./prompt-limits.js"
+import { REVIEW_INCLUDE_MAX_BYTES } from "../config.js"
 import { REVIEW_CONTEXT_PATHS } from "./review-context-files.js"
 
 export type ReviewContextPromptProps = {
@@ -20,7 +20,7 @@ function PromptContextSection({ instruction, label, path, tag }: PromptSection) 
     <Block tag={tag}>
       ### File: `{path}` — {label}
       <Block>{instruction} Do not fetch the same pull-request data again.</Block>
-      <Include path={path} maxBytes={REVIEW_CONTEXT_INLINE_LIMIT_BYTES} title={false} />
+      <Include path={path} maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
     </Block>
   )
 }

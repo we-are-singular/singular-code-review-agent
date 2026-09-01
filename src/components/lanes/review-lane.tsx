@@ -1,7 +1,7 @@
 import { Agent, Block, evaluate, Include, Tool, type AmlRenderable } from "@aml-jsx/sdk"
 
+import { REVIEW_INCLUDE_MAX_BYTES } from "../../config.js"
 import { Context7 } from "../context7.js"
-import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../prompt-limits.js"
 import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
 import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
@@ -23,7 +23,7 @@ export async function ReviewLane({ lane, children }: ReviewLaneProps) {
   const assessment = await evaluate(
     <Agent name={lane} permissions={{ filesystem: "read-only", network: false, shell: false }}>
       <Block tag="review-policy">
-        <Include src="./instructions/lane.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        <Include src="./instructions/lane.md" maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
       </Block>
       <Context7 />
       <Tool use={githubTools.getPullRequest} />
