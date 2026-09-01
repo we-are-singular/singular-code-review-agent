@@ -458,6 +458,11 @@ export class ReviewEvidence {
         this.#addParticipant(people, comment.user.login)
       }
     }
+    if (!this.#input.reviewThreadsAvailable) {
+      for (const comment of this.#input.reviewComments) {
+        this.#addParticipant(people, comment.user?.login)
+      }
+    }
     for (const item of actionItems) {
       this.#addParticipant(people, item.actor)
     }
@@ -476,9 +481,10 @@ export class ReviewEvidence {
     }
 
     const named = name && name.toLowerCase() !== normalized
-    const label = named ? `${name} (@${login})` : `@${login}`
+    const unnamed = `<@${login}>`
+    const label = named ? `${name} ${unnamed}` : unnamed
     const existing = people.get(normalized)
-    if (!existing || (named && !existing.includes("("))) {
+    if (!existing || (named && existing.toLowerCase() === `<@${normalized}>`)) {
       people.set(normalized, label)
     }
   }

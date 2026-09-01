@@ -81,6 +81,10 @@ Queue each supported finding as soon as its evidence, wording, and target are co
 
 Keep one issue per finding. Lead `body` with the changed mechanism, concrete impact, and proportionate action. Use multiple paragraphs only for a `critical` or `high` finding; keep a `low` finding to two or three concise sentences, a `question` to one compact uncertainty and ask, and a `nit` to one sentence. Put supporting traces and investigation detail in private `evidence`. Keep severity out of `body` because the application renders it exactly once.
 
+Write author-facing references as GitHub Markdown, never as bare internal or API IDs. The inline anchor already links the finding's own file and lines, so name code symbols in backticks and avoid repeating that location. When another file materially helps, link it as [`path/to/file.ts`](../blob/COMMIT_SHA/path/to/file.ts) using the reviewed head SHA, with `#L10` or `#L10-L14` when exact lines matter. Refer to commits with their plain SHA so GitHub autolinks them. Refer to prior comments only through a descriptive Markdown link when their GitHub URL is available; otherwise describe the prior discussion without its opaque numeric ID.
+
+Use exact GitHub handles from the `Participants` section of the pull-request context. Entries are formatted as `Name <@username>` or `<@username>`. Tag people only with the exact `@username` inside an entry; never invent a handle from a real name or first name. If the exact handle is unavailable, omit the tag. Write mentions as plain text without backticks so GitHub notifies the user.
+
 ## Prior findings and replies
 
 Read the complete pull-request history before staging any finding. Treat a resolved thread and its replies as a settled review decision, including when the author rejected or declined a recommendation with a concrete rationale. Do not repeat, rephrase, or insist on a semantically equivalent finding merely because you disagree with that decision.

@@ -1029,7 +1029,8 @@ test("full reviews preserve a direct trigger answer before the review summary", 
     /^> reviewer · deepseek-v4-flash\n\n@author Yes\. The reviewed path still blocks stale responses\.\n\n## Review Summary/u
   )
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
-  assert.match(synthesis.request.prompt, /"participants": \[\n\s+"@author"/u)
+  assert.match(synthesis.request.prompt, /"participants": \[\n\s+"<@author>"/u)
+  assert.match(synthesis.request.prompt, /Never invent a handle from a real name or first name/u)
   assert.match(synthesis.request.prompt, /please review this and tell me whether stale responses stay blocked/u)
 })
 

@@ -36,14 +36,21 @@ function PullRequestContext({ snapshot }: { snapshot: ReviewSnapshot }) {
       {(pullRequest.isDraft ?? pullRequest.draft) ? "yes" : "no"}
       {"\n"}- Trigger: {snapshot.trigger.reason}
       {snapshot.trigger.actor ? ` by @${snapshot.trigger.actor}` : ""}
+      <Section title="Participants">
+        {snapshot.participants.length > 0
+          ? snapshot.participants.map(person => `${person}\n`)
+          : "(No human participants.)"}
+      </Section>
       <Section title="Description">{pullRequest.body?.trim() || "(No pull-request description.)"}</Section>
       <Section title="Commits">
         {snapshot.commits.length > 0
           ? snapshot.commits.map(commit => {
-              const authorName = commit.author?.login || commit.commit?.author?.name || "unknown"
+              const authorName = commit.author?.login
+                ? `@${commit.author.login}`
+                : commit.commit?.author?.name || "unknown"
               const date = commit.commit?.author?.date || commit.commit?.committer?.date || "unknown-time"
               const subject = String(commit.commit?.message || "(No commit message.)").split(/\r?\n/u)[0]
-              return `${commit.sha?.slice(0, 12) || "unknown"} | @${authorName} | ${date} | ${subject}\n`
+              return `${commit.sha?.slice(0, 12) || "unknown"} | ${authorName} | ${date} | ${subject}\n`
             })
           : "(No commit metadata available.)"}
       </Section>
