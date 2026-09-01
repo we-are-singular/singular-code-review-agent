@@ -484,7 +484,7 @@ export class ReviewEvidence {
     const unnamed = `<@${login}>`
     const label = named ? `${name} ${unnamed}` : unnamed
     const existing = people.get(normalized)
-    if (!existing || (named && existing.toLowerCase() === `<@${normalized}>`)) {
+    if (!existing || (named && existing.toLowerCase() === unnamed.toLowerCase())) {
       people.set(normalized, label)
     }
   }
