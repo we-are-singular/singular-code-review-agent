@@ -71,6 +71,7 @@ test("ReviewContextPrompt renders selected materialized files with statistics", 
     output,
     /Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence/u
   )
+  assert.match(output, /The complete contents follow; do not read this path or fetch the same PR data again\./u)
   assert.match(output, /Explain the intended change\./u)
   assert.match(output, /src\/example\.ts/u)
   assert.match(
@@ -103,13 +104,13 @@ test("ReviewContextPrompt distinguishes an empty file from an omitted large file
 })
 
 test("ReviewContextPrompt references materialized files larger than the inline limit", async t => {
-  const largeDiff = `${"changed line\n".repeat(1_600)}private-tail-marker`
+  const largeDiff = `${"changed line\n".repeat(4_000)}private-tail-marker`
   const workspace = materializeContext(t, largeDiff)
   const output = await render(workspace, { diff: true })
 
   assert.match(
     output,
-    /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \([\d,]+ characters, [\d,]+ words, 1,601 lines\)/u
+    /### File: `\.singular-code-review\/pr\.diff` — pull-request diff \([\d,]+ characters, [\d,]+ words, 4,001 lines\)/u
   )
   assert.match(output, /Read completely before staging findings\./u)
   assert.doesNotMatch(output, /private-tail-marker/u)

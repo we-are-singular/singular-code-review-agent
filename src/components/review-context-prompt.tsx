@@ -31,7 +31,10 @@ async function PromptContextSection({
   if (file.content !== null) {
     return (
       <Block>
-        ### File: `{path}` — {label} ({stats})<Block>{instruction}</Block>
+        ### File: `{path}` — {label} ({stats})
+        <Block>
+          {instruction} The complete contents follow; do not read this path or fetch the same PR data again.
+        </Block>
         <Block>{file.content || "(Empty.)"}</Block>
       </Block>
     )

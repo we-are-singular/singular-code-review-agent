@@ -2,7 +2,7 @@ import { Agent, evaluate, Skill, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import { Block } from "../block.js"
-import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
+import { ReviewContextPrompt } from "../review-context-prompt.js"
 import { useReviewContext } from "../review-context.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 
@@ -30,8 +30,9 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
       <Block>
         Write the author-facing main review body from this application-owned final evidence:
         <Block>{JSON.stringify(evidence, null, 2)}</Block>
-        Use {REVIEW_CONTEXT_PATHS.pullRequest} to understand the change and {REVIEW_CONTEXT_PATHS.history} when the
-        trigger or prior discussion matters.
+        Use the pull-request context below to understand the change. The application-owned conversation above contains
+        the only prior discussion relevant to this top-level response.
+        <ReviewContextPrompt />
       </Block>
     </Agent>
   )

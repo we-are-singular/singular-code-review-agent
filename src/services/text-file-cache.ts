@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 
 // Files within this bound keep their text for prompt reuse; larger files retain only their computed metadata.
-const FILE_CONTENT_CACHE_LIMIT = 20_000
+const FILE_CONTENT_CACHE_LIMIT = 50_000
 // One process can run many reviews in tests or embedding hosts, so old path entries cannot accumulate indefinitely.
 const FILE_CACHE_ENTRY_LIMIT = 128
 
