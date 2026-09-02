@@ -15,6 +15,16 @@ test("GLM 5.3 Flash uses the published OpenCode Go token prices", () => {
   assert.ok(Math.abs(priced.costUsd - 0.00068) < 1e-12)
 })
 
+test("HY4 Preview uses the published OpenCode Go token prices", () => {
+  const priced = priceUsage({
+    model: "opencode-go/hy4-preview",
+    usage: { ...usage, cacheReadTokens: 1_000 }
+  })
+
+  assert.equal(priced.source, "price-table")
+  assert.ok(Math.abs(priced.costUsd - 0.003377) < 1e-12)
+})
+
 test("DeepSeek V4 Flash fallback pricing follows the UTC peak schedule", () => {
   const offPeak = priceUsage({
     model: "opencode-go/deepseek-v4-flash",

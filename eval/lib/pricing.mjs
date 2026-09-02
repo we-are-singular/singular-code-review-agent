@@ -1,5 +1,6 @@
 export const PRICES_USD_PER_MILLION = {
   "opencode-go/glm-5.3-flash": [0.15, 0.5, 0.03],
+  "opencode-go/hy4-preview": [0.834, 2.501, 0.042],
   "opencode-go/ox-alpha-free": [0, 0, 0],
   "opencode/deepseek-v4-flash-free": [0.09, 0.18, 0.018],
   "opencode/mimo-v2.5-free": [0.105, 0.28, 0.028],
