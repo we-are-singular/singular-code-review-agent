@@ -198,6 +198,7 @@ Time and reviewer cost are averages per review; cost excludes judge inference. E
 | MiMo V2.5            |  86.0 |  7m 32s |           $0.0128 |
 | HY3                  |  83.0 |  3m 23s |           $0.0307 |
 | Qwen 3.7 Max         |  83.0 | 18m 41s |           $0.9504 |
+| HY4 Preview          |  78.0 |  8m 06s |              Free |
 | GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
 | MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
 
