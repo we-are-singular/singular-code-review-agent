@@ -9,7 +9,7 @@ import { useReviewContext } from "../context/review-context.js"
 
 const GateDecisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("review"), reason: z.string().trim().min(1).max(1_000) }).strict(),
-  z.object({ decision: z.literal("no-review"), answer: z.string().trim().min(1).max(4_000) }).strict(),
+  z.object({ decision: z.literal("no-review"), answer: z.string().trim().min(1).max(1_000) }).strict(),
   z.object({ decision: z.literal("answer"), answer: z.string().trim().min(1).max(4_000) }).strict()
 ])
 
