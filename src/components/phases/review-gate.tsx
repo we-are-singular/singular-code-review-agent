@@ -9,7 +9,7 @@ import { useReviewContext } from "../context/review-context.js"
 
 const GateDecisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("review"), reason: z.string().trim().min(1).max(1_000) }).strict(),
-  z.object({ decision: z.literal("no-review"), answer: z.string().trim().min(1).max(1_000) }).strict(),
+  z.object({ decision: z.literal("no-review"), answer: z.string().trim().min(1).max(1_500) }).strict(),
   z.object({ decision: z.literal("answer"), answer: z.string().trim().min(1).max(4_000) }).strict()
 ])
 
@@ -22,12 +22,11 @@ function GateAgent({ context, delta }: { context: unknown; delta: string }) {
     <Agent
       name="review-gate"
       permissions={{ filesystem: "read-only", network: false, shell: false }}
-      system="You route pull-request follow-up events. Fast-track only evidence-backed, low-risk deltas and escalate uncertainty to a full review."
+      system="You route pull-request follow-up events. Decide whether this event needs a full review, can be answered directly, or needs no review. Fast-track only evidence-backed, low-risk deltas and escalate uncertainty to a full review."
     >
       <Block tag="gate-policy">
         <Include src="./instructions/gate.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
       </Block>
-      <Block>Decide whether this event needs a full review, can be answered directly, or needs no review.</Block>
       <Block tag="gate-context">{JSON.stringify(context, null, 2)}</Block>
       <Block tag="review-delta">{delta}</Block>
       <Block>
