@@ -3,12 +3,13 @@ import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
 import { useReviewContext } from "../context/review-context.js"
 import { decideReviewGate } from "./review-gate.js"
 
-/** Gives every confident no-review decision the same idempotent approval marker. */
+/** Gives every confident no-review decision the same verdict shape as a full review. */
 function approvalBody(answer: string): string {
   // Providers occasionally include the marker despite the prompt. Normalize
-  // only that exact terminal contract before appending the application-owned line.
-  const withoutExistingVerdict = answer.replace(/(?:^|\n+)\s*✅\s*LGTM\.?\s*$/u, "").trim()
-  return withoutExistingVerdict ? `${withoutExistingVerdict}\n\n✅ LGTM` : "✅ LGTM"
+  // only that exact terminal contract before appending the application-owned lines.
+  const withoutOwnedTail = answer.replace(/(?:^|\n+)\s*#{1,6}\s*verdict\s*(?:\n+\s*✅\s*LGTM\.?)?\s*$/giu, "").trim()
+  const withoutExistingVerdict = withoutOwnedTail.replace(/(?:^|\n+)\s*✅\s*LGTM\.?\s*$/u, "").trim()
+  return withoutExistingVerdict ? `${withoutExistingVerdict}\n\n## Verdict\n\n✅ LGTM` : "## Verdict\n\n✅ LGTM"
 }
 
 /** Selects one gate branch and completes the routing handoff for publication. */
