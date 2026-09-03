@@ -5,6 +5,7 @@ import { resolve } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
+import { DEFAULT_REVIEW_CONCURRENCY, DEFAULT_REVIEW_MODEL } from "../config.js"
 import { renderGitHubStepSummary } from "../lib/render/github-summary.js"
 import { ReviewUnavailableError, runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github/client.js"
@@ -58,7 +59,7 @@ function model(options: { configured?: string; env: NodeJS.ProcessEnv }): string
   if (configured) {
     return required(configured, "REVIEW_MODEL")
   }
-  return "opencode-go/deepseek-v4-flash"
+  return DEFAULT_REVIEW_MODEL
 }
 
 function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null {
@@ -88,7 +89,10 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
     prNumber: positiveInteger(values.pr || env.PR_NUMBER, "PR_NUMBER"),
     workspace,
     model: model({ configured: values.model, env }),
-    concurrency: positiveInteger(values.concurrency || env.REVIEW_CONCURRENCY || "6", "concurrency"),
+    concurrency: positiveInteger(
+      values.concurrency || env.REVIEW_CONCURRENCY || String(DEFAULT_REVIEW_CONCURRENCY),
+      "concurrency"
+    ),
     // Live mutation requires an explicit CLI flag; ambient CI variables cannot
     // silently turn a benchmark or local invocation into a publishing run.
     publish: values.publish || false
