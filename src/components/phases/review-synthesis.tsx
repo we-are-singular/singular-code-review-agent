@@ -108,7 +108,6 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
       ) : null}
       {notes.length > 0 ? (
         <>
-          <Block>{"---"}</Block>
           ## 📝 Review notes
           <Block>{notes.map(finding => `- ${finding.body}`).join("\n")}</Block>
         </>
@@ -119,7 +118,6 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
           <Block>{nextSteps}</Block>
         </>
       ) : null}
-      <Block>{"---"}</Block>
       ## Verdict
       <Block>{finalVerdict}</Block>
     </>
