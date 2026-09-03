@@ -2,7 +2,7 @@
 import { appendFileSync, realpathSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
-import { createGitHubClient } from "../services/github-client.js"
+import { createGitHubClient } from "../services/github/client.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
 /** Runs the reusable workflow's credential and trigger preflight. */

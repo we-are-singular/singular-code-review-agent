@@ -2,15 +2,14 @@ import { fileURLToPath } from "node:url"
 
 import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
-import { ReviewContext, ReviewOutcome, ReviewRouting, type ReviewContextValue } from "./components/review-context.js"
+import { createReviewContextEnvironment, ReviewContextProvider } from "./components/context/review-context.js"
 import { createReviewProvider } from "./lib/review-provider.js"
 import type { PublishedReview, ReviewAttempt, ReviewRequest, ReviewRunResult } from "./types/review.js"
-import { REVIEW_LANE_NAMES, ReviewQueue } from "./lib/review-queue.js"
+import { REVIEW_LANE_NAMES } from "./lib/review-queue.js"
 import { ReviewTelemetryCollector } from "./lib/review-telemetry.js"
 import { Review } from "./review.js"
-import { ReviewGitHubActions, type GitHubActionMode } from "./services/github-actions.js"
-import type { GitHubClient } from "./services/github-client.js"
-import { GitHubReviewSession } from "./services/github-session.js"
+import type { GitHubActionMode } from "./services/github/actions.js"
+import type { GitHubClient } from "./services/github/client.js"
 
 export type ReviewRuntimeOptions = {
   request: ReviewRequest
@@ -57,41 +56,15 @@ export async function runReview(
   const started = Date.now()
   const signal = options.signal || new AbortController().signal
   const telemetry = new ReviewTelemetryCollector({ ...(options.progress ? { progress: options.progress } : {}) })
-  const github = new GitHubReviewSession(options.github, options.request, options.actionMode === "live")
-  const snapshot = await github.snapshot()
-  const pullRequestHead = snapshot.pullRequest.headRefOid
-  if (!pullRequestHead || options.request.workspaceHeadSha !== pullRequestHead) {
-    throw new Error(
-      `checked-out head ${options.request.workspaceHeadSha} does not match pull request head ${pullRequestHead || "unknown"}`
-    )
-  }
-  // PR metadata and diff are separate GitHub reads. Confirm the head once more
-  // after snapshot assembly so a push between those reads cannot reach Agents.
-  await github.assertHeadUnchanged()
-  const actions = new ReviewGitHubActions({
-    mode: options.actionMode,
+  // Context construction owns request-scoped GitHub and publication services;
+  // the runner retains one environment only to collect their terminal outputs.
+  const environment = createReviewContextEnvironment({
     github: options.github,
-    repository: options.request.repository,
-    prNumber: options.request.prNumber,
-    headSha: snapshot.pullRequest.headRefOid || null
+    request: options.request,
+    actionMode: options.actionMode,
+    model: options.model,
+    reviewEmojis: options.reviewEmojis !== false
   })
-  const outcome = new ReviewOutcome()
-  const reviewContext: ReviewContextValue = {
-    github,
-    actions,
-    queue: new ReviewQueue({
-      botLogin: snapshot.botLogin,
-      commentRanges: snapshot.diff.commentRanges,
-      reviewEmojis: options.reviewEmojis !== false,
-      reviewThreadsAvailable: snapshot.reviewThreadsAvailable,
-      unresolvedBotThreads: snapshot.unresolvedBotThreads,
-      reviewComments: snapshot.reviewComments
-    }),
-    routing: new ReviewRouting(),
-    snapshot,
-    outcome,
-    model: options.model
-  }
   const attempts: ReviewAttempt[] = []
   const startedAt = new Date().toISOString()
   let selected: { review: PublishedReview; publicationError: string | null } | null = null
@@ -113,9 +86,9 @@ export async function runReview(
       trace: telemetry.trace
     })
     await runtime.evaluate(
-      <ReviewContext.Provider value={reviewContext}>
+      <ReviewContextProvider environment={environment}>
         <Review />
-      </ReviewContext.Provider>,
+      </ReviewContextProvider>,
       { signal }
     )
     attempts.push({
@@ -127,7 +100,7 @@ export async function runReview(
       endedAt: new Date().toISOString(),
       error: null
     })
-    selected = outcome.result()
+    selected = environment.outcome.result()
   } catch (error) {
     attempts.push({
       number: 1,
@@ -157,7 +130,7 @@ export async function runReview(
     usage: telemetry.usage(),
     traceSummaries: telemetry.summaries(),
     providerCompletions: telemetry.providerCompletions(),
-    publication: actions.receipts(),
+    publication: environment.actions.receipts(),
     publicationStatus: selected.publicationError ? "failed" : "completed",
     publicationError: selected.publicationError
   }

@@ -5,6 +5,7 @@ import {
   InlineFindingSchema,
   ReviewDemotionSeveritySchema,
   ReviewBlockerSchema,
+  ReviewNoteSchema,
   ReplyFindingSchema,
   type ReviewFinding,
   type ReviewQueue,
@@ -26,10 +27,11 @@ const AddReviewCommentSchema = InlineFindingSchema.omit({
 })
   .extend({ line: ReviewLineSchema })
   .strict()
+const AddReviewNoteSchema = ReviewNoteSchema.omit({ kind: true })
+const AddReviewBlockerSchema = ReviewBlockerSchema.omit({ kind: true })
 const AddReviewReplySchema = ReplyFindingSchema.omit({ kind: true, to: true })
   .extend({ comment_id: ReplyFindingSchema.shape.to })
   .strict()
-const AddReviewBlockerSchema = ReviewBlockerSchema.omit({ kind: true, severity: true, confidence: true })
 const FullCommentSchema = z
   .object({
     kind: z.enum(["issue_comment", "review_comment", "review"]),
@@ -60,8 +62,17 @@ function normalizeReviewLine(value: z.infer<typeof ReviewLineSchema>): { line: n
 }
 
 /** Grants one lane its complete in-memory review surface. */
-export function createReviewTools(review: ReviewQueue, lane: ReviewLaneName) {
+export function createLaneReviewTools(review: ReviewQueue, lane: ReviewLaneName) {
   return {
+    addReviewNote: defineTool({
+      name: "add_review_note",
+      description: "Queue one evidence-backed advisory PR-level note that has no honest changed-line anchor",
+      input: AddReviewNoteSchema,
+      execute: input => {
+        const result = review.add(lane, { kind: "note", ...input })
+        return { id: result.id }
+      }
+    }),
     addReviewComment: defineTool({
       name: "add_review_comment",
       description: "Queue one evidence-backed GitHub review comment for audit",
@@ -97,15 +108,11 @@ export function createReviewTools(review: ReviewQueue, lane: ReviewLaneName) {
     }),
     addReviewBlocker: defineTool({
       name: "add_review_blocker",
-      description: "Queue one high-confidence critical blocker that has no honest changed-line anchor",
+      description:
+        "Emergency stop: queue one blocker that makes the pull request fundamentally unsafe to land and has no honest changed-line anchor",
       input: AddReviewBlockerSchema,
       execute: finding => {
-        const result = review.add(lane, {
-          ...finding,
-          kind: "blocker",
-          severity: "critical",
-          confidence: "high"
-        })
+        const result = review.add(lane, { ...finding, kind: "blocker" })
         return { id: result.id }
       }
     })
@@ -160,6 +167,16 @@ export function createReviewAuditTools(
         return { ok: true }
       }
     }),
+    // The auditor sees every handoff and the full staged queue, so it may
+    // stage what lanes missed. Notes only: audit cannot author anchored or
+    // emergency findings, and its own additions are final.
+    addAuditNote: defineTool({
+      name: "add_audit_note",
+      description:
+        "Stage one auditor-owned advisory note for a PR-level scope, relationship, or closing-issue contract concern no staged finding covers",
+      input: AddReviewNoteSchema,
+      execute: input => review.addAuditNote(input)
+    }),
     getFullComment: defineTool({
       name: "get_full_comment",
       description:
@@ -167,11 +184,17 @@ export function createReviewAuditTools(
       input: FullCommentSchema,
       execute: ({ kind, id }): AmlJsonValue => {
         if (kind === "issue_comment") {
-          const comment = snapshot.issueComments.find(candidate => candidate.id === id)
+          const referencedIssue = snapshot.referencedIssues.find(issue =>
+            issue.comments.some(candidate => candidate.id === id)
+          )
+          const comment =
+            snapshot.issueComments.find(candidate => candidate.id === id) ||
+            referencedIssue?.comments.find(candidate => candidate.id === id)
           if (!comment) throw new Error(`issue comment #${id} is not present in the captured history`)
           return {
             kind,
             id,
+            repository: referencedIssue?.repository || snapshot.context.repository,
             actor: comment.user?.login || null,
             created_at: comment.created_at || null,
             updated_at: comment.updated_at || null,

@@ -1,7 +1,7 @@
 import { Parallel, Workspace } from "@aml-jsx/sdk"
 
-import { ReviewContextFiles } from "./components/review-context-files.js"
-import { useReviewContext } from "./components/review-context.js"
+import { ReviewContextFiles } from "./components/context/files.js"
+import { useReviewContext } from "./components/context/review-context.js"
 import { CodePathBugHunterLane } from "./components/lanes/code-path-bug-hunter.js"
 import { CorrectnessRiskTestingLane } from "./components/lanes/correctness-risk-testing.js"
 import { DocumentationCommentaryLane } from "./components/lanes/documentation-commentary.js"

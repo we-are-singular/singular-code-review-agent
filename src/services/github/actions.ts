@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto"
 
-import type { ReviewPayload } from "../lib/review-body.js"
-import type { GitHubClient } from "./github-client.js"
+import type { ReviewPayload } from "./review-serializer.js"
+import type { GitHubClient } from "./client.js"
 
 export type GitHubActionMode = "dry-run" | "live"
 export type PublicationState = "completed" | "ambiguous" | "pending"
-export type PublicationExpectation = { kind: "issue-comment" } | { kind: "review"; replies: number }
+export type PublicationExpectation = { kind: "pr-comment" } | { kind: "review"; replies: number }
 
 export type GitHubActionReceipt = {
   key: string
-  kind: "issue-comment" | "review" | "reply"
+  kind: "pr-comment" | "review" | "reply"
   status: "prepared" | "submitted" | "skipped" | "failed"
   payload: unknown
   error?: string
@@ -17,7 +17,7 @@ export type GitHubActionReceipt = {
 
 export type GitHubActions = {
   readonly mode: GitHubActionMode
-  postIssueComment(prNumber: number, body: string): Promise<GitHubActionReceipt>
+  postPullRequestComment(prNumber: number, body: string): Promise<GitHubActionReceipt>
   submitPullRequestReview(prNumber: number, payload: ReviewPayload): Promise<GitHubActionReceipt>
   replyToReviewComment(prNumber: number, commentId: number, body: string): Promise<GitHubActionReceipt>
   publicationState(expectation: PublicationExpectation): PublicationState
@@ -126,10 +126,10 @@ export class ReviewGitHubActions implements GitHubActions {
   }
 
   /** Posts the prepared top-level gate response. */
-  postIssueComment(prNumber: number, body: string): Promise<GitHubActionReceipt> {
+  postPullRequestComment(prNumber: number, body: string): Promise<GitHubActionReceipt> {
     const payload = { prNumber, body }
-    return this.#ledger.execute("issue-comment", payload, this.mode, () =>
-      this.#github.createIssueComment(prNumber, body)
+    return this.#ledger.execute("pr-comment", payload, this.mode, () =>
+      this.#github.createPullRequestComment(prNumber, body)
     )
   }
 
@@ -152,15 +152,15 @@ export class ReviewGitHubActions implements GitHubActions {
 
   /** Interprets the ledger without replaying a rejected GitHub mutation. */
   publicationState(expectation: PublicationExpectation): PublicationState {
-    const expectedKinds: ActionKind[] = expectation.kind === "issue-comment" ? ["issue-comment"] : ["review", "reply"]
+    const expectedKinds: ActionKind[] = expectation.kind === "pr-comment" ? ["pr-comment"] : ["review", "reply"]
     const relevant = this.#ledger.values().filter(receipt => expectedKinds.includes(receipt.kind))
     if (relevant.some(receipt => receipt.status === "failed")) {
       return "ambiguous"
     }
 
     const completed = relevant.filter(receipt => receipt.status === "prepared" || receipt.status === "submitted")
-    if (expectation.kind === "issue-comment") {
-      return completed.some(receipt => receipt.kind === "issue-comment") ? "completed" : "pending"
+    if (expectation.kind === "pr-comment") {
+      return completed.some(receipt => receipt.kind === "pr-comment") ? "completed" : "pending"
     }
 
     const reviews = completed.filter(receipt => receipt.kind === "review").length

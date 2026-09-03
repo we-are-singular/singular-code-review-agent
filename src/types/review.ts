@@ -1,20 +1,22 @@
 import type { TraceSummary } from "@aml-jsx/sdk"
 
 import type {
+  ReferencedIssueContext,
   IssueComment,
   PullRequestCommit,
   PullRequestReview,
   PullRequestSummary,
   ReviewComment,
   ReviewThread
-} from "../services/github-client.js"
-import type { ValidCommentRanges } from "../lib/review-diff.js"
-import type { ReviewPayload } from "../lib/review-body.js"
+} from "../services/github/client.js"
+import type { DiffFile, ValidCommentRanges } from "../lib/review-diff.js"
+import type { ReviewPayload } from "../services/github/review-serializer.js"
 import type { LaneAssessment, ValidatedReviewQueue } from "../lib/review-queue.js"
 import type { AuditedReview } from "../components/phases/review-audit.js"
 import type { ReviewGateResult } from "../components/phases/review-gate.js"
-import type { GitHubActionReceipt } from "../services/github-actions.js"
+import type { GitHubActionReceipt } from "../services/github/actions.js"
 import type { ReviewProviderCompletion, ReviewUsage } from "../lib/review-telemetry.js"
+import type { CompactHistory, CompactPullRequestContext } from "../services/github/context-model.js"
 
 /**
  * Contracts carried between the CLI, deterministic snapshot, AML phases, and
@@ -62,10 +64,7 @@ export type ReviewActionItem =
       line?: number | null
     }
 
-export type ReviewTimeline = {
-  olderEntriesOmitted: number
-  entries: string[]
-}
+export type ReviewTimeline = CompactHistory
 
 /** Immutable evidence assembled once from cached GitHub reads for one PR head. */
 export type ReviewSnapshot = {
@@ -76,11 +75,12 @@ export type ReviewSnapshot = {
   pullRequest: PullRequestSummary
   diff: {
     text: string
-    files: string[]
+    files: DiffFile[]
     ignoredFiles: string[]
     commentRanges: ValidCommentRanges
   }
   issueComments: IssueComment[]
+  referencedIssues: ReferencedIssueContext[]
   reviewComments: ReviewComment[]
   reviewThreadsAvailable: boolean
   reviewThreads: ReviewThread[]
@@ -88,6 +88,7 @@ export type ReviewSnapshot = {
   unresolvedBotThreads: ReviewThread[]
   reviews: PullRequestReview[]
   commits: PullRequestCommit[]
+  context: CompactPullRequestContext
   timeline: ReviewTimeline
   previousBotFindings: ReviewComment[]
   actionItems: ReviewActionItem[]

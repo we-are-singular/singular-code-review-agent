@@ -1,9 +1,9 @@
 import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import { REVIEW_INCLUDE_MAX_BYTES } from "../../config.js"
-import { ReviewContextPrompt } from "../review-context-prompt.js"
-import { useReviewContext } from "../review-context.js"
+import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
+import { ReviewContextPrompt } from "../context/prompt.js"
+import { useReviewContext } from "../context/review-context.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 
 const SynthesisSchema = z
@@ -22,7 +22,7 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
       system="You write a concise pull-request review summary from validated evidence without inventing findings."
     >
       <Block tag="synthesis-policy">
-        <Include src="./instructions/synthesis.md" maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
+        <Include src="./instructions/synthesis.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
       </Block>
       <Block tag="audit-handoff">
         The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
@@ -32,9 +32,9 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
       <Block>
         Write the author-facing main review body from this application-owned final evidence:
         <Block tag="validated-review">{JSON.stringify(evidence, null, 2)}</Block>
-        Use the pull-request context below to understand the change. The application-owned conversation above contains
-        the only prior discussion relevant to this top-level response.
-        <ReviewContextPrompt />
+        Use the pull-request and referenced-issue context below to describe the change and its requirement coverage. The
+        application-owned conversation above contains the only prior PR discussion relevant to this top-level response.
+        <ReviewContextPrompt issues />
       </Block>
     </Agent>
   )
@@ -51,6 +51,8 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
   if (findings.some(finding => finding.kind === "inline" && finding.severity !== "nit")) {
     return "⚠️ Request changes"
   }
+  // Notes are advisory: they render in their own section but never determine
+  // merge readiness. Only a retained blocker hijacks the verdict below.
   return "✅ LGTM"
 }
 
@@ -82,32 +84,42 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
     </SynthesisAgent>,
     SynthesisSchema
   )
+  // Anchorless findings render in their own verdict sections: blockers hijack
+  // the verdict, notes never do.
   const blockers = validated.findings.filter(finding => finding.kind === "blocker")
+  const notes = validated.findings.filter(finding => finding.kind === "note")
   // Thread replies are published beside their original comment. Even if a
   // provider ignores the prompt, they must never leak into the top-level body.
   const directAnswer = topLevelActionItems.length > 0 ? synthesis.direct_answer : null
   // Recommendations coordinate requested work; an LGTM has no required work
   // regardless of prose a provider returns against the structured contract.
   const nextSteps = finalVerdict === "✅ LGTM" ? null : synthesis.next_steps
-  const recommendations = blockers.map(blocker => `- ${blocker.body}`)
-  if (nextSteps) {
-    if (recommendations.length > 0) {
-      recommendations.push("")
-    }
-    recommendations.push(nextSteps)
-  }
 
   return (
     <>
       {directAnswer ? <Block>{directAnswer}</Block> : null}
       ## Review Summary
       <Block>{synthesis.summary}</Block>
-      {recommendations.length > 0 ? (
+      {blockers.length > 0 ? (
         <>
-          ## Recommendations
-          <Block>{recommendations.join("\n")}</Block>
+          ## Blockers
+          <Block>{blockers.map(finding => `- ${finding.body}`).join("\n")}</Block>
         </>
       ) : null}
+      {notes.length > 0 ? (
+        <>
+          <Block>{"---"}</Block>
+          ## 📝 Review notes
+          <Block>{notes.map(finding => `- ${finding.body}`).join("\n")}</Block>
+        </>
+      ) : null}
+      {nextSteps ? (
+        <>
+          ## Recommendations
+          <Block>{nextSteps}</Block>
+        </>
+      ) : null}
+      <Block>{"---"}</Block>
       ## Verdict
       <Block>{finalVerdict}</Block>
     </>

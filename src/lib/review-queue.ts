@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path"
 import { z } from "zod"
 
-import type { ReviewComment, ReviewThread } from "../services/github-client.js"
+import type { ReviewComment, ReviewThread } from "../services/github/client.js"
 import type { ValidCommentRanges } from "./review-diff.js"
 
 /** Canonical lane names and their short, model-facing finding ID prefixes. */
@@ -73,19 +73,31 @@ export const ReplyFindingSchema = z
   })
   .strict()
 
+/**
+ * Advisory PR-level note that cannot honestly anchor to a changed line. Notes
+ * carry no severity: their kind alone decides rendering and verdict impact.
+ */
+export const ReviewNoteSchema = z
+  .object({
+    kind: z.literal("note"),
+    body: FindingBodySchema,
+    evidence: FindingEvidenceSchema
+  })
+  .strict()
+
+/** Emergency stop for a PR-wide condition that is unsafe to land. */
 export const ReviewBlockerSchema = z
   .object({
     kind: z.literal("blocker"),
-    severity: z.literal("critical"),
     body: FindingBodySchema,
-    evidence: FindingEvidenceSchema,
-    confidence: z.literal("high")
+    evidence: FindingEvidenceSchema
   })
   .strict()
 
 export const ReviewFindingSchema = z.discriminatedUnion("kind", [
   InlineFindingSchema,
   ReplyFindingSchema,
+  ReviewNoteSchema,
   ReviewBlockerSchema
 ])
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>
@@ -98,9 +110,16 @@ export const LaneAssessmentSchema = z
   .strict()
 
 export type LaneAssessment = z.infer<typeof LaneAssessmentSchema>
+/**
+ * Owner of a staged finding: one specialist lane, or the audit itself for a
+ * note the auditor stages directly. Audit ownership stays outside
+ * REVIEW_LANES so lane completion and assessments remain lane-only.
+ */
+export type FindingOwner = ReviewLaneName | "audit"
+
 export type StagedReviewFinding = {
   id: string
-  lane: ReviewLaneName
+  lane: FindingOwner
   finding: ReviewFinding
 }
 
@@ -163,6 +182,7 @@ export class ReviewQueue {
   readonly #findings: StagedReviewFinding[] = []
   readonly #findingIds = new Map<string, string>()
   readonly #laneSequences = new Map<ReviewLaneName, number>()
+  #auditNoteSequence = 0
   readonly #assessments = new Map<ReviewLaneName, LaneAssessment>()
   #auditFindings: Map<string, StagedReviewFinding> | undefined
   #finalized: FinalizedReview | undefined
@@ -248,6 +268,21 @@ export class ReviewQueue {
     return this.auditCandidates()
   }
 
+  /**
+   * Stages one auditor-owned note after audit started. Audit additions are
+   * final: the auditor is the calibrator, so its own note needs no further
+   * merge, demote, or drop calibration.
+   */
+  addAuditNote(value: Omit<z.infer<typeof ReviewNoteSchema>, "kind">): { id: string } {
+    const audit = this.requireAudit()
+    const parsed = ReviewNoteSchema.parse({ kind: "note", ...value })
+    const finding = { ...parsed, body: ReviewQueue.markdown(parsed.body) } as ReviewFinding
+    this.#auditNoteSequence += 1
+    const id = `AUD-${this.#auditNoteSequence}`
+    audit.set(id, { id, lane: "audit", finding })
+    return { id }
+  }
+
   /** Removes complete findings; audit cannot rewrite author-facing text. */
   drop(ids: readonly string[]): void {
     const audit = this.requireAudit()
@@ -327,7 +362,9 @@ export class ReviewQueue {
 
     for (const staged of candidates) {
       const finding = staged.finding
-      if (finding.kind === "blocker") {
+      // Blockers and notes publish at review level, never as an invented
+      // inline anchor. Synthesis derives their distinct verdicts.
+      if (finding.kind === "note" || finding.kind === "blocker") {
         findings.push(finding)
         continue
       }

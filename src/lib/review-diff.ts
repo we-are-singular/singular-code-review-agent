@@ -2,6 +2,7 @@ import { posix } from "node:path"
 
 export type DiffFile = {
   path: string
+  status: "added" | "modified" | "removed"
   addedLines: number[]
   deletedLines: number[]
   rightLines: number[]
@@ -54,6 +55,7 @@ const IGNORED_LOCKFILES = new Set([
 
 type MutableDiffFile = {
   path: string
+  status: DiffFile["status"]
   addedLines: Set<number>
   deletedLines: Set<number>
   rightLines: Set<number>
@@ -146,13 +148,14 @@ export class ReviewDiff {
     let newLine = 0
     let inHunk = false
 
-    const file = (filePath: string): MutableDiffFile => {
+    const file = (filePath: string, status: DiffFile["status"]): MutableDiffFile => {
       const existing = files.get(filePath)
       if (existing) {
         return existing
       }
       const created: MutableDiffFile = {
         path: filePath,
+        status,
         addedLines: new Set(),
         deletedLines: new Set(),
         rightLines: new Set(),
@@ -164,10 +167,22 @@ export class ReviewDiff {
 
     for (const line of diff.split(/\r?\n/u)) {
       if (line.startsWith("diff --git ")) {
-        path = null
-        oldPath = null
-        newPath = null
+        // A pure rename or empty-file change has no hunk and may omit ---/+++.
+        // Seed its inventory entry from the block header before parsing lines.
+        const [headerOldPath = null, headerNewPath = null] = ReviewDiff.paths([line])
+        oldPath = headerOldPath
+        newPath = headerNewPath
+        path = newPath || oldPath
+        if (path) file(path, "modified")
         inHunk = false
+        continue
+      }
+      if (line.startsWith("new file mode ") && path) {
+        file(path, "added").status = "added"
+        continue
+      }
+      if (line.startsWith("deleted file mode ") && path) {
+        file(path, "removed").status = "removed"
         continue
       }
       if (line.startsWith("--- ")) {
@@ -193,7 +208,11 @@ export class ReviewDiff {
         continue
       }
 
-      const lines = file(path)
+      // `/dev/null` on one side is the canonical unified-diff signal for file
+      // creation or deletion; all other hunks are grouped as modifications.
+      const status = oldPath === null ? "added" : newPath === null ? "removed" : "modified"
+      const lines = file(path, status)
+      lines.status = status
       if (line.startsWith(" ")) {
         oldLine += 1
         newLine += 1
@@ -212,6 +231,7 @@ export class ReviewDiff {
 
     return [...files.values()].map(file => ({
       path: file.path,
+      status: file.status,
       addedLines: [...file.addedLines].sort((left, right) => left - right),
       deletedLines: [...file.deletedLines].sort((left, right) => left - right),
       rightLines: [...file.rightLines].sort((left, right) => left - right),

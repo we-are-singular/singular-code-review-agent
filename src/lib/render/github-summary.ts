@@ -1,4 +1,4 @@
-import type { ReviewRunResult } from "../types/review.js"
+import type { ReviewRunResult } from "../../types/review.js"
 
 function formatDuration(durationMs: number): string {
   return `${(durationMs / 1_000).toFixed(1)} s`
