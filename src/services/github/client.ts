@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest"
-import type { ReviewPayload } from "../lib/review-body.js"
+import type { ReviewPayload } from "./review-serializer.js"
 
 export type GitHubUser = {
   login?: string | null
@@ -64,7 +64,19 @@ export type PullRequestTimelineEvent = {
     review_id?: number | null
     dismissal_message?: string | null
   } | null
+  source?: {
+    type?: string | null
+    issue?: {
+      number?: number | null
+      title?: string | null
+      html_url?: string | null
+      pull_request?: { url?: string | null } | null
+    } | null
+  } | null
 }
+
+/** REST issue-timeline event; GitHub uses the same event envelope for PRs. */
+export type IssueTimelineEvent = PullRequestTimelineEvent
 
 export type PullRequestCommit = {
   sha?: string | null
@@ -80,6 +92,7 @@ export type PullRequestCommit = {
 }
 
 export type IssueSummary = {
+  repository?: string | null
   number: number
   title?: string | null
   body?: string | null
@@ -87,6 +100,30 @@ export type IssueSummary = {
   html_url?: string | null
   pull_request?: { url?: string | null } | null
   user?: GitHubUser | null
+  created_at?: string | null
+  updated_at?: string | null
+  labels?: Array<{ name?: string | null }> | null
+  edits?: IssueEdit[]
+}
+
+/** One GraphQL user-content edit retained to explain issue requirement pivots. */
+export type IssueEdit = {
+  editedAt: string | null
+  editor: GitHubUser | null
+  diff: string | null
+}
+
+/** Exact issue evidence retained inside the application before compaction. */
+export type ClosingIssueContext = {
+  repository: string
+  issue: IssueSummary
+  comments: IssueComment[]
+  timeline: IssueTimelineEvent[]
+}
+
+/** Exact issue evidence annotated with the PR relationship that selected it. */
+export type ReferencedIssueContext = ClosingIssueContext & {
+  relation: "closes" | "related" | "referenced"
 }
 
 export type RepositoryCommit = PullRequestCommit & {
@@ -139,6 +176,11 @@ export type PullRequestSummary = {
   isDraft?: boolean
   draft?: boolean
   reviewDecision?: string | null
+  state?: string | null
+  updated_at?: string | null
+  updatedAt?: string | null
+  labels?: Array<{ name?: string | null }> | null
+  assignees?: GitHubUser[] | null
   created_at?: string | null
   createdAt?: string | null
   base?: {
@@ -175,20 +217,30 @@ export type GitHubClient = {
   getPullRequest(prNumber: number, repository?: string): Promise<PullRequestSummary>
   getPullRequestDiff(prNumber: number, repository?: string): Promise<string>
   getIssue(issueNumber: number, repository?: string): Promise<IssueSummary>
+  listPullRequestClosingIssues(prNumber: number, repository?: string): Promise<IssueSummary[]>
   getCommit(ref: string, repository?: string): Promise<RepositoryCommit>
-  getIssueComment(commentId: number): Promise<IssueComment>
+  getIssueComment(commentId: number, repository?: string): Promise<IssueComment>
+  listPullRequestComments(prNumber: number, repository?: string): Promise<IssueComment[]>
   listIssueComments(issueNumber: number, repository?: string): Promise<IssueComment[]>
-  listReviewComments(prNumber: number): Promise<ReviewComment[]>
-  listReviews(prNumber: number): Promise<PullRequestReview[]>
-  listPullRequestTimeline(prNumber: number): Promise<PullRequestTimelineEvent[]>
-  listPullRequestCommits(prNumber: number): Promise<PullRequestCommit[]>
-  listReviewThreads(prNumber: number): Promise<ReviewThreadsResult>
+  listIssueTimeline(issueNumber: number, repository?: string): Promise<IssueTimelineEvent[]>
+  listReviewComments(prNumber: number, repository?: string): Promise<ReviewComment[]>
+  listReviews(prNumber: number, repository?: string): Promise<PullRequestReview[]>
+  listPullRequestTimeline(prNumber: number, repository?: string): Promise<PullRequestTimelineEvent[]>
+  listPullRequestCommits(prNumber: number, repository?: string): Promise<PullRequestCommit[]>
+  listReviewThreads(prNumber: number, repository?: string): Promise<ReviewThreadsResult>
   listIssueCommentReactions(commentId: number): Promise<Reaction[]>
   createIssueCommentReaction(commentId: number, content: "eyes"): Promise<void>
-  createIssueComment(prNumber: number, body: string): Promise<void>
+  createPullRequestComment(prNumber: number, body: string): Promise<void>
   submitReview(prNumber: number, headSha: string, payload: ReviewPayload): Promise<void>
   submitReply(prNumber: number, commentId: number, body: string): Promise<void>
 }
+
+/**
+ * Rejects a literal issue read that names a pull request or an inaccessible
+ * number. Related-clause enrichment catches this to skip the reference;
+ * the literal get_issue Tool lets it propagate.
+ */
+export class NotAnIssueError extends Error {}
 
 export function splitRepository(repository: string): { owner: string; repo: string } {
   const [owner, repo] = repository.split("/", 2)
@@ -212,6 +264,102 @@ function normalizePullRequest(data: PullRequestSummary): PullRequestSummary {
     baseRefOid: data.baseRefOid || data.base?.sha || null,
     headRefOid: data.headRefOid || data.head?.sha || null,
     isDraft: data.isDraft ?? data.draft ?? false
+  }
+}
+
+type GraphQLIssueNode = {
+  number: number
+  title?: string | null
+  body?: string | null
+  state?: string | null
+  url?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  repository?: { nameWithOwner?: string | null } | null
+  author?: GitHubUser | null
+  labels?: { nodes?: Array<{ name?: string | null }> } | null
+  userContentEdits?: {
+    nodes?: Array<{
+      editedAt?: string | null
+      editor?: GitHubUser | null
+      diff?: string | null
+    }>
+  } | null
+}
+
+type GraphQLIssueResponse = {
+  repository?: {
+    issue?: GraphQLIssueNode | null
+  } | null
+}
+
+type GraphQLClosingIssuesResponse = {
+  repository?: {
+    pullRequest?: {
+      closingIssuesReferences?: {
+        nodes?: GraphQLIssueNode[]
+        pageInfo?: {
+          hasNextPage?: boolean
+          endCursor?: string | null
+        }
+      } | null
+    } | null
+  } | null
+}
+
+// Keep literal issue reads and closing-issue discovery on the same field set so
+// both routes produce identical contracts, edits, labels, and freshness data.
+const ISSUE_GRAPHQL_FIELDS = `
+  number
+  title
+  body
+  state
+  url
+  createdAt
+  updatedAt
+  repository {
+    nameWithOwner
+  }
+  author {
+    login
+  }
+  labels(first: 100) {
+    nodes {
+      name
+    }
+  }
+  userContentEdits(first: 100) {
+    nodes {
+      editedAt
+      editor {
+        login
+      }
+      diff
+    }
+  }
+`
+
+/** Normalizes issue-only GraphQL data without conflating issues and pull requests. */
+function normalizeIssue(node: GraphQLIssueNode): IssueSummary {
+  return {
+    repository: node.repository?.nameWithOwner || null,
+    number: node.number,
+    title: node.title || null,
+    body: node.body || null,
+    state: node.state?.toLowerCase() || null,
+    html_url: node.url || null,
+    pull_request: null,
+    user: node.author || null,
+    created_at: node.createdAt || null,
+    updated_at: node.updatedAt || null,
+    labels: (node.labels?.nodes || []).map(label => ({ name: label.name || null })),
+    edits: (node.userContentEdits?.nodes || [])
+      .map(edit => ({
+        editedAt: edit.editedAt || null,
+        editor: edit.editor || null,
+        diff: edit.diff || null
+      }))
+      .toSorted((left, right) => String(left.editedAt || "").localeCompare(String(right.editedAt || "")))
   }
 }
 
@@ -331,12 +479,71 @@ export function createGitHubClient(options: { token: string; repository: string 
 
     async getIssue(issueNumber, repository = options.repository) {
       const { owner, repo } = splitRepository(repository)
-      const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {
+      // GraphQL's `issue` field deliberately returns null for pull requests.
+      // This keeps the literal get_issue Tool from silently returning a PR.
+      const query = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      ${ISSUE_GRAPHQL_FIELDS}
+    }
+  }
+}`
+      const response = (await octokit.graphql(query, {
         owner,
-        repo,
-        issue_number: issueNumber
-      })
-      return response.data as IssueSummary
+        name: repo,
+        number: issueNumber
+      })) as GraphQLIssueResponse
+      const issue = response.repository?.issue
+      if (!issue) {
+        throw new NotAnIssueError(`${repository}#${issueNumber} is not an issue or is not accessible`)
+      }
+      return normalizeIssue(issue)
+    },
+
+    async listPullRequestClosingIssues(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
+      const query = `
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: 100, after: $cursor, excludeUserLinked: true) {
+        nodes {
+          ${ISSUE_GRAPHQL_FIELDS}
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}`
+      const issues: IssueSummary[] = []
+      let cursor: string | null = null
+
+      // Closing references are a paginated GraphQL connection. Follow every
+      // page because missing one issue would weaken the PR's claimed contract.
+      for (;;) {
+        const response = (await octokit.graphql(query, {
+          owner,
+          name: repo,
+          number: prNumber,
+          cursor
+        })) as GraphQLClosingIssuesResponse
+        const connection = response.repository?.pullRequest?.closingIssuesReferences
+        if (!connection) {
+          throw new Error(`${repository}#${prNumber} is not a pull request or is not accessible`)
+        }
+        issues.push(...(connection.nodes || []).map(normalizeIssue))
+        if (!connection.pageInfo?.hasNextPage) {
+          return issues
+        }
+        cursor = connection.pageInfo.endCursor || null
+        if (!cursor) {
+          return issues
+        }
+      }
     },
 
     async getCommit(ref, repository = options.repository) {
@@ -345,14 +552,24 @@ export function createGitHubClient(options: { token: string; repository: string 
       return response.data as RepositoryCommit
     },
 
-    async getIssueComment(commentId) {
-      const { owner, repo } = splitRepository(options.repository)
+    async getIssueComment(commentId, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       const response = await octokit.request("GET /repos/{owner}/{repo}/issues/comments/{comment_id}", {
         owner,
         repo,
         comment_id: commentId
       })
       return response.data as IssueComment
+    },
+
+    async listPullRequestComments(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
+      return (await octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+        owner,
+        repo,
+        issue_number: prNumber,
+        per_page: 100
+      })) as IssueComment[]
     },
 
     async listIssueComments(issueNumber, repository = options.repository) {
@@ -365,8 +582,18 @@ export function createGitHubClient(options: { token: string; repository: string 
       })) as IssueComment[]
     },
 
-    async listReviewComments(prNumber) {
-      const { owner, repo } = splitRepository(options.repository)
+    async listIssueTimeline(issueNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
+      return (await octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        per_page: 100
+      })) as IssueTimelineEvent[]
+    },
+
+    async listReviewComments(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       return (await octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/comments", {
         owner,
         repo,
@@ -375,8 +602,8 @@ export function createGitHubClient(options: { token: string; repository: string 
       })) as ReviewComment[]
     },
 
-    async listReviews(prNumber) {
-      const { owner, repo } = splitRepository(options.repository)
+    async listReviews(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       return (await octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
         owner,
         repo,
@@ -385,8 +612,8 @@ export function createGitHubClient(options: { token: string; repository: string 
       })) as PullRequestReview[]
     },
 
-    async listPullRequestTimeline(prNumber) {
-      const { owner, repo } = splitRepository(options.repository)
+    async listPullRequestTimeline(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       return (await octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", {
         owner,
         repo,
@@ -395,8 +622,8 @@ export function createGitHubClient(options: { token: string; repository: string 
       })) as PullRequestTimelineEvent[]
     },
 
-    async listPullRequestCommits(prNumber) {
-      const { owner, repo } = splitRepository(options.repository)
+    async listPullRequestCommits(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       return (await octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/commits", {
         owner,
         repo,
@@ -405,8 +632,8 @@ export function createGitHubClient(options: { token: string; repository: string 
       })) as PullRequestCommit[]
     },
 
-    async listReviewThreads(prNumber) {
-      const { owner, repo } = splitRepository(options.repository)
+    async listReviewThreads(prNumber, repository = options.repository) {
+      const { owner, repo } = splitRepository(repository)
       const query = `
 query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -500,7 +727,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       })
     },
 
-    async createIssueComment(prNumber, body) {
+    async createPullRequestComment(prNumber, body) {
       const { owner, repo } = splitRepository(options.repository)
       await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
         owner,

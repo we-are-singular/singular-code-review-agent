@@ -1,6 +1,6 @@
 import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
 
-import { useReviewContext } from "../review-context.js"
+import { useReviewContext } from "../context/review-context.js"
 import { decideReviewGate } from "./review-gate.js"
 
 /** Gives every confident no-review decision the same idempotent approval marker. */

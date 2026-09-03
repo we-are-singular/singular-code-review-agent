@@ -5,10 +5,9 @@ import { resolve } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
-import { DEFAULT_REVIEW_CONCURRENCY, DEFAULT_REVIEW_MODEL } from "../config.js"
-import { renderGitHubStepSummary } from "../lib/github-summary.js"
+import { renderGitHubStepSummary } from "../lib/render/github-summary.js"
 import { ReviewUnavailableError, runReview } from "../run-review.js"
-import { createGitHubClient } from "../services/github-client.js"
+import { createGitHubClient } from "../services/github/client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN, ReviewEvidence } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
@@ -31,8 +30,8 @@ Runs the review in memory. GitHub mutations are recorded by default; pass
 
 Options:
   --workspace <path>          checked-out pull request workspace
-  --model <model>             reviewer model (OpenCode default: ${DEFAULT_REVIEW_MODEL})
-  --concurrency <number>      maximum parallel AML Agents (default: ${DEFAULT_REVIEW_CONCURRENCY})
+  --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-v4-flash)
+  --concurrency <number>      maximum parallel AML Agents (default: 6)
   --publish                   allow live GitHub mutations
 `
 }
@@ -59,7 +58,7 @@ function model(options: { configured?: string; env: NodeJS.ProcessEnv }): string
   if (configured) {
     return required(configured, "REVIEW_MODEL")
   }
-  return DEFAULT_REVIEW_MODEL
+  return "opencode-go/deepseek-v4-flash"
 }
 
 function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null {
@@ -89,10 +88,7 @@ function parseOptions(argv: string[], env: NodeJS.ProcessEnv): CliOptions | null
     prNumber: positiveInteger(values.pr || env.PR_NUMBER, "PR_NUMBER"),
     workspace,
     model: model({ configured: values.model, env }),
-    concurrency: positiveInteger(
-      values.concurrency || env.REVIEW_CONCURRENCY || String(DEFAULT_REVIEW_CONCURRENCY),
-      "concurrency"
-    ),
+    concurrency: positiveInteger(values.concurrency || env.REVIEW_CONCURRENCY || "6", "concurrency"),
     // Live mutation requires an explicit CLI flag; ambient CI variables cannot
     // silently turn a benchmark or local invocation into a publishing run.
     publish: values.publish || false

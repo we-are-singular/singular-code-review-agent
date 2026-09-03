@@ -1,5 +1,5 @@
 import { REVIEW_COMMAND } from "./review-evidence.js"
-import type { GitHubClient } from "./github-client.js"
+import type { GitHubClient } from "./github/client.js"
 
 const SKIP_TITLE_PREFIX = "[skip]"
 const SKIP_COMMAND_PATTERN = /^(?:please\s+)?skip(?:\s+(?:this|review|run))?[.!?]?\s*$/u

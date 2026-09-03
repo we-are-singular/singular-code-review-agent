@@ -1,4 +1,4 @@
-import { useReviewContext } from "../review-context.js"
+import { useReviewContext } from "../context/review-context.js"
 
 /** Adds the courteous eyes reaction when needed without blocking the review. */
 export async function ReviewAcknowledgement() {

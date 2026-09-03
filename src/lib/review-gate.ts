@@ -350,7 +350,7 @@ export function prepareGate(snapshot: ReviewSnapshot, workspace: string): GatePr
         summary: "The historical delta was too large; using the current filtered pull request diff.",
         lastReviewedCommit: delta.lastReviewedCommit,
         currentHead: delta.currentHead,
-        changedFiles: snapshot.diff.files,
+        changedFiles: snapshot.diff.files.map(file => file.path),
         oldPatchId: null,
         currentPatchId: null,
         patchIdsMatch: null,

@@ -1,10 +1,11 @@
 import { Agent, Block, evaluate, Include } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import { REVIEW_INCLUDE_MAX_BYTES } from "../../config.js"
 import { prepareGate } from "../../lib/review-gate.js"
-import { REVIEW_CONTEXT_PATHS } from "../review-context-files.js"
-import { useReviewContext } from "../review-context.js"
+import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
+import { REVIEW_CONTEXT_PATHS } from "../context/files.js"
+import { ReviewContextPrompt } from "../context/prompt.js"
+import { useReviewContext } from "../context/review-context.js"
 
 const GateDecisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("review"), reason: z.string().trim().min(1).max(1_000) }).strict(),
@@ -24,15 +25,16 @@ function GateAgent({ context, delta }: { context: unknown; delta: string }) {
       system="You route pull-request follow-up events. Fast-track only evidence-backed, low-risk deltas and escalate uncertainty to a full review."
     >
       <Block tag="gate-policy">
-        <Include src="./instructions/gate.md" maxBytes={REVIEW_INCLUDE_MAX_BYTES} title={false} />
+        <Include src="./instructions/gate.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
       </Block>
       <Block>Decide whether this event needs a full review, can be answered directly, or needs no review.</Block>
       <Block tag="gate-context">{JSON.stringify(context, null, 2)}</Block>
       <Block tag="review-delta">{delta}</Block>
       <Block>
-        The supplied context and delta are normally sufficient. Read {REVIEW_CONTEXT_PATHS.pullRequest} only when stated
-        intent matters and {REVIEW_CONTEXT_PATHS.history} only when prior conversation is necessary to classify the
-        latest change.
+        The supplied context and delta are normally sufficient. Use the materialized PR and referenced-issue context
+        below when stated intent or requirement coverage matters, and read {REVIEW_CONTEXT_PATHS.history} only when
+        prior PR conversation is necessary to classify the latest change.
+        <ReviewContextPrompt issues />
       </Block>
     </Agent>
   )

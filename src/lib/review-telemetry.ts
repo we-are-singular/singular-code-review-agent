@@ -82,6 +82,8 @@ class ReviewProgressRenderer {
       this.#write(`▶ component ${event.name}`)
     } else if (event.name === "agent.turn") {
       this.#write(`▶ turn ${this.#turnLabel(span)}`)
+    } else if (event.kind === "tool") {
+      this.#write(`▶ tool ${event.name}`)
     }
   }
 
@@ -120,6 +122,8 @@ class ReviewProgressRenderer {
           this.#write(`  │ ${line}`)
         }
       }
+    } else if (event.kind === "tool") {
+      this.#write(`${event.status === "ok" ? "✓" : "✗"} tool ${event.name} ${this.#duration(event.durationMs)}`)
     }
     this.#spans.delete(event.spanId)
   }

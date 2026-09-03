@@ -1,13 +1,13 @@
 import { defineTool, type AmlJsonValue } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import type { ReviewPayload } from "../lib/review-body.js"
+import type { ReviewPayload } from "../services/github/review-serializer.js"
 import type { ReviewReply } from "../lib/review-queue.js"
-import type { GitHubActions } from "../services/github-actions.js"
+import type { GitHubActions } from "../services/github/actions.js"
 
 export type ReviewPublicationPlan =
   | { kind: "review"; prNumber: number; payload: ReviewPayload; replies: ReviewReply[] }
-  | { kind: "issue-comment"; prNumber: number; body: string }
+  | { kind: "pr-comment"; prNumber: number; body: string }
 
 /** AML Tools must return a JSON snapshot rather than mutable Octokit objects. */
 function json(value: unknown): AmlJsonValue {
@@ -20,15 +20,15 @@ function json(value: unknown): AmlJsonValue {
  */
 export function createGitHubWriteTools(actions: GitHubActions, plan: ReviewPublicationPlan) {
   return {
-    postIssueComment: defineTool({
-      name: "post_issue_comment",
+    postPrComment: defineTool({
+      name: "post_pr_comment",
       description: "Post the exact prepared gate answer to the active pull request",
       input: z.object({}).strict(),
       execute: async () => {
-        if (plan.kind !== "issue-comment") {
-          throw new Error("this review has no prepared issue comment")
+        if (plan.kind !== "pr-comment") {
+          throw new Error("this review has no prepared pull-request comment")
         }
-        return json(await actions.postIssueComment(plan.prNumber, plan.body))
+        return json(await actions.postPullRequestComment(plan.prNumber, plan.body))
       }
     }),
     submitPullRequestReview: defineTool({
