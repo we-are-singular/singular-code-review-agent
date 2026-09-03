@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 
+import { compactContextText } from "../services/github/context-model.js"
 import type { ReviewSnapshot } from "../types/review.js"
 import { ReviewDiff } from "./review-diff.js"
 
@@ -265,7 +266,7 @@ function latestBotReview(snapshot: ReviewSnapshot): BotReview | null {
     ? {
         id: review.id || null,
         state: review.state || null,
-        body: review.body || "",
+        body: compactContextText(review.body || ""),
         submittedAt: review.submitted_at || review.submittedAt || null,
         commitId
       }
@@ -287,19 +288,21 @@ function gateContext(snapshot: ReviewSnapshot, lastBotReview: BotReview | null, 
     },
     participants: snapshot.participants,
     actionItems: snapshot.actionItems,
+    // Prior discussion shares the compact truncation vocabulary with history.md
+    // so the gate links findings instead of quoting them in full.
     previousBotFindings: snapshot.previousBotFindings.map(finding => ({
       id: finding.id,
       url: finding.html_url || (pullRequestUrl ? `${pullRequestUrl}#discussion_r${finding.id}` : null),
       path: finding.path || null,
       line: finding.line || null,
-      body: finding.body || ""
+      body: compactContextText(finding.body || "")
     })),
     unresolvedBotThreads: snapshot.unresolvedBotThreads.map(thread => ({
       id: thread.id,
       path: thread.path,
       line: thread.line,
       latestAuthor: thread.latest_author,
-      latestBody: thread.comments.at(-1)?.body || ""
+      latestBody: compactContextText(thread.comments.at(-1)?.body || "")
     })),
     lastBotReview,
     delta: {
