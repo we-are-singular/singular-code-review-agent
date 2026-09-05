@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -6,11 +7,12 @@ import test from "node:test"
 
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewQueue } from "../dist/lib/review-queue.js"
-import { runReview } from "../dist/run-review.js"
-import { GitHubReviewSession } from "../dist/services/github-session.js"
-import { createGitHubReadTools } from "../dist/tools/github-read.js"
-import { createReviewAuditTools, createReviewTools } from "../dist/tools/review.js"
+import { compareReviewHistory } from "../../dist/lib/review-gate.js"
+import { ReviewQueue } from "../../dist/lib/review-queue.js"
+import { runReview } from "../../dist/run-review.js"
+import { GitHubReviewSession } from "../../dist/services/github/session.js"
+import { createGitHubReadTools } from "../../dist/tools/github-read.js"
+import { createLaneReviewTools, createReviewAuditTools } from "../../dist/tools/review.js"
 
 const laneNames = [
   "intent-contract",
@@ -75,11 +77,26 @@ function fakeGitHub(overrides = {}) {
     async getPullRequestDiff() {
       return overrides.diff ?? diff
     },
+    async getIssue(number) {
+      return { number, title: "Referenced issue", body: "Keep responses fresh." }
+    },
+    async listPullRequestClosingIssues() {
+      return overrides.closingIssues ?? []
+    },
+    async getCommit(ref) {
+      return { sha: ref, commit: { message: "Referenced commit" } }
+    },
     async getIssueComment(commentId) {
       return { id: commentId, body: "please review", user: { login: "author" } }
     },
+    async listPullRequestComments() {
+      return overrides.issueComments ?? []
+    },
     async listIssueComments() {
       return overrides.issueComments ?? []
+    },
+    async listIssueTimeline() {
+      return []
     },
     async listReviewComments() {
       return overrides.reviewComments ?? []
@@ -110,10 +127,10 @@ function fakeGitHub(overrides = {}) {
     async createIssueCommentReaction(commentId, content) {
       writes.push({ kind: "reaction", commentId, content })
     },
-    async createIssueComment(prNumber, body) {
+    async createPullRequestComment(prNumber, body) {
       writes.push({ kind: "issue-comment", prNumber, body })
     },
-    async submitReviewAtHead(prNumber, headSha, payload) {
+    async submitReview(prNumber, headSha, payload) {
       writes.push({ kind: "review", prNumber, headSha, payload })
     },
     async submitReply(prNumber, commentId, body) {
@@ -123,9 +140,51 @@ function fakeGitHub(overrides = {}) {
   return { client, writes }
 }
 
-function reviewOptions(t, github, overrides = {}) {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-review-"))
+function git(workspace, args) {
+  return execFileSync("git", ["-C", workspace, ...args], { encoding: "utf8" }).trim()
+}
+
+function reviewHistoryFixture(t, currentContents = "export const state = 'current'\n") {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-review-history-"))
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+  git(workspace, ["init"])
+  git(workspace, ["config", "user.email", "reviewer@example.com"])
+  git(workspace, ["config", "user.name", "Reviewer"])
+
+  const source = path.join(workspace, "state.ts")
+  fs.writeFileSync(source, "export const state = 'base'\n")
+  git(workspace, ["add", "state.ts"])
+  git(workspace, ["commit", "-m", "base"])
+  const base = git(workspace, ["rev-parse", "HEAD"])
+
+  fs.writeFileSync(source, "export const state = 'reviewed'\n")
+  git(workspace, ["add", "state.ts"])
+  git(workspace, ["commit", "-m", "reviewed"])
+  const reviewed = git(workspace, ["rev-parse", "HEAD"])
+
+  fs.writeFileSync(source, currentContents)
+  git(workspace, ["add", "state.ts"])
+  git(workspace, ["commit", "-m", "current"])
+  const head = git(workspace, ["rev-parse", "HEAD"])
+
+  return { workspace, base, reviewed, head }
+}
+
+function rewrittenHistoryFixture(t, currentContents) {
+  const history = reviewHistoryFixture(t, "export const temporary = true\n")
+  git(history.workspace, ["checkout", "--quiet", "--detach", history.base])
+  fs.writeFileSync(path.join(history.workspace, "state.ts"), currentContents)
+  git(history.workspace, ["add", "state.ts"])
+  git(history.workspace, ["commit", "-m", "rewritten current"])
+  return { ...history, head: git(history.workspace, ["rev-parse", "HEAD"]) }
+}
+
+function reviewOptions(t, github, overrides = {}) {
+  const { workspace: providedWorkspace, request: requestOverrides, ...runtimeOverrides } = overrides
+  const workspace = providedWorkspace || fs.mkdtempSync(path.join(os.tmpdir(), "aml-review-"))
+  if (!providedWorkspace) {
+    t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+  }
   return {
     request: {
       repository: "owner/repository",
@@ -136,14 +195,15 @@ function reviewOptions(t, github, overrides = {}) {
       eventName: null,
       eventPath: null,
       actor: "author",
-      ignoreHistory: false
+      ignoreHistory: false,
+      ...requestOverrides
     },
     github,
     actionMode: "dry-run",
     provider: "opencode",
     model: "opencode-go/deepseek-v4-flash",
     maximumConcurrency: 6,
-    ...overrides
+    ...runtimeOverrides
   }
 }
 
@@ -203,6 +263,9 @@ test("GitHub reference Tools resolve linked evidence through the cached read bou
         calls.push(["comments", repository, number])
         return [{ id: 7, body: "Decision recorded here." }]
       },
+      async listIssueTimeline() {
+        return []
+      },
       async getCommit(ref, repository) {
         calls.push(["commit", repository, ref])
         return { sha: ref, commit: { message: "Referenced commit" } }
@@ -228,6 +291,7 @@ test("GitHub reference Tools resolve linked evidence through the cached read bou
 
   assert.deepEqual(calls, [
     ["issue", "linked/project", 17],
+    ["comments", "linked/project", 17],
     ["commit", "owner/repository", "abc1234"]
   ])
 })
@@ -334,7 +398,7 @@ function reviewProvider(options = {}) {
           structured: options.synthesis ?? {
             direct_answer: null,
             summary: "The change is focused, but retained feedback should be resolved before it is ready.",
-            next_steps: null
+            recommendation: "Resolve the primary retained concern, then verify the affected behavior before merging."
           }
         }
       }
@@ -376,14 +440,15 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.deepEqual(
       call.request.tools.map(tool => tool.name),
       [
-        "get_pull_request",
-        "get_pull_request_diff",
+        "get_pr",
+        "get_pr_diff",
         "get_issue",
-        "list_issue_comments",
+        "get_comment",
         "get_commit",
+        "add_review_blocker",
+        "add_review_note",
         "add_review_comment",
-        "add_review_reply",
-        "add_review_blocker"
+        "add_review_reply"
       ]
     )
     assert.doesNotMatch(call.request.system, /add_review_comment/u)
@@ -435,7 +500,10 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /inclusive range such as `"40-42"`/u)
     assert.match(call.request.prompt, /fenced `suggestion` block inside `body`/u)
     assert.match(call.request.prompt, /a reply has no severity or confidence/u)
-    assert.match(call.request.prompt, /explicitly references another pull request, issue, or commit/u)
+    assert.match(
+      call.request.prompt,
+      /read-only GitHub Tools provide compact structured PR, issue, comment, commit, and diff evidence/u
+    )
     assert.match(call.request.prompt, /const changed = true/u)
   }
 
@@ -474,7 +542,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.ok(audit)
   assert.deepEqual(
     audit.request.tools.map(tool => tool.name),
-    ["merge_review_findings", "demote_review_finding", "drop_review_findings", "get_full_comment"]
+    ["merge_review_findings", "demote_review_finding", "drop_review_findings", "add_audit_note", "get_full_comment"]
   )
   assert.deepEqual(audit.request.mcpServers, [])
   assert.match(audit.request.prompt, /<audit-policy>/u)
@@ -489,9 +557,9 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.match(audit.request.prompt, /merge-action counterfactual/u)
   assert.match(audit.request.prompt, /Treat factuality and merge action separately/u)
   assert.match(audit.request.prompt, /undocumented older or third-party compatibility/u)
-  assert.match(audit.request.prompt, /An anchorless blocker can only remain `critical` or be dropped/u)
+  assert.match(audit.request.prompt, /only a retained blocker hijacks the verdict/u)
   assert.match(audit.request.prompt, /repeats or rephrases a settled review decision/u)
-  assert.match(audit.request.prompt, /Read the complete history/u)
+  assert.match(audit.request.prompt, /Read the complete issue and PR history/u)
   assert.match(audit.request.prompt, /If a `\(truncated\)` entry could change retention/u)
   assert.match(audit.request.prompt, /`get_full_comment` with its `#ID` and kind/u)
   assert.match(
@@ -504,7 +572,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
   assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)
   assert.match(audit.request.prompt, /author\.\n\n<staged-findings>\n\{\n  "findings"/u)
-  assert.match(audit.request.prompt, /\n\}\n<\/staged-findings>\n\nYou may read only/u)
+  assert.match(audit.request.prompt, /\n\}\n<\/staged-findings>\n\nUse \.singular-code-review\/pr\.md/u)
   let previousHandoff = -1
   for (const lane of laneNames) {
     const handoff = audit.request.prompt.indexOf(`## ${laneHeadings[lane]}`)
@@ -522,10 +590,14 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.match(synthesis.request.prompt, /The staged findings were consolidated\./u)
   assert.match(synthesis.request.prompt, /lane_assessments/u)
   assert.match(synthesis.request.prompt, /"final_review"/u)
+  assert.match(synthesis.request.prompt, /"primary_finding"/u)
   assert.match(synthesis.request.prompt, /"verdict": "⚠️ Request changes"/u)
+  assert.match(synthesis.request.prompt, /MUST be non-null/u)
+  assert.match(synthesis.request.prompt, /nullable field MUST remain null/u)
+  assert.match(synthesis.request.prompt, /material direction changes/u)
   assert.match(synthesis.request.prompt, /at most 80 words/u)
   assert.match(synthesis.request.prompt, /not another findings channel/u)
-  assert.match(synthesis.request.prompt, /Set next_steps only for a Request changes or Block review/u)
+  assert.match(synthesis.request.prompt, /Set `recommendation` for every Request changes or Block review/u)
   assert.match(synthesis.request.prompt, /at most 50 words/u)
   assert.doesNotMatch(synthesis.request.prompt, /retained_findings/u)
   assert.doesNotMatch(synthesis.request.prompt, /inline_comments/u)
@@ -574,7 +646,12 @@ test("native Parallel starts all six specialists concurrently", { timeout: 2_000
       if (request.system.includes("concise pull-request review summary")) {
         return {
           text: "",
-          structured: { direct_answer: null, summary: "The focused change is ready.", next_steps: null }
+          structured: {
+            direct_answer: null,
+            summary: "The focused change is ready.",
+            since_last_review: null,
+            recommendation: null
+          }
         }
       }
       throw new Error(`unexpected Agent: ${request.system}`)
@@ -598,7 +675,8 @@ test("request-changes synthesis may coordinate next steps without restating find
     synthesis: {
       direct_answer: null,
       summary: "The change is focused, but retained feedback should be resolved before it is ready.",
-      next_steps:
+      since_last_review: "This provider-invented delta must not appear on a first review.",
+      recommendation:
         "Prioritize the behavior-changing feedback, verify the affected paths together, and apply optional cleanup afterward."
     }
   })
@@ -610,6 +688,366 @@ test("request-changes synthesis may coordinate next steps without restating find
     /## Recommendations\n\nPrioritize the behavior-changing feedback, verify the affected paths together, and apply optional cleanup afterward\.\n\n## Verdict/u
   )
   assert.match(result.body, /⚠️ Request changes$/u)
+  assert.doesNotMatch(result.body, /provider-invented delta/u)
+  assert.match(result.body, /The change is focused/u)
+  const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
+  assert.match(synthesis.request.prompt, /"primary_finding": \{\n\s+"kind": "inline"/u)
+})
+
+test("follow-up synthesis renders only the since-last-review summary shape", async t => {
+  const history = reviewHistoryFixture(t)
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.head
+    },
+    reviews: [
+      {
+        id: 88,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary: "The pull request preserves the reviewed behavior and is now ready for its intended use.",
+      since_last_review: "The latest update preserves the reviewed behavior and resolves the prior concern.",
+      recommendation: "Verify the affected path once more before merging."
+    }
+  })
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: { workspaceHeadSha: history.head }
+    }),
+    () => provider
+  )
+
+  assert.match(result.body, /## Review Summary\n\n\*\*Since last review:\*\* The latest update/u)
+  assert.doesNotMatch(result.body, /## Since last review/u)
+  const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
+  assert.match(synthesis.request.prompt, /"previous_review": \{/u)
+  assert.match(synthesis.request.prompt, /"mode": "ancestor_diff"/u)
+  assert.match(synthesis.request.prompt, new RegExp(`"commit_id": "${history.reviewed}"`, "u"))
+})
+
+test("a comparable follow-up requires a since-last-review assessment", async t => {
+  const history = reviewHistoryFixture(t)
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.head
+    },
+    reviews: [
+      {
+        id: 92,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary: "The pull request preserves the reviewed behavior and is ready for its intended use.",
+      since_last_review: null,
+      recommendation: "Verify the affected path once more before merging."
+    }
+  })
+
+  await assert.rejects(
+    runReview(
+      reviewOptions(t, github.client, {
+        workspace: history.workspace,
+        request: { workspaceHeadSha: history.head }
+      }),
+      () => provider
+    ),
+    /failed schema validation/u
+  )
+})
+
+test("a request-changes review requires an actionable recommendation", async t => {
+  const github = fakeGitHub()
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary: "The change is focused, but retained feedback should be resolved before it is ready.",
+      since_last_review: null,
+      recommendation: null
+    }
+  })
+
+  await assert.rejects(
+    runReview(reviewOptions(t, github.client), () => provider),
+    /failed schema validation/u
+  )
+})
+
+test("a comparable material direction change may still render since-last-review context", async t => {
+  const history = reviewHistoryFixture(t, "export const replacement = 'new objective'\n")
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.head
+    },
+    reviews: [
+      {
+        id: 89,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary:
+        "The pull request now replaces the reviewed behavior with a different contract and needs a fresh assessment.",
+      since_last_review:
+        "The latest update replaces the previously reviewed behavior with a new contract, so the changed direction needs a fresh assessment.",
+      recommendation: "Resolve the primary retained concern against the replacement contract before merging."
+    }
+  })
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: { workspaceHeadSha: history.head }
+    }),
+    () => provider
+  )
+
+  assert.match(result.body, /\*\*Since last review:\*\* The latest update replaces/u)
+  assert.doesNotMatch(result.body, /The pull request now replaces/u)
+})
+
+test("an unavailable previous commit forces the complete summary fallback", async t => {
+  const github = fakeGitHub({
+    reviews: [
+      {
+        id: 91,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: "f".repeat(40)
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary: "The current pull request requires a complete assessment because its prior anchor is unavailable.",
+      since_last_review: "This ungrounded comparison must not be rendered.",
+      recommendation: "Resolve the primary retained concern and verify the current behavior before merging."
+    }
+  })
+
+  const result = await runReview(reviewOptions(t, github.client), () => provider)
+
+  assert.match(result.body, /The current pull request requires a complete assessment/u)
+  assert.doesNotMatch(result.body, /ungrounded comparison/u)
+})
+
+test("oversized comparison evidence forces the complete summary fallback", async t => {
+  const history = reviewHistoryFixture(t, `export const state = '${"x".repeat(90_000)}'\n`)
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.head
+    },
+    reviews: [
+      {
+        id: 94,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    synthesis: {
+      direct_answer: null,
+      summary: "The current pull request receives a complete assessment because the historical delta is oversized.",
+      since_last_review: "This unsupported comparison must not be rendered.",
+      recommendation: "Resolve the primary retained concern and verify the current behavior before merging."
+    }
+  })
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: { workspaceHeadSha: history.head }
+    }),
+    () => provider
+  )
+
+  assert.match(result.body, /receives a complete assessment/u)
+  assert.doesNotMatch(result.body, /unsupported comparison/u)
+})
+
+test("review history comparison distinguishes rebases from changed force-pushes", t => {
+  const equivalent = rewrittenHistoryFixture(t, "export const state = 'reviewed'\n")
+  const changed = rewrittenHistoryFixture(t, "export const replacement = 'new objective'\n")
+  const snapshot = history => ({
+    botLogin: "singular-code-review[bot]",
+    pullRequest: { baseRefOid: history.base, headRefOid: history.head },
+    reviews: [
+      {
+        id: 90,
+        user: { login: "singular-code-review[bot]" },
+        commit_id: history.reviewed
+      }
+    ]
+  })
+
+  const equivalentComparison = compareReviewHistory(snapshot(equivalent), equivalent.workspace)
+  assert.equal(equivalentComparison.delta.mode, "rebase_compare")
+  assert.equal(equivalentComparison.delta.patchIdsMatch, true)
+
+  const changedComparison = compareReviewHistory(snapshot(changed), changed.workspace)
+  assert.equal(changedComparison.delta.mode, "rebase_compare")
+  assert.equal(changedComparison.delta.patchIdsMatch, false)
+  assert.match(changedComparison.delta.text, /range-diff:/u)
+})
+
+test("a contained synchronize renders a bounded since-last-review body", async t => {
+  const history = reviewHistoryFixture(t)
+  const eventFile = path.join(history.workspace, "event.json")
+  fs.writeFileSync(eventFile, JSON.stringify({ action: "synchronize", sender: { login: "author" } }))
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.head
+    },
+    reviews: [
+      {
+        id: 93,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider({
+    gate: {
+      decision: "no-review",
+      answer: "The latest push resolves the reviewed concern without introducing unrelated behavior."
+    }
+  })
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: {
+        workspaceHeadSha: history.head,
+        eventName: "pull_request",
+        eventPath: eventFile
+      }
+    }),
+    () => provider
+  )
+
+  assert.equal(result.status, "no-review")
+  assert.equal(
+    result.body,
+    "## Since last review\n\nThe latest push resolves the reviewed concern without introducing unrelated behavior.\n\n## Verdict\n\n✅ LGTM"
+  )
+  const gate = provider.calls.find(call => call.request.system.includes("route pull-request follow-up"))
+  assert.ok(gate)
+  assert.match(gate.request.prompt, /at most 80 words and 600 characters/u)
+  assert.match(gate.request.prompt, /Do not recap the pull request/u)
+})
+
+test("a same-head synchronize renders a neutral review summary", async t => {
+  const history = reviewHistoryFixture(t)
+  const eventFile = path.join(history.workspace, "event.json")
+  fs.writeFileSync(eventFile, JSON.stringify({ action: "synchronize", sender: { login: "author" } }))
+  const github = fakeGitHub({
+    pullRequest: {
+      baseRefOid: history.base,
+      headRefOid: history.reviewed
+    },
+    reviews: [
+      {
+        id: 95,
+        user: { login: "singular-code-review[bot]" },
+        body: "Previous review body.",
+        state: "COMMENTED",
+        submitted_at: "2026-08-29T11:00:00Z",
+        commit_id: history.reviewed
+      }
+    ]
+  })
+  const provider = reviewProvider()
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: {
+        workspaceHeadSha: history.reviewed,
+        eventName: "pull_request",
+        eventPath: eventFile
+      }
+    }),
+    () => provider
+  )
+
+  assert.equal(result.status, "no-review")
+  assert.match(result.body, /^## Review Summary\n\nNo full re-review needed/u)
+  assert.doesNotMatch(result.body, /## Since last review/u)
+  assert.equal(provider.calls.length, 0)
+})
+
+test("a no-review gate decision without prior history escalates to a full review", async t => {
+  const eventFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aml-review-mention-")), "event.json")
+  t.after(() => fs.rmSync(path.dirname(eventFile), { recursive: true, force: true }))
+  fs.writeFileSync(
+    eventFile,
+    JSON.stringify({
+      action: "created",
+      sender: { login: "author" },
+      comment: { id: 123, body: "@singular-code-review is this ready?", user: { login: "author" } }
+    })
+  )
+  const github = fakeGitHub()
+  const provider = reviewProvider({
+    gate: {
+      decision: "no-review",
+      answer: "This ungrounded approval must not be published."
+    }
+  })
+
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      request: {
+        eventName: "issue_comment",
+        eventPath: eventFile
+      }
+    }),
+    () => provider
+  )
+
+  assert.equal(result.status, "reviewed")
+  assert.equal(result.gate.decision, "review")
+  assert.doesNotMatch(result.body, /ungrounded approval/u)
 })
 
 test("every lane remains available for documentation-only changes and may return compactly", async t => {
@@ -632,8 +1070,8 @@ index 1111111..2222222 100644
 
 test("review Tools validate anchors, preserve cross-lane agreement, and coalesce one lane's retry", async () => {
   const reviews = new ReviewQueue(queueOptions())
-  const bugHunter = createReviewTools(reviews, "code-path-bug-hunter")
-  const correctness = createReviewTools(reviews, "correctness-risk-testing")
+  const bugHunter = createLaneReviewTools(reviews, "code-path-bug-hunter")
+  const correctness = createLaneReviewTools(reviews, "correctness-risk-testing")
   const context = { signal: new AbortController().signal }
   const input = commentInput(finding)
 
@@ -673,7 +1111,7 @@ test("review Tools validate anchors, preserve cross-lane agreement, and coalesce
 
 test("review comment Tool normalizes familiar single-line and same-side range notation", async () => {
   const reviews = new ReviewQueue(queueOptions())
-  const tool = createReviewTools(reviews, "code-path-bug-hunter").addReviewComment
+  const tool = createLaneReviewTools(reviews, "code-path-bug-hunter").addReviewComment
   const context = { signal: new AbortController().signal }
   const input = commentInput(finding)
 
@@ -708,7 +1146,7 @@ test("review finding IDs expose stable semantic lane prefixes", () => {
 
 test("review Tools keep inline suggestions and thread replies in one findings owner", async () => {
   const reviews = new ReviewQueue(queueOptions())
-  const tools = createReviewTools(reviews, "code-path-bug-hunter")
+  const tools = createLaneReviewTools(reviews, "code-path-bug-hunter")
   const context = { signal: new AbortController().signal }
 
   await tools.addReviewComment.execute(
@@ -761,20 +1199,22 @@ test("review blocker Tool fixes critical severity and remains separate from inli
     synthesis: {
       direct_answer: null,
       summary: "The implementation contains useful work, but a retained critical contract conflict prevents landing.",
-      next_steps: "Resolve the review-level blocker first, then verify the remaining changed behavior together."
+      since_last_review: null,
+      recommendation: "Resolve the review-level blocker first, then verify the remaining changed behavior together."
     }
   })
   const result = await runReview(reviewOptions(t, github.client), () => provider)
 
   const retainedBlocker = result.audit.findings.find(candidate => candidate.kind === "blocker")
-  assert.equal(retainedBlocker?.severity, "critical")
+  assert.equal(retainedBlocker?.kind, "blocker")
+  assert.equal(Object.hasOwn(retainedBlocker, "severity"), false)
   assert.equal(result.validated.inlineComments.length, 1)
-  assert.match(result.body, /## Recommendations\n\n- The proposed contract cannot safely land/u)
-  assert.match(result.body, /incompatible behavior is removed\.\n\nResolve the review-level blocker first/u)
+  assert.match(result.body, /## Recommendations\n\nResolve the review-level blocker first/u)
+  assert.match(result.body, /## Blockers\n\n- The proposed contract cannot safely land/u)
   assert.doesNotMatch(result.body, /stale state/u)
   assert.match(result.body, /## Verdict\n\n⛔ Block$/u)
 
-  const tools = createReviewTools(new ReviewQueue(queueOptions()), "standards-architecture")
+  const tools = createLaneReviewTools(new ReviewQueue(queueOptions()), "standards-architecture")
   assert.deepEqual(Object.keys(tools.addReviewBlocker.inputSchema.properties).sort(), ["body", "evidence"])
   assert.equal(tools.addReviewBlocker.inputSchema.additionalProperties, false)
 })
@@ -820,7 +1260,8 @@ test("verdict uses the post-audit queue when lows are dropped or demoted to a ni
     synthesis: {
       direct_answer: null,
       summary: "The focused change is ready to land with one optional cleanup note.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
 
@@ -854,7 +1295,8 @@ test("audit drops findings without needing a replacement result schema", async t
     synthesis: {
       direct_answer: null,
       summary: "The focused change is ready to land.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
 
@@ -886,7 +1328,8 @@ test("zero-finding reviews skip the audit Agent and pass specialist handoffs to 
     synthesis: {
       direct_answer: null,
       summary: "The focused change preserves the existing behavior and is ready.",
-      next_steps: "Resolve the staged concern before merging."
+      since_last_review: null,
+      recommendation: "Resolve the staged concern before merging."
     }
   })
   const result = await runReview(reviewOptions(t, github.client), () => provider)
@@ -937,7 +1380,8 @@ test("zero-finding lane prose reaches synthesis but is never promoted into the c
     synthesis: {
       direct_answer: null,
       summary: "The focused change is ready to land.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
 
@@ -973,7 +1417,12 @@ test("typed retained severity owns the verdict instead of synthesis prose", asyn
     const github = fakeGitHub()
     const provider = reviewProvider({
       laneInputs: { "code-path-bug-hunter": [commentInput(retained)] },
-      synthesis: { direct_answer: null, summary: "The model does not choose the verdict.", next_steps: null }
+      synthesis: {
+        direct_answer: null,
+        summary: "The model does not choose the verdict.",
+        since_last_review: null,
+        recommendation: "Resolve the primary retained concern, then verify the affected behavior before merging."
+      }
     })
     const result = await runReview(reviewOptions(t, github.client), () => provider)
     assert.equal(result.body.endsWith(expected), true)
@@ -1001,7 +1450,8 @@ test("deterministic validation drops an existing bot finding before deriving the
     synthesis: {
       direct_answer: null,
       summary: "The current change has no new author action after validation.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
   const result = await runReview(reviewOptions(t, github.client), () => provider)
@@ -1034,7 +1484,8 @@ test("full reviews preserve a direct trigger answer before the review summary", 
     synthesis: {
       direct_answer: "@author Yes. The reviewed path still blocks stale responses.",
       summary: "The focused change preserves the stale-response guard and is ready.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
 
@@ -1100,7 +1551,8 @@ test("thread-only reply requests cannot leak into the top-level review body", as
     synthesis: {
       direct_answer: "@author Yes. The latest push resolves the thread.",
       summary: "The focused change preserves the stale-response guard and is ready.",
-      next_steps: null
+      since_last_review: null,
+      recommendation: null
     }
   })
 
@@ -1112,7 +1564,8 @@ test("thread-only reply requests cannot leak into the top-level review body", as
 
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
   assert.match(synthesis.request.prompt, /"top_level_action_items": \[\]/u)
-  assert.doesNotMatch(synthesis.request.prompt, /Does the latest push resolve this\?/u)
+  assert.match(synthesis.request.prompt, /<pull-request-history>/u)
+  assert.match(synthesis.request.prompt, /Does the latest push resolve this\?/u)
 })
 
 function queueOptions() {
