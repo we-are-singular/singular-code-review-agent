@@ -33,21 +33,6 @@ const SynthesisSchema = z
     recommendation: RecommendationSchema.nullable()
   })
   .strict()
-const FollowUpSynthesisSchema = SynthesisSchema.extend({
-  since_last_review: SummarySchema.describe(
-    "Required concise comparison with the previous review, including any material direction change."
-  )
-})
-const ActionableSynthesisSchema = SynthesisSchema.extend({
-  recommendation: RecommendationSchema.describe(
-    "Required next step centered on the application-selected primary finding."
-  )
-})
-const ActionableFollowUpSynthesisSchema = ActionableSynthesisSchema.extend({
-  since_last_review: SummarySchema.describe(
-    "Required concise comparison with the previous review, including any material direction change."
-  )
-})
 
 /** Selects the one retained concern synthesis should prioritize for the author. */
 function primaryFinding(findings: ReviewFinding[]): ReviewFinding | null {
@@ -124,14 +109,6 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
     comparisonEvidenceComplete &&
     comparison.previousReview !== null &&
     (comparison.delta.mode === "ancestor_diff" || comparison.delta.mode === "rebase_compare")
-  const requiresRecommendation = finalVerdict !== "✅ LGTM"
-  const synthesisSchema = canUseSinceLastReview
-    ? requiresRecommendation
-      ? ActionableFollowUpSynthesisSchema
-      : FollowUpSynthesisSchema
-    : requiresRecommendation
-      ? ActionableSynthesisSchema
-      : SynthesisSchema
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
   )
@@ -166,7 +143,7 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
     >
       {auditHandoff}
     </SynthesisAgent>,
-    synthesisSchema
+    SynthesisSchema
   )
   // Anchorless findings render in their own verdict sections: blockers hijack
   // the verdict, notes never do.
@@ -182,11 +159,12 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
   // fallback, while known missing comparison anchors fail closed even if the
   // provider returns relative prose against the contract.
   const sinceLastReview = canUseSinceLastReview ? synthesis.since_last_review : null
-  const summary = sinceLastReview ? `**Since last review:** ${sinceLastReview}` : synthesis.summary
+  const summary = sinceLastReview || synthesis.summary
+  const summaryHeading = sinceLastReview ? "Since last review" : "Review Summary"
   return (
     <>
       {directAnswer ? <Block>{directAnswer}</Block> : null}
-      ## Review Summary
+      ## {summaryHeading}
       <Block>{summary}</Block>
       {recommendation ? (
         <>

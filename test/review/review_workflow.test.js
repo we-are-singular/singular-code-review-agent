@@ -694,7 +694,7 @@ test("request-changes synthesis may coordinate next steps without restating find
   assert.match(synthesis.request.prompt, /"primary_finding": \{\n\s+"kind": "inline"/u)
 })
 
-test("follow-up synthesis renders only the since-last-review summary shape", async t => {
+test("follow-up synthesis renders the since-last-review summary when supplied", async t => {
   const history = reviewHistoryFixture(t)
   const github = fakeGitHub({
     pullRequest: {
@@ -729,15 +729,15 @@ test("follow-up synthesis renders only the since-last-review summary shape", asy
     () => provider
   )
 
-  assert.match(result.body, /## Review Summary\n\n\*\*Since last review:\*\* The latest update/u)
-  assert.doesNotMatch(result.body, /## Since last review/u)
+  assert.match(result.body, /## Since last review\n\nThe latest update/u)
+  assert.doesNotMatch(result.body, /## Review Summary/u)
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
   assert.match(synthesis.request.prompt, /"previous_review": \{/u)
   assert.match(synthesis.request.prompt, /"mode": "ancestor_diff"/u)
   assert.match(synthesis.request.prompt, new RegExp(`"commit_id": "${history.reviewed}"`, "u"))
 })
 
-test("a comparable follow-up requires a since-last-review assessment", async t => {
+test("a comparable follow-up falls back to the full summary when the delta is null", async t => {
   const history = reviewHistoryFixture(t)
   const github = fakeGitHub({
     pullRequest: {
@@ -764,19 +764,19 @@ test("a comparable follow-up requires a since-last-review assessment", async t =
     }
   })
 
-  await assert.rejects(
-    runReview(
-      reviewOptions(t, github.client, {
-        workspace: history.workspace,
-        request: { workspaceHeadSha: history.head }
-      }),
-      () => provider
-    ),
-    /failed schema validation/u
+  const result = await runReview(
+    reviewOptions(t, github.client, {
+      workspace: history.workspace,
+      request: { workspaceHeadSha: history.head }
+    }),
+    () => provider
   )
+
+  assert.match(result.body, /## Review Summary\n\nThe pull request preserves/u)
+  assert.doesNotMatch(result.body, /## Since last review/u)
 })
 
-test("a request-changes review requires an actionable recommendation", async t => {
+test("a request-changes review tolerates an omitted recommendation", async t => {
   const github = fakeGitHub()
   const provider = reviewProvider({
     synthesis: {
@@ -787,10 +787,11 @@ test("a request-changes review requires an actionable recommendation", async t =
     }
   })
 
-  await assert.rejects(
-    runReview(reviewOptions(t, github.client), () => provider),
-    /failed schema validation/u
-  )
+  const result = await runReview(reviewOptions(t, github.client), () => provider)
+
+  assert.match(result.body, /## Review Summary/u)
+  assert.doesNotMatch(result.body, /## Recommendations/u)
+  assert.match(result.body, /## Verdict\n\n⚠️ Request changes$/u)
 })
 
 test("a comparable material direction change may still render since-last-review context", async t => {
@@ -830,7 +831,7 @@ test("a comparable material direction change may still render since-last-review 
     () => provider
   )
 
-  assert.match(result.body, /\*\*Since last review:\*\* The latest update replaces/u)
+  assert.match(result.body, /## Since last review\n\nThe latest update replaces/u)
   assert.doesNotMatch(result.body, /The pull request now replaces/u)
 })
 
