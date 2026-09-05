@@ -1,4 +1,4 @@
-import { createContext, useContext, type AmlRenderable } from "@aml-jsx/sdk"
+import { createContext, useContext, type AML } from "@aml-jsx/sdk"
 
 import type { PublishedReview, ReviewRequest, ReviewSnapshot } from "../../types/review.js"
 import { ReviewQueue } from "../../lib/review-queue.js"
@@ -116,13 +116,11 @@ export function createReviewContextEnvironment(options: ReviewContextEnvironment
  * state. Consumers receive a fully initialized request scope instead of
  * depending on bootstrap ordering in the runner.
  */
-export async function ReviewContextProvider({
-  environment,
-  children
-}: {
-  environment: ReviewContextEnvironment
-  children: AmlRenderable
-}) {
+type ReviewContextProviderProps = AML.PropsWithRequiredChildren<{
+  readonly environment: ReviewContextEnvironment
+}>
+
+export const ReviewContextProvider: AML.Component<ReviewContextProviderProps> = async ({ environment, children }) => {
   const { github, actions, outcome, model, reviewEmojis } = environment
   const snapshot = await github.snapshot()
 
