@@ -433,7 +433,7 @@ Options:
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
   --image <tag>             Docker image tag. Default: singular-code-review:eval
-  --base-image <tag>        AML base image. Default: wearesingular/aml-agent-sandbox:opencode
+  --base-image <tag>        AML base image. Example: wearesingular/aml-agent-sandbox:0.5.1-opencode
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
 `)

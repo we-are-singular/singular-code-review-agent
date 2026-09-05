@@ -82,6 +82,9 @@ export async function runReview(
       // The post-order review tree nests lane Agents beneath audit, synthesis,
       // the router, and Workspace while retaining a finite depth budget.
       maxDepth: 24,
+      // Keep application-owned Tools under a reviewer-specific model-facing namespace and
+      // fail loudly if a granted MCP server ever claims the same name.
+      toolPrefix: "review",
       workspaceProvider: localWorkspace({ directory: options.request.workspace }),
       trace: telemetry.trace
     })

@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=wearesingular/aml-agent-sandbox:opencode
+ARG BASE_IMAGE=wearesingular/aml-agent-sandbox:0.5.1-opencode
 FROM ${BASE_IMAGE} AS review-build
 
 USER root

@@ -1,4 +1,4 @@
-import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
+import { evaluate, type AML } from "@aml-jsx/sdk"
 
 import { isComparableReviewDelta, type GateDeltaMode } from "../../lib/review-gate.js"
 import { useReviewContext } from "../context/review-context.js"
@@ -18,7 +18,9 @@ function approvalBody(answer: string, comparisonMode: GateDeltaMode | null): str
 }
 
 /** Selects one gate branch and completes the routing handoff for publication. */
-export async function ReviewRouter({ children }: { children: AmlRenderable }) {
+type ReviewRouterProps = AML.PropsWithRequiredChildren
+
+export const ReviewRouter: AML.Component<ReviewRouterProps> = async ({ children }) => {
   const { routing } = useReviewContext()
   const gate = await decideReviewGate()
 

@@ -1,4 +1,4 @@
-import { File } from "@aml-jsx/sdk"
+import { File, type AML } from "@aml-jsx/sdk"
 
 import {
   renderIssuesContext,
@@ -15,7 +15,7 @@ export const REVIEW_CONTEXT_PATHS = {
 } as const
 
 /** Materializes durable Agent evidence from the enriched review snapshot. */
-export function ReviewContextFiles() {
+export const ReviewContextFiles: AML.Component = () => {
   const { snapshot } = useReviewContext()
   return (
     <>

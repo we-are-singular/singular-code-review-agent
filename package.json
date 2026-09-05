@@ -24,7 +24,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@aml-jsx/sdk": "0.8.0",
+    "@aml-jsx/sdk": "0.8.1",
     "@octokit/rest": "^22.0.0",
     "zod": "4.4.3"
   },

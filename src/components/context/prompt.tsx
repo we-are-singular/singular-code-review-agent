@@ -1,4 +1,4 @@
-import { Block, Include } from "@aml-jsx/sdk"
+import { Block, Include, type AML } from "@aml-jsx/sdk"
 
 import { REVIEW_CONTEXT_INLINE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { REVIEW_CONTEXT_PATHS } from "./files.js"
@@ -16,7 +16,7 @@ type PromptSection = {
   tag: string
 }
 
-function PromptContextSection({ instruction, label, path, tag }: PromptSection) {
+const PromptContextSection: AML.Component<PromptSection> = ({ instruction, label, path, tag }) => {
   return (
     <Block tag={tag}>
       ### File: `{path}` — {label}
@@ -32,7 +32,11 @@ function PromptContextSection({ instruction, label, path, tag }: PromptSection) 
  * Only `pr.md` is unconditional. Every potentially large enrichment is opt-in
  * so each phase must state which evidence it intends to give its Agent.
  */
-export function ReviewContextPrompt({ diff = false, history = false, issues = false }: ReviewContextPromptProps) {
+export const ReviewContextPrompt: AML.Component<ReviewContextPromptProps> = ({
+  diff = false,
+  history = false,
+  issues = false
+}) => {
   const sections: PromptSection[] = [
     {
       label: "pull-request context and changed files",

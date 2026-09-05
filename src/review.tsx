@@ -1,4 +1,4 @@
-import { Parallel, Workspace } from "@aml-jsx/sdk"
+import { Parallel, Workspace, type AML } from "@aml-jsx/sdk"
 
 import { ReviewContextFiles } from "./components/context/files.js"
 import { useReviewContext } from "./components/context/review-context.js"
@@ -15,7 +15,7 @@ import { ReviewRouter } from "./components/phases/review-router.js"
 import { ReviewSynthesis } from "./components/phases/review-synthesis.js"
 
 /** The complete review workflow, including its deterministic publication edge. */
-export function Review() {
+export const Review: AML.Component = () => {
   const { github } = useReviewContext()
   const workspaceId = `${github.request.repository.replaceAll("/", "-")}-pr-${github.request.prNumber}`
 
