@@ -1,18 +1,72 @@
 import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
+import { compareReviewHistory, MAX_REVIEW_DELTA_EVIDENCE_CHARS } from "../../lib/review-gate.js"
+import type { ReviewFinding } from "../../lib/review-queue.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
 import { useReviewContext } from "../context/review-context.js"
-import type { ReviewFinding } from "../../lib/review-queue.js"
+
+const SummarySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(600)
+  .refine(value => value.split(/\s+/u).length <= 80, "summary must contain at most 80 words")
+const RecommendationSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(400)
+  .refine(value => value.split(/\s+/u).length <= 50, "recommendation must contain at most 50 words")
+const SinceLastReviewSchema = SummarySchema.nullable()
+  .default(null)
+  .describe(
+    "A concise comparison with the previous review, including a material direction change. Return a value only for a complete ancestor_diff or rebase_compare; otherwise return null."
+  )
 
 const SynthesisSchema = z
   .object({
     direct_answer: z.string().trim().min(1).max(2_000).nullable(),
-    summary: z.string().trim().min(1).max(2_000),
-    next_steps: z.string().trim().min(1).max(1_000).nullable()
+    summary: SummarySchema,
+    since_last_review: SinceLastReviewSchema,
+    recommendation: RecommendationSchema.nullable()
   })
   .strict()
+const FollowUpSynthesisSchema = SynthesisSchema.extend({
+  since_last_review: SummarySchema.describe(
+    "Required concise comparison with the previous review, including any material direction change."
+  )
+})
+const ActionableSynthesisSchema = SynthesisSchema.extend({
+  recommendation: RecommendationSchema.describe(
+    "Required next step centered on the application-selected primary finding."
+  )
+})
+const ActionableFollowUpSynthesisSchema = ActionableSynthesisSchema.extend({
+  since_last_review: SummarySchema.describe(
+    "Required concise comparison with the previous review, including any material direction change."
+  )
+})
+
+/** Selects the one retained concern synthesis should prioritize for the author. */
+function primaryFinding(findings: ReviewFinding[]): ReviewFinding | null {
+  let selected: { finding: ReviewFinding; rank: number } | null = null
+
+  for (const finding of findings) {
+    let rank: number | null = null
+    if (finding.kind === "blocker") {
+      rank = 0
+    } else if (finding.kind === "inline") {
+      rank = { critical: 1, high: 2, question: 3, low: 4, nit: 5 }[finding.severity]
+    }
+    if (rank !== null && (!selected || rank < selected.rank)) {
+      selected = { finding, rank }
+    }
+  }
+
+  return selected?.finding || null
+}
 
 function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evidence: unknown }) {
   return (
@@ -34,7 +88,7 @@ function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evide
         <Block tag="validated-review">{JSON.stringify(evidence, null, 2)}</Block>
         Use the pull-request and referenced-issue context below to describe the change and its requirement coverage. The
         application-owned conversation above contains the only prior PR discussion relevant to this top-level response.
-        <ReviewContextPrompt issues />
+        <ReviewContextPrompt history issues />
       </Block>
     </Agent>
   )
@@ -63,6 +117,21 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
   const lanes = review.queue.completed()
   const validated = review.queue.finalize()
   const finalVerdict = verdict(validated.findings)
+  const comparison = compareReviewHistory(review.snapshot, review.github.request.workspace)
+  const { text: comparisonText, ...comparisonMetadata } = comparison.delta
+  const comparisonEvidenceComplete = comparisonText.length <= MAX_REVIEW_DELTA_EVIDENCE_CHARS
+  const canUseSinceLastReview =
+    comparisonEvidenceComplete &&
+    comparison.previousReview !== null &&
+    (comparison.delta.mode === "ancestor_diff" || comparison.delta.mode === "rebase_compare")
+  const requiresRecommendation = finalVerdict !== "✅ LGTM"
+  const synthesisSchema = canUseSinceLastReview
+    ? requiresRecommendation
+      ? ActionableFollowUpSynthesisSchema
+      : FollowUpSynthesisSchema
+    : requiresRecommendation
+      ? ActionableSynthesisSchema
+      : SynthesisSchema
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
   )
@@ -70,8 +139,23 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
     <SynthesisAgent
       evidence={{
         lane_assessments: lanes,
+        review_iteration: {
+          previous_review: comparison.previousReview
+            ? {
+                commit_id: comparison.previousReview.commitId,
+                submitted_at: comparison.previousReview.submittedAt,
+                state: comparison.previousReview.state
+              }
+            : null,
+          comparison: {
+            ...comparisonMetadata,
+            evidence_complete: comparisonEvidenceComplete,
+            evidence: comparisonEvidenceComplete ? comparisonText : null
+          }
+        },
         final_review: {
           findings: validated.findings,
+          primary_finding: primaryFinding(validated.findings),
           verdict: finalVerdict
         },
         conversation: {
@@ -82,7 +166,7 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
     >
       {auditHandoff}
     </SynthesisAgent>,
-    SynthesisSchema
+    synthesisSchema
   )
   // Anchorless findings render in their own verdict sections: blockers hijack
   // the verdict, notes never do.
@@ -91,15 +175,25 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
   // Thread replies are published beside their original comment. Even if a
   // provider ignores the prompt, they must never leak into the top-level body.
   const directAnswer = topLevelActionItems.length > 0 ? synthesis.direct_answer : null
-  // Recommendations coordinate requested work; an LGTM has no required work
-  // regardless of prose a provider returns against the structured contract.
-  const nextSteps = finalVerdict === "✅ LGTM" ? null : synthesis.next_steps
-
+  // An LGTM has no required work regardless of prose a provider returns
+  // against the structured contract.
+  const recommendation = finalVerdict === "✅ LGTM" ? null : synthesis.recommendation
+  // Synthesis owns semantic continuity. The complete summary remains a safe
+  // fallback, while known missing comparison anchors fail closed even if the
+  // provider returns relative prose against the contract.
+  const sinceLastReview = canUseSinceLastReview ? synthesis.since_last_review : null
+  const summary = sinceLastReview ? `**Since last review:** ${sinceLastReview}` : synthesis.summary
   return (
     <>
       {directAnswer ? <Block>{directAnswer}</Block> : null}
       ## Review Summary
-      <Block>{synthesis.summary}</Block>
+      <Block>{summary}</Block>
+      {recommendation ? (
+        <>
+          ## Recommendations
+          <Block>{recommendation}</Block>
+        </>
+      ) : null}
       {blockers.length > 0 ? (
         <>
           ## Blockers
@@ -110,12 +204,6 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
         <>
           ## 📝 Review notes
           <Block>{notes.map(finding => `- ${finding.body}`).join("\n")}</Block>
-        </>
-      ) : null}
-      {nextSteps ? (
-        <>
-          ## Recommendations
-          <Block>{nextSteps}</Block>
         </>
       ) : null}
       ## Verdict

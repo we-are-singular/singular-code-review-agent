@@ -712,7 +712,7 @@ test("same-head synchronize exits deterministically with LGTM before starting an
 
   assert.equal(result.status, "no-review")
   assert.equal(result.gate.source, "deterministic")
-  assert.match(result.body, /current head commit already has a completed Singular Code Review\./u)
+  assert.match(result.body, /^## Review Summary\n\nNo full re-review needed/u)
   assert.match(result.body, /## Verdict\n\n✅ LGTM$/u)
   assert.equal(provider.calls.length, 0)
   assert.deepEqual(github.writes, [{ kind: "issue-comment", prNumber: 42, body: result.body }])
@@ -776,7 +776,7 @@ test("contained fixes use one gate Agent and fast-track without starting review 
   )
   assert.equal(
     result.body,
-    "The latest push directly addresses the previous socket-release finding and adds no unrelated behavior.\n\n## Verdict\n\n✅ LGTM"
+    "## Since last review\n\nThe latest push directly addresses the previous socket-release finding and adds no unrelated behavior.\n\n## Verdict\n\n✅ LGTM"
   )
   assert.deepEqual(github.writes, [{ kind: "issue-comment", prNumber: 42, body: result.body }])
 })

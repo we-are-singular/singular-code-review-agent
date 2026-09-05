@@ -17,7 +17,8 @@ export type GateDeltaMode =
   | "current_pr_diff"
   | "unavailable"
 
-type GateDelta = {
+/** Git evidence comparing the latest reviewed head with the current PR head. */
+export type ReviewDelta = {
   mode: GateDeltaMode
   summary: string
   lastReviewedCommit: string | null
@@ -29,7 +30,8 @@ type GateDelta = {
   text: string
 }
 
-type BotReview = {
+/** Latest completed bot review that can anchor a historical comparison. */
+export type PreviousBotReview = {
   id: number | null
   state: string | null
   body: string
@@ -62,35 +64,54 @@ export type GateContext = {
     latestAuthor: string | null
     latestBody: string
   }>
-  lastBotReview: BotReview | null
-  delta: Omit<GateDelta, "text">
+  lastBotReview: PreviousBotReview | null
+  delta: Omit<ReviewDelta, "text">
+}
+
+/** Previous review metadata and its Git comparison with the current head. */
+export type ReviewHistoryComparison = {
+  previousReview: PreviousBotReview | null
+  delta: ReviewDelta
 }
 
 export type GatePreparation =
   | { action: "review"; reason: string }
-  | { action: "post"; decision: Extract<GateDecision, { decision: "answer" | "no-review" }> }
+  | {
+      action: "post"
+      decision: Extract<GateDecision, { decision: "answer" | "no-review" }>
+      comparisonMode: GateDeltaMode | null
+    }
   | { action: "agent"; context: GateContext; deltaText: string }
 
 // The gate is a fast classifier, not a second reviewer. Oversized evidence is
 // escalated to the full lane tree instead of spending a long turn here.
-const MAX_GATE_EVIDENCE_CHARS = 80_000
+/** Maximum historical diff accepted by routing or synthesis prompts. */
+export const MAX_REVIEW_DELTA_EVIDENCE_CHARS = 80_000
 
-/** Reconstructs only the commits added since the last completed bot review. */
-class ReviewDelta {
+/** Reconstructs a safe comparison with the last completed bot review. */
+class ReviewDeltaBuilder {
   readonly #workspace: string
 
   constructor(workspace: string) {
     this.#workspace = workspace
   }
 
-  build(snapshot: ReviewSnapshot, lastReview: BotReview | null): GateDelta {
+  build(snapshot: ReviewSnapshot, lastReview: PreviousBotReview | null): ReviewDelta {
     const currentHead = this.#commit(snapshot.pullRequest.headRefOid || "HEAD")
     const lastReviewedCommit = this.#commit(lastReview?.commitId || null)
 
-    if (!lastReview || !lastReviewedCommit) {
+    if (!lastReview) {
       return this.#result(
         "no_previous_review",
         "No previous completed bot review with a commit anchor was found.",
+        null,
+        currentHead
+      )
+    }
+    if (!lastReviewedCommit) {
+      return this.#result(
+        "unavailable",
+        "The previous reviewed commit is not available in the checkout.",
         null,
         currentHead
       )
@@ -112,7 +133,7 @@ class ReviewDelta {
   }
 
   /** Uses a normal commit range when the reviewed commit remains in history. */
-  #ancestor(lastReviewedCommit: string, currentHead: string): GateDelta {
+  #ancestor(lastReviewedCommit: string, currentHead: string): ReviewDelta {
     const range = `${lastReviewedCommit}..${currentHead}`
     const raw = this.#text(["diff", "--find-renames", range])
     if (raw === null) {
@@ -138,7 +159,7 @@ class ReviewDelta {
   }
 
   /** Compares patch ranges after a force-push or rebase changed commit ancestry. */
-  #rebase(base: string | null, lastReviewedCommit: string, currentHead: string): GateDelta {
+  #rebase(base: string | null, lastReviewedCommit: string, currentHead: string): ReviewDelta {
     const verifiedBase = this.#commit(base)
     const oldBase = verifiedBase ? this.#text(["merge-base", lastReviewedCommit, verifiedBase]) : null
     const currentBase = verifiedBase ? this.#text(["merge-base", currentHead, verifiedBase]) : null
@@ -195,7 +216,7 @@ class ReviewDelta {
     summary: string,
     lastReviewedCommit: string | null,
     currentHead: string | null
-  ): GateDelta {
+  ): ReviewDelta {
     return {
       mode,
       summary,
@@ -255,7 +276,7 @@ function requestsFullReview(snapshot: ReviewSnapshot): boolean {
   )
 }
 
-function latestBotReview(snapshot: ReviewSnapshot): BotReview | null {
+function latestBotReview(snapshot: ReviewSnapshot): PreviousBotReview | null {
   const review = snapshot.reviews
     .filter(
       candidate => candidate.user?.login === snapshot.botLogin && Boolean(candidate.commit_id || candidate.commitId)
@@ -273,8 +294,21 @@ function latestBotReview(snapshot: ReviewSnapshot): BotReview | null {
     : null
 }
 
+/** Compares the current pull-request head with the latest completed bot review. */
+export function compareReviewHistory(snapshot: ReviewSnapshot, workspace: string): ReviewHistoryComparison {
+  const previousReview = latestBotReview(snapshot)
+  return {
+    previousReview,
+    delta: new ReviewDeltaBuilder(workspace).build(snapshot, previousReview)
+  }
+}
+
 /** Builds only the history needed by the routing Agent; full evidence lives in files. */
-function gateContext(snapshot: ReviewSnapshot, lastBotReview: BotReview | null, delta: GateDelta): GateContext {
+function gateContext(
+  snapshot: ReviewSnapshot,
+  lastBotReview: PreviousBotReview | null,
+  delta: ReviewDelta
+): GateContext {
   const pullRequestUrl = snapshot.pullRequest.html_url || snapshot.pullRequest.url || null
 
   return {
@@ -328,14 +362,16 @@ export function prepareGate(snapshot: ReviewSnapshot, workspace: string): GatePr
     return { action: "review", reason: "mention explicitly requested a full review" }
   }
 
-  const lastReview = latestBotReview(snapshot)
-  let delta = new ReviewDelta(workspace).build(snapshot, lastReview)
+  const comparison = compareReviewHistory(snapshot, workspace)
+  const lastReview = comparison.previousReview
+  let delta = comparison.delta
   if (reason === "synchronize" && delta.mode === "no_previous_review") {
     return { action: "review", reason: "no previous bot review" }
   }
   if (reason === "synchronize" && delta.mode === "same_head") {
     return {
       action: "post",
+      comparisonMode: delta.mode,
       decision: {
         decision: "no-review",
         answer: "No full re-review needed: the current head commit already has a completed Singular Code Review."
@@ -346,8 +382,8 @@ export function prepareGate(snapshot: ReviewSnapshot, workspace: string): GatePr
     return { action: "review", reason: delta.summary }
   }
 
-  if (delta.text.length > MAX_GATE_EVIDENCE_CHARS) {
-    if (snapshot.diff.text.length <= MAX_GATE_EVIDENCE_CHARS) {
+  if (delta.text.length > MAX_REVIEW_DELTA_EVIDENCE_CHARS) {
+    if (snapshot.diff.text.length <= MAX_REVIEW_DELTA_EVIDENCE_CHARS) {
       delta = {
         mode: "current_pr_diff",
         summary: "The historical delta was too large; using the current filtered pull request diff.",
