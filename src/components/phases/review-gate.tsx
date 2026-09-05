@@ -7,16 +7,14 @@ import { REVIEW_CONTEXT_PATHS } from "../context/files.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
 import { useReviewContext } from "../context/review-context.js"
 
-const NoReviewAnswerSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(600)
-  .refine(value => value.split(/\s+/u).length <= 80, "no-review answer must contain at most 80 words")
-
 const GateDecisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("review"), reason: z.string().trim().min(1).max(1_000) }).strict(),
-  z.object({ decision: z.literal("no-review"), answer: NoReviewAnswerSchema }).strict(),
+  z
+    .object({
+      decision: z.literal("no-review"),
+      answer: z.string().trim().min(1).max(1_500).describe("Concise author-facing response around 500 characters.")
+    })
+    .strict(),
   z.object({ decision: z.literal("answer"), answer: z.string().trim().min(1).max(4_000) }).strict()
 ])
 

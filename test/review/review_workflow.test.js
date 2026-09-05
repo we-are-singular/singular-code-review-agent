@@ -927,7 +927,7 @@ test("review history comparison distinguishes rebases from changed force-pushes"
   assert.match(changedComparison.delta.text, /range-diff:/u)
 })
 
-test("a contained synchronize renders a bounded since-last-review body", async t => {
+test("a contained synchronize renders a concise since-last-review body", async t => {
   const history = reviewHistoryFixture(t)
   const eventFile = path.join(history.workspace, "event.json")
   fs.writeFileSync(eventFile, JSON.stringify({ action: "synchronize", sender: { login: "author" } }))
@@ -973,7 +973,7 @@ test("a contained synchronize renders a bounded since-last-review body", async t
   )
   const gate = provider.calls.find(call => call.request.system.includes("route pull-request follow-up"))
   assert.ok(gate)
-  assert.match(gate.request.prompt, /at most 80 words and 600 characters/u)
+  assert.match(gate.request.prompt, /around 500 characters/u)
   assert.match(gate.request.prompt, /Do not recap the pull request/u)
 })
 
