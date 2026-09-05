@@ -17,6 +17,11 @@ export type GateDeltaMode =
   | "current_pr_diff"
   | "unavailable"
 
+/** Whether a delta can support an author-facing comparison with the previous review. */
+export function isComparableReviewDelta(mode: GateDeltaMode): mode is "ancestor_diff" | "rebase_compare" {
+  return mode === "ancestor_diff" || mode === "rebase_compare"
+}
+
 /** Git evidence comparing the latest reviewed head with the current PR head. */
 export type ReviewDelta = {
   mode: GateDeltaMode

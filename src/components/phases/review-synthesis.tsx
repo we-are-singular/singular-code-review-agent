@@ -1,7 +1,11 @@
 import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
 import { z } from "zod"
 
-import { compareReviewHistory, MAX_REVIEW_DELTA_EVIDENCE_CHARS } from "../../lib/review-gate.js"
+import {
+  compareReviewHistory,
+  isComparableReviewDelta,
+  MAX_REVIEW_DELTA_EVIDENCE_CHARS
+} from "../../lib/review-gate.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
@@ -102,13 +106,13 @@ export async function ReviewSynthesis({ children }: { children: AmlRenderable })
   const lanes = review.queue.completed()
   const validated = review.queue.finalize()
   const finalVerdict = verdict(validated.findings)
+  // Manual reviews bypass gate comparison, while follow-up gates may escalate.
+  // Rebuild from the immutable snapshot so synthesis owns the evidence it publishes.
   const comparison = compareReviewHistory(review.snapshot, review.github.request.workspace)
   const { text: comparisonText, ...comparisonMetadata } = comparison.delta
   const comparisonEvidenceComplete = comparisonText.length <= MAX_REVIEW_DELTA_EVIDENCE_CHARS
   const canUseSinceLastReview =
-    comparisonEvidenceComplete &&
-    comparison.previousReview !== null &&
-    (comparison.delta.mode === "ancestor_diff" || comparison.delta.mode === "rebase_compare")
+    comparisonEvidenceComplete && comparison.previousReview !== null && isComparableReviewDelta(comparison.delta.mode)
   const topLevelActionItems = review.snapshot.actionItems.filter(
     item => item.kind === "trigger_request" || item.kind === "mentioned"
   )

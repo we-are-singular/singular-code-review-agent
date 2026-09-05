@@ -1,6 +1,6 @@
 import { evaluate, type AmlRenderable } from "@aml-jsx/sdk"
 
-import type { GateDeltaMode } from "../../lib/review-gate.js"
+import { isComparableReviewDelta, type GateDeltaMode } from "../../lib/review-gate.js"
 import { useReviewContext } from "../context/review-context.js"
 import { decideReviewGate } from "./review-gate.js"
 
@@ -13,8 +13,7 @@ function approvalBody(answer: string, comparisonMode: GateDeltaMode | null): str
   if (!withoutExistingVerdict) {
     return "## Verdict\n\n✅ LGTM"
   }
-  const heading =
-    comparisonMode === "ancestor_diff" || comparisonMode === "rebase_compare" ? "Since last review" : "Review Summary"
+  const heading = comparisonMode && isComparableReviewDelta(comparisonMode) ? "Since last review" : "Review Summary"
   return `## ${heading}\n\n${withoutExistingVerdict}\n\n## Verdict\n\n✅ LGTM`
 }
 
