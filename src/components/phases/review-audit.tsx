@@ -1,4 +1,4 @@
-import { Agent, Block, evaluate, Include, Tool, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, Tool, type AML } from "@aml-jsx/sdk"
 
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { REVIEW_CONTEXT_PATHS } from "../context/files.js"
@@ -13,7 +13,11 @@ export type AuditedReview = {
   findings: ReviewFinding[]
 }
 
-function AuditAgent({ children, findings }: { children: AmlRenderable; findings: readonly StagedReviewFinding[] }) {
+type AuditAgentProps = AML.PropsWithRequiredChildren<{
+  readonly findings: readonly StagedReviewFinding[]
+}>
+
+const AuditAgent: AML.Component<AuditAgentProps> = ({ children, findings }) => {
   const review = useReviewContext()
   const tools = createReviewAuditTools(review.queue, findings, review.snapshot)
 
@@ -54,7 +58,9 @@ function AuditAgent({ children, findings }: { children: AmlRenderable; findings:
 }
 
 /** Resolves every specialist before freezing and conditionally auditing their staged findings. */
-export async function ReviewAudit({ children }: { children: AmlRenderable }) {
+type ReviewAuditProps = AML.PropsWithRequiredChildren
+
+export const ReviewAudit: AML.Component<ReviewAuditProps> = async ({ children }) => {
   const review = useReviewContext()
   const laneHandoff = await evaluate(children)
   const findings = review.queue.beginAudit()

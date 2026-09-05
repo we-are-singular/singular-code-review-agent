@@ -435,6 +435,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.equal(laneCalls.length, 6)
   for (const call of provider.calls) {
     assert.deepEqual(call.request.skills, [])
+    assert.equal(call.request.toolPrefix, "review")
   }
   for (const call of laneCalls) {
     assert.deepEqual(
@@ -463,7 +464,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /<review-policy>/u)
     assert.match(call.request.prompt, /# Evidence-first review lane/u)
     assert.match(call.request.prompt, /<review-context>/u)
-    assert.match(call.request.prompt, /<review-context>\n## Review context/u)
+    assert.match(call.request.prompt, /<review-context>\s+## Review context/u)
     assert.doesNotMatch(call.request.prompt, /<[a-z-]+-assignment>/u)
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.md/u)
     assert.match(call.request.prompt, /\.singular-code-review\/pr\.diff/u)

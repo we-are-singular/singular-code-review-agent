@@ -1,7 +1,9 @@
+import type { AML } from "@aml-jsx/sdk"
+
 import { useReviewContext } from "../context/review-context.js"
 
 /** Adds the courteous eyes reaction when needed without blocking the review. */
-export async function ReviewAcknowledgement() {
+export const ReviewAcknowledgement: AML.Component = async () => {
   const { github, snapshot } = useReviewContext()
   const trigger = snapshot.trigger.comment
 

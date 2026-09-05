@@ -1,4 +1,4 @@
-import { Agent, Block, evaluate, Include, type AmlRenderable } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, type AML } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import {
@@ -57,7 +57,11 @@ function primaryFinding(findings: ReviewFinding[]): ReviewFinding | null {
   return selected?.finding || null
 }
 
-function SynthesisAgent({ children, evidence }: { children: AmlRenderable; evidence: unknown }) {
+type SynthesisAgentProps = AML.PropsWithRequiredChildren<{
+  readonly evidence: unknown
+}>
+
+const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence }) => {
   return (
     <Agent
       name="review-synthesis"
@@ -100,7 +104,9 @@ function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request chang
 }
 
 /** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
-export async function ReviewSynthesis({ children }: { children: AmlRenderable }) {
+type ReviewSynthesisProps = AML.PropsWithRequiredChildren
+
+export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ children }) => {
   const review = useReviewContext()
   const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()

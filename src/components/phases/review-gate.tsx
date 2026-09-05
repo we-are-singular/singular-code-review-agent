@@ -1,4 +1,4 @@
-import { Agent, Block, evaluate, Include } from "@aml-jsx/sdk"
+import { Agent, Block, evaluate, Include, type AML } from "@aml-jsx/sdk"
 import { z } from "zod"
 
 import { prepareGate, type GateDeltaMode } from "../../lib/review-gate.js"
@@ -28,7 +28,9 @@ export type ReviewGateResult =
       comparisonMode: GateDeltaMode | null
     })
 
-function GateAgent({ context, delta }: { context: unknown; delta: string }) {
+type GateAgentProps = Readonly<{ context: unknown; delta: string }>
+
+const GateAgent: AML.Component<GateAgentProps> = ({ context, delta }) => {
   return (
     <Agent
       name="review-gate"

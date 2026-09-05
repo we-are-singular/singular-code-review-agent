@@ -1,3 +1,5 @@
+import type { AML } from "@aml-jsx/sdk"
+
 import { applyReviewBanner, enforceReviewBodyLimit } from "../../lib/render/review-body.js"
 import { serializeReviewPayload } from "../../services/github/review-serializer.js"
 import type { PublishedReview, ReviewDraft } from "../../types/review.js"
@@ -6,7 +8,7 @@ import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/
 import { useReviewContext } from "../context/review-context.js"
 
 /** Reads the completed route and publishes it through deterministic application-owned Tools. */
-export async function ReviewPublication() {
+export const ReviewPublication: AML.Component = async () => {
   const review = useReviewContext()
   const { actions, github, model, outcome, routing } = review
   const { gate, body } = routing.get()
