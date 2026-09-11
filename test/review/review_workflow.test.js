@@ -424,7 +424,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
 
   assert.equal(fs.existsSync(usageDirectory), false)
   assert.equal(result.usageSource, "aml-acp")
-  assert.deepEqual(result.usage, result.amlUsage)
+  assert.deepEqual(result.usage, { ...result.amlUsage, costUsd: null, estimatedCostUsd: null })
 
   assert.equal(result.status, "reviewed")
   assert.deepEqual(
@@ -1329,7 +1329,7 @@ test("an audit failure is terminal and never falls back to unaudited lane findin
     error => {
       assert.match(error.message, /audit unavailable/u)
       assert.equal(error.accounting.usageSource, "aml-acp")
-      assert.deepEqual(error.accounting.usage, error.accounting.amlUsage)
+      assert.deepEqual(error.accounting.usage, { ...error.accounting.amlUsage, costUsd: null, estimatedCostUsd: null })
       assert.equal(fs.existsSync(usageDirectory), false)
       return true
     }

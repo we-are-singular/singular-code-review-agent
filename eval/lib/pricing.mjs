@@ -1,4 +1,4 @@
-import modelPrices from "../../src/model-prices.json" with { type: "json" };
+import { estimateCostUsd } from "../../src/lib/review-pricing.ts";
 
 function toNumber(value) {
   const number = Number(value);
@@ -20,8 +20,14 @@ export function priceUsage({ model, usage, reportedCostUsd = null }) {
     };
   }
 
-  const prices = modelPrices[model];
-  if (!Array.isArray(prices)) {
+  const costUsd = estimateCostUsd(model, {
+    inputTokens: toNumber(usage?.inputTokens),
+    outputTokens: toNumber(usage?.outputTokens),
+    reasoningTokens: toNumber(usage?.reasoningTokens),
+    cacheReadTokens: toNumber(usage?.cacheReadTokens),
+    cacheWriteTokens: toNumber(usage?.cacheWriteTokens),
+  });
+  if (costUsd === null) {
     // Subscription-backed ACPs and newly added provider models do not share a
     // reliable token price. An unavailable cost is safer than a fake fallback.
     return {
@@ -31,14 +37,6 @@ export function priceUsage({ model, usage, reportedCostUsd = null }) {
       source: "unavailable",
     };
   }
-
-  const [inputPrice, outputPrice, cachePrice = 0, cacheWritePrice = 0] = prices;
-  const inputTokens = toNumber(usage?.inputTokens);
-  const outputTokens = toNumber(usage?.outputTokens) + toNumber(usage?.reasoningTokens);
-  const cacheReadTokens = toNumber(usage?.cacheReadTokens);
-  const cacheWriteTokens = toNumber(usage?.cacheWriteTokens);
-  const costUsd =
-    (inputTokens * inputPrice + outputTokens * outputPrice + cacheReadTokens * cachePrice + cacheWriteTokens * cacheWritePrice) / 1_000_000;
 
   return {
     costUsd,

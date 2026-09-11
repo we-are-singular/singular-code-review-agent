@@ -142,9 +142,9 @@ function readReviewStats(file) {
       reasoningTokens: toNumber(totals.reasoningTokens),
       cacheReadTokens: toNumber(totals.cacheReadTokens),
       cacheWriteTokens: toNumber(totals.cacheWriteTokens),
-      // Missing reported cost must not become an authoritative zero before pricing.
-      costUsd: typeof totals.costUsd === "number" ? totals.costUsd : null,
-      estimatedCostUsd: typeof totals.estimatedCostUsd === "number" ? totals.estimatedCostUsd : null,
+      // Review costs come only from recovered database tokens, including for old captures.
+      costUsd: null,
+      estimatedCostUsd: stats?.usageSource === "opencode-db" && typeof totals.estimatedCostUsd === "number" ? totals.estimatedCostUsd : null,
     },
   };
 }
@@ -383,9 +383,9 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const retainedJudgeAttempts = judgeAttempts(judgment);
   const judgeUsageByAttempt = retainedJudgeAttempts.map(attempt => readOpenCodeUsage(attempt.files?.raw));
   const judgeUsage = combineUsage(...judgeUsageByAttempt);
-  // The DB override prices each actual model separately; repricing its mixed
-  // totals as the requested model would discard that attribution.
-  const captureCost = reviewStats?.usageSource === "opencode-db" ? {
+  // Keep the per-model DB estimate, or n/a for ACP-only captures. Repricing
+  // fallback tokens would reintroduce the incomplete costs we deliberately exclude.
+  const captureCost = reviewStats ? {
     costUsd: captureUsage.estimatedCostUsd,
     label: formatCost(captureUsage.estimatedCostUsd),
     rawReportedCostUsd: 0,

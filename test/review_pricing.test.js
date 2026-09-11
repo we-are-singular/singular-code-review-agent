@@ -10,6 +10,7 @@ import { writeReviewArtifacts } from "../eval/lib/review-artifacts.mjs"
 import { buildEvalSummary } from "../eval/lib/analysis.mjs"
 import { priceUsage } from "../eval/lib/pricing.mjs"
 import modelPrices from "../dist/model-prices.json" with { type: "json" }
+import sourceModelPrices from "../src/model-prices.json" with { type: "json" }
 
 // npm test currently discovers root tests only. Include the related existing suites.
 import "./review/telemetry.test.js"
@@ -60,7 +61,9 @@ function result(usage) {
     model,
     attempts: [],
     durationMs: 2,
-    usage,
+    usage: { ...usage, costUsd: null, estimatedCostUsd: null },
+    amlUsage: usage,
+    usageSource: "aml-acp",
     traceSummaries: [],
     providerCompletions: [],
     publication: [],
@@ -69,7 +72,7 @@ function result(usage) {
   }
 }
 
-test("real OpenCode-shaped ACP usage produces an estimate without inventing reported cost", () => {
+test("real ACP usage retains a diagnostic estimate without displaying it as review cost", () => {
   const usage = collect([tokens, tokens])
   assert.equal(usage.agentCalls, 2)
   assert.equal(usage.totalTokens, 4800)
@@ -77,16 +80,18 @@ test("real OpenCode-shaped ACP usage produces an estimate without inventing repo
   assert.equal(usage.costUsd, null)
   assert.ok(Math.abs(usage.estimatedCostUsd - 0.00084) < 1e-12)
   const summary = renderGitHubStepSummary(result(usage))
-  assert.match(summary, /\| Estimated cost \| \$0\.0008 \|/u)
+  assert.match(summary, /\| Estimated cost \| n\/a \|/u)
   assert.match(summary, /may omit intermediate model calls/u)
   assert.doesNotMatch(summary, /Provider-reported cost/u)
 })
 
-test("explicit reported zero and positive costs take precedence over estimates", () => {
+test("ACP costs remain diagnostic while non-ACP eval pricing still accepts reported costs", () => {
   for (const costUsd of [0, 0.1234]) {
     const usage = collect([{ ...tokens, costUsd }])
     assert.equal(usage.costUsd, costUsd)
-    assert.match(renderGitHubStepSummary(result(usage)), /\| Provider-reported cost \|/u)
+    const summary = renderGitHubStepSummary({ ...result(usage), usage })
+    assert.match(summary, /\| Estimated cost \| n\/a \|/u)
+    assert.doesNotMatch(summary, /Provider-reported cost/u)
     assert.equal(priceUsage({ model, usage, reportedCostUsd: costUsd }).source, "provider")
   }
 })
@@ -121,7 +126,11 @@ test("DeepSeek Flash and its versioned name use the same fixed maximum rates", (
 
 test("tuple arithmetic includes cache writes and separate reasoning exactly once", t => {
   modelPrices["fixture/model"] = [1, 2, 3, 4]
-  t.after(() => delete modelPrices["fixture/model"])
+  sourceModelPrices["fixture/model"] = [1, 2, 3, 4]
+  t.after(() => {
+    delete modelPrices["fixture/model"]
+    delete sourceModelPrices["fixture/model"]
+  })
   const usage = collect(
     [
       {
@@ -135,6 +144,7 @@ test("tuple arithmetic includes cache writes and separate reasoning exactly once
     "fixture/model"
   )
   assert.equal(usage.estimatedCostUsd, 32)
+  assert.equal(priceUsage({ model: "fixture/model", usage }).costUsd, 32)
 })
 
 test("two-value free-model tuples default both cache rates to zero", () => {
@@ -144,14 +154,15 @@ test("two-value free-model tuples default both cache rates to zero", () => {
   assert.equal(priceUsage({ model: freeModel, usage }).costUsd, 0)
 })
 
-test("eval exports and analysis preserve missing reported cost and use the same fixed map", t => {
+test("eval exports preserve AML evidence but never price fallback review tokens", t => {
   const directory = mkdtempSync(join(tmpdir(), "review-cost-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const usage = collect([tokens])
   const exported = writeReviewArtifacts(result(usage), directory, "2026-09-11T12:00:00Z")
   const stats = JSON.parse(readFileSync(exported.paths.stats, "utf8"))
   assert.equal(stats.totals.costUsd, null)
-  assert.equal(stats.totals.estimatedCostUsd, usage.estimatedCostUsd)
+  assert.equal(stats.totals.estimatedCostUsd, null)
+  assert.equal(stats.amlUsage.estimatedCostUsd, usage.estimatedCostUsd)
   const summary = buildEvalSummary({
     runDir: directory,
     run: {
@@ -161,6 +172,29 @@ test("eval exports and analysis preserve missing reported cost and use the same 
     judgments: []
   })
   assert.equal(summary.results[0].captureUsage.costUsd, null)
-  assert.ok(Math.abs(summary.results[0].costUsd - usage.estimatedCostUsd) < 1e-12)
-  assert.equal(summary.results[0].costSource, "price-table")
+  assert.equal(summary.results[0].costUsd, null)
+  assert.equal(summary.results[0].costSource, "unavailable")
+})
+
+test("older ACP captures cannot reintroduce reported or estimated costs in eval reports", t => {
+  const directory = mkdtempSync(join(tmpdir(), "review-legacy-cost-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  for (const usageSource of [undefined, "aml-acp"]) {
+    for (const costUsd of [0, 123]) {
+      const usage = collect([{ ...tokens, costUsd }])
+      const exported = writeReviewArtifacts({ ...result(usage), usage, usageSource }, directory, "2026-09-11T12:00:00Z")
+      const summary = buildEvalSummary({
+        runDir: directory,
+        run: {
+          status: "completed",
+          jobs: [{ model, status: "completed", input: { slug: "fixture", ref: "owner/repo#1" }, files: exported.paths }]
+        },
+        judgments: []
+      })
+      assert.equal(summary.results[0].captureUsage.costUsd, null)
+      assert.equal(summary.results[0].captureUsage.estimatedCostUsd, null)
+      assert.equal(summary.results[0].costUsd, null)
+      assert.equal(summary.results[0].costSource, "unavailable")
+    }
+  }
 })

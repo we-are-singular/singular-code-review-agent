@@ -57,7 +57,7 @@ export function renderGitHubStepSummary(result: ReviewRunResult): string {
 | Cache read tokens | ${formatNumber(result.usage.cacheReadTokens)} |
 | Cache write tokens | ${formatNumber(result.usage.cacheWriteTokens)} |
 | Total tokens | ${formatNumber(result.usage.totalTokens)} |
-| ${result.usage.costUsd !== null ? "Provider-reported cost" : "Estimated cost"} | ${formatCost(result.usage.costUsd ?? result.usage.estimatedCostUsd)} |
+| Estimated cost | ${formatCost(result.usageSource === "opencode-db" ? result.usage.estimatedCostUsd : null)} |
 | Inline comments | ${comments.inlineComments} |
 | Replies | ${comments.replies} |
 | Dropped comments | ${comments.dropped} |
