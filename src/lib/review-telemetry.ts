@@ -1,4 +1,5 @@
 import { createTraceSummaryCollector, type AmlTraceEvent, type TraceSink, type TraceSummary } from "@aml-jsx/sdk"
+import modelPrices from "../model-prices.json" with { type: "json" }
 
 export type ReviewUsage = {
   agentCalls: number
@@ -8,7 +9,10 @@ export type ReviewUsage = {
   cacheReadTokens: number | null
   cacheWriteTokens: number | null
   totalTokens: number | null
+  /** Complete provider-reported cost only; never a price-table estimate. */
   costUsd: number | null
+  /** Fixed model rates applied to available tokens; not a reconciled provider bill. */
+  estimatedCostUsd: number | null
 }
 
 export type ReviewProviderCompletion = {
@@ -161,6 +165,7 @@ export class ReviewTelemetryCollector {
   readonly #collector = createTraceSummaryCollector()
   readonly #completed: TraceSummary[] = []
   readonly #providerCompletions: ReviewProviderCompletion[] = []
+  readonly #sessionIds = new Set<string>()
   readonly #progress?: ReviewProgressRenderer
 
   readonly trace: TraceSink
@@ -185,6 +190,13 @@ export class ReviewTelemetryCollector {
   #record(event: AmlTraceEvent): void {
     this.#collector.trace(event)
     this.#progress?.record(event)
+    if (
+      event.type === "event" &&
+      event.name === "acp.session.created" &&
+      typeof event.attributes.sessionId === "string"
+    ) {
+      this.#sessionIds.add(event.attributes.sessionId)
+    }
     if (event.type === "event" && event.name === "acp.session.prompt.completed") {
       const sessionId = event.attributes.sessionId
       const stopReason = event.attributes.stopReason
@@ -211,7 +223,7 @@ export class ReviewTelemetryCollector {
 
   /** Preserves null when a provider never emitted a particular usage metric. */
   #sum(total: number | null, value: unknown): number | null {
-    return typeof value === "number" && Number.isFinite(value) ? (total || 0) + value : total
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? (total || 0) + value : total
   }
 
   /** Returns immutable, content-free summaries in evaluation completion order. */
@@ -224,8 +236,13 @@ export class ReviewTelemetryCollector {
     return Object.freeze([...this.#providerCompletions])
   }
 
+  /** Includes sessions that failed before emitting a prompt completion. */
+  sessionIds(): readonly string[] {
+    return [...this.#sessionIds]
+  }
+
   /** ACP usage is optional, so absence remains null instead of becoming zero. */
-  usage(): ReviewUsage {
+  usage(model = ""): ReviewUsage {
     let agentCalls = 0
     let inputTokens: number | null = null
     let outputTokens: number | null = null
@@ -234,6 +251,8 @@ export class ReviewTelemetryCollector {
     let cacheWriteTokens: number | null = null
     let totalTokens: number | null = null
     let costUsd: number | null = null
+    let reportedCosts = 0
+    let pricedTurns = 0
 
     for (const summary of this.#completed) {
       agentCalls += summary.agents.turns.count
@@ -247,10 +266,36 @@ export class ReviewTelemetryCollector {
           cacheWriteTokens = this.#sum(cacheWriteTokens, usage.cachedWriteTokens)
           totalTokens = this.#sum(totalTokens, usage.totalTokens)
           costUsd = this.#sum(costUsd, usage.costUsd)
+          if (typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0)
+            reportedCosts += 1
+          if (
+            [usage.inputTokens, usage.outputTokens].every(
+              value => typeof value === "number" && Number.isFinite(value) && value >= 0
+            ) &&
+            [usage.thoughtTokens, usage.cachedReadTokens, usage.cachedWriteTokens].every(
+              value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)
+            )
+          )
+            pricedTurns += 1
         } catch {
           // Provider telemetry must never decide whether a valid review completes.
         }
       }
+    }
+
+    // A reported subtotal must not appear to be the cost of the whole review.
+    if (reportedCosts !== agentCalls) costUsd = null
+    const rates = (modelPrices as Record<string, number[]>)[model]
+    let estimatedCostUsd: number | null = null
+    if (Array.isArray(rates) && agentCalls > 0 && pricedTurns === agentCalls) {
+      const [input = 0, output = 0, read = 0, write = 0] = rates
+      // OpenCode excludes reasoning from output and omits zero-valued cache counters.
+      estimatedCostUsd =
+        ((inputTokens ?? 0) * input +
+          ((outputTokens ?? 0) + (reasoningTokens ?? 0)) * output +
+          (cacheReadTokens ?? 0) * read +
+          (cacheWriteTokens ?? 0) * write) /
+        1_000_000
     }
 
     return {
@@ -261,7 +306,8 @@ export class ReviewTelemetryCollector {
       cacheReadTokens,
       cacheWriteTokens,
       totalTokens,
-      costUsd
+      costUsd,
+      estimatedCostUsd
     }
   }
 }

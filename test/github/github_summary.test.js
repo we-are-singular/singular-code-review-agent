@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { renderGitHubStepSummary } from "../dist/lib/github-summary.js"
+import { renderGitHubStepSummary } from "../../dist/lib/render/github-summary.js"
 
 function result(overrides = {}) {
   return {
@@ -34,7 +34,8 @@ function result(overrides = {}) {
       cacheReadTokens: 800,
       cacheWriteTokens: null,
       totalTokens: 1_250,
-      costUsd: 0.0123
+      costUsd: 0.0123,
+      estimatedCostUsd: null
     },
     traceSummaries: [
       {
@@ -80,11 +81,12 @@ test("GitHub summary preserves unavailable provider usage as n/a", () => {
         cacheReadTokens: null,
         cacheWriteTokens: null,
         totalTokens: null,
-        costUsd: null
+        costUsd: null,
+        estimatedCostUsd: null
       }
     })
   )
 
   assert.match(summary, /\| Input tokens \| n\/a \|/u)
-  assert.match(summary, /\| Reported cost \| n\/a \|/u)
+  assert.match(summary, /\| Estimated cost \| n\/a \|/u)
 })

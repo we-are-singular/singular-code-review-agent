@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { priceUsage } from "../eval/lib/pricing.mjs"
+import { priceUsage } from "../../eval/lib/pricing.mjs"
 
 const usage = { inputTokens: 1_000, outputTokens: 1_000, cacheReadTokens: 0 }
 
@@ -15,7 +15,7 @@ test("GLM 5.3 Flash uses the published OpenCode Go token prices", () => {
   assert.ok(Math.abs(priced.costUsd - 0.00068) < 1e-12)
 })
 
-test("DeepSeek V4 Flash fallback pricing follows the UTC peak schedule", () => {
+test("DeepSeek V4 Flash uses the same fixed prices regardless of time", () => {
   const offPeak = priceUsage({
     model: "opencode-go/deepseek-v4-flash",
     usage,
@@ -28,9 +28,9 @@ test("DeepSeek V4 Flash fallback pricing follows the UTC peak schedule", () => {
   })
   const unknown = priceUsage({ model: "opencode-go/deepseek-v4-flash", usage })
 
-  assert.ok(Math.abs(offPeak.costUsd - 0.00088) < 1e-12)
-  assert.ok(Math.abs(peak.costUsd - 0.00176) < 1e-12)
-  assert.equal(unknown.source, "unavailable")
+  assert.ok(Math.abs(offPeak.costUsd - 0.0015) < 1e-12)
+  assert.equal(peak.costUsd, offPeak.costUsd)
+  assert.equal(unknown.costUsd, offPeak.costUsd)
 })
 
 test("provider-reported cost remains authoritative", () => {

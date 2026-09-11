@@ -4,6 +4,7 @@ import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
 import { createReviewContextEnvironment, ReviewContextProvider } from "./components/context/review-context.js"
 import { createReviewProvider } from "./lib/review-provider.js"
+import { OpenCodeUsage } from "./lib/opencode-usage.js"
 import type { PublishedReview, ReviewAttempt, ReviewRequest, ReviewRunResult } from "./types/review.js"
 import { REVIEW_LANE_NAMES } from "./lib/review-queue.js"
 import { ReviewTelemetryCollector } from "./lib/review-telemetry.js"
@@ -27,6 +28,8 @@ const REVIEW_PROVIDER = "opencode"
 /** Signals that no publishable review exists, so an outer model fallback may start safely. */
 export class ReviewUnavailableError extends Error {
   override readonly name = "ReviewUnavailableError"
+  /** Preserves this failed attempt's accounting for callers, without claiming a publishable result. */
+  accounting?: ReturnType<OpenCodeUsage["apply"]>
 }
 
 /** Preserves provider causes and names failed parallel lanes at the CLI boundary. */
@@ -68,10 +71,13 @@ export async function runReview(
   const attempts: ReviewAttempt[] = []
   const startedAt = new Date().toISOString()
   let selected: { review: PublishedReview; publicationError: string | null } | null = null
+  const opencodeUsage = new OpenCodeUsage()
+  const collectUsage = () => opencodeUsage.collect(telemetry.sessionIds())
   try {
     const provider = createProvider({
       model: options.model,
-      workspace: options.request.workspace
+      workspace: options.request.workspace,
+      usageDirectory: opencodeUsage.directory
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,
@@ -90,7 +96,7 @@ export async function runReview(
     })
     await runtime.evaluate(
       <ReviewContextProvider environment={environment}>
-        <Review />
+        <Review collectUsage={collectUsage} />
       </ReviewContextProvider>,
       { signal }
     )
@@ -114,11 +120,20 @@ export async function runReview(
       endedAt: new Date().toISOString(),
       error: errorMessage(error)
     })
+  } finally {
+    // Failed/cancelled evaluations skip later tree siblings. Their settled steps
+    // still need collection, before our retained databases are removed.
+    collectUsage()
+    opencodeUsage.close()
   }
+
+  const accounting = opencodeUsage.apply(telemetry.usage(options.model))
 
   if (!selected) {
     const failures = attempts.map(attempt => `attempt ${attempt.number}: ${attempt.error}`).join("; ")
-    throw new ReviewUnavailableError(`review unsuccessful: ${failures}`)
+    const error = new ReviewUnavailableError(`review unsuccessful: ${failures}`)
+    error.accounting = accounting
+    throw error
   }
 
   return {
@@ -130,7 +145,7 @@ export async function runReview(
     model: options.model,
     attempts,
     durationMs: Date.now() - started,
-    usage: telemetry.usage(),
+    ...accounting,
     traceSummaries: telemetry.summaries(),
     providerCompletions: telemetry.providerCompletions(),
     publication: environment.actions.receipts(),

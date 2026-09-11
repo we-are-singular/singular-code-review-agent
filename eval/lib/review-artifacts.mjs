@@ -117,6 +117,9 @@ function stats(result, generatedAt, runtimeDir) {
     phases: phases(result),
     attempts: result.attempts,
     providerCompletions: result.providerCompletions || [],
+    amlUsage: result.amlUsage,
+    usageSource: result.usageSource,
+    usageNote: result.usageNote,
     traceSummaries: result.traceSummaries || [],
     totals: {
       durationMs: result.durationMs,
@@ -128,6 +131,7 @@ function stats(result, generatedAt, runtimeDir) {
       cacheWriteTokens: result.usage.cacheWriteTokens,
       totalTokens: result.usage.totalTokens,
       costUsd: result.usage.costUsd,
+      estimatedCostUsd: result.usage.estimatedCostUsd,
       jsonEvents: 0,
       textEvents: 0
     }

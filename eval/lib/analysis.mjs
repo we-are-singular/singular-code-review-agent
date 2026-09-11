@@ -93,7 +93,7 @@ function readOpenCodeUsage(file) {
     reasoningTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
-    costUsd: 0,
+    costUsd: null,
   };
 
   for (const line of readText(file).split(/\r?\n/u)) {
@@ -114,7 +114,9 @@ function readOpenCodeUsage(file) {
       usage.reasoningTokens += tokenValue(tokens, "reasoning");
       usage.cacheReadTokens += tokenValue(tokens.cache, "read");
       usage.cacheWriteTokens += tokenValue(tokens.cache, "write");
-      usage.costUsd += toNumber(part.cost);
+      if (typeof part.cost === "number" && Number.isFinite(part.cost)) {
+        usage.costUsd = (usage.costUsd ?? 0) + part.cost;
+      }
     } catch {
       // Raw JSONL is still saved for inspection when OpenCode changes event shapes.
     }
@@ -127,6 +129,7 @@ function readReviewStats(file) {
   const stats = readJson(file, null);
   const totals = stats && typeof stats === "object" ? stats.totals || {} : {};
   return {
+    usageSource: stats?.usageSource,
     durationMs:
       totals.durationMs !== null && totals.durationMs !== undefined && Number.isFinite(Number(totals.durationMs))
         ? Number(totals.durationMs)
@@ -139,7 +142,9 @@ function readReviewStats(file) {
       reasoningTokens: toNumber(totals.reasoningTokens),
       cacheReadTokens: toNumber(totals.cacheReadTokens),
       cacheWriteTokens: toNumber(totals.cacheWriteTokens),
-      costUsd: toNumber(totals.costUsd),
+      // Missing reported cost must not become an authoritative zero before pricing.
+      costUsd: typeof totals.costUsd === "number" ? totals.costUsd : null,
+      estimatedCostUsd: typeof totals.estimatedCostUsd === "number" ? totals.estimatedCostUsd : null,
     },
   };
 }
@@ -175,7 +180,6 @@ function priceJudgeAttempts(attempts, usageByAttempt) {
       model: attempt.model || "",
       usage: usageByAttempt[index],
       reportedCostUsd: usageByAttempt[index].costUsd,
-      startedAt: attempt.startedAt,
     }),
   );
   const costUsd = sumKnownCosts(prices.map((price) => price.costUsd));
@@ -379,11 +383,17 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const retainedJudgeAttempts = judgeAttempts(judgment);
   const judgeUsageByAttempt = retainedJudgeAttempts.map(attempt => readOpenCodeUsage(attempt.files?.raw));
   const judgeUsage = combineUsage(...judgeUsageByAttempt);
-  const captureCost = priceUsage({
+  // The DB override prices each actual model separately; repricing its mixed
+  // totals as the requested model would discard that attribution.
+  const captureCost = reviewStats?.usageSource === "opencode-db" ? {
+    costUsd: captureUsage.estimatedCostUsd,
+    label: formatCost(captureUsage.estimatedCostUsd),
+    rawReportedCostUsd: 0,
+    source: captureUsage.estimatedCostUsd === null ? "unavailable" : "price-table",
+  } : priceUsage({
     model: job.model,
     usage: captureUsage,
     reportedCostUsd: captureUsage.costUsd,
-    startedAt: job.startedAt,
   });
   const judgeCost = priceJudgeAttempts(retainedJudgeAttempts, judgeUsageByAttempt);
   const usage = combineUsage(captureUsage, judgeUsage);
