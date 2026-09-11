@@ -415,7 +415,16 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
       "code-path-bug-hunter": "The stale-state branch remains reachable and was queued for audit."
     }
   })
-  const result = await runReview(reviewOptions(t, github.client), () => provider)
+  let usageDirectory
+  const result = await runReview(reviewOptions(t, github.client), options => {
+    usageDirectory = options.usageDirectory
+    assert.equal(fs.existsSync(usageDirectory), true)
+    return provider
+  })
+
+  assert.equal(fs.existsSync(usageDirectory), false)
+  assert.equal(result.usageSource, "aml-acp")
+  assert.deepEqual(result.usage, result.amlUsage)
 
   assert.equal(result.status, "reviewed")
   assert.deepEqual(
@@ -1311,9 +1320,19 @@ test("an audit failure is terminal and never falls back to unaudited lane findin
   const github = fakeGitHub()
   const provider = reviewProvider({ auditFailure: true })
 
+  let usageDirectory
   await assert.rejects(
-    runReview(reviewOptions(t, github.client), () => provider),
-    /audit unavailable/u
+    runReview(reviewOptions(t, github.client), options => {
+      usageDirectory = options.usageDirectory
+      return provider
+    }),
+    error => {
+      assert.match(error.message, /audit unavailable/u)
+      assert.equal(error.accounting.usageSource, "aml-acp")
+      assert.deepEqual(error.accounting.usage, error.accounting.amlUsage)
+      assert.equal(fs.existsSync(usageDirectory), false)
+      return true
+    }
   )
   assert.equal(provider.calls.filter(call => call.request.system.includes("calibrate pull-request findings")).length, 1)
   assert.equal(

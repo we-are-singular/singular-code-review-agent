@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ReviewTelemetryCollector } from "../dist/lib/review-telemetry.js"
+import { ReviewTelemetryCollector } from "../../dist/lib/review-telemetry.js"
 
 function spanEnd(runId, overrides) {
   return {
@@ -79,7 +79,8 @@ test("review telemetry derives usage and summaries from completed AML evaluation
     cacheReadTokens: 80,
     cacheWriteTokens: 5,
     totalTokens: 208,
-    costUsd: 0.01
+    costUsd: 0.01,
+    estimatedCostUsd: null
   })
   assert.equal(telemetry.summaries().length, 1)
   assert.equal(telemetry.summaries()[0].applicationSpans["review.audit"].totalDurationMs, 7)
