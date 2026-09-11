@@ -8,6 +8,7 @@ import { OpenCodeUsage } from "../dist/lib/opencode-usage.js"
 import { renderGitHubStepSummary } from "../dist/lib/render/github-summary.js"
 import { writeReviewArtifacts } from "../eval/lib/review-artifacts.mjs"
 import { buildEvalSummary } from "../eval/lib/analysis.mjs"
+import modelPrices from "../dist/model-prices.json" with { type: "json" }
 
 const amlUsage = {
   agentCalls: 1,
@@ -136,9 +137,40 @@ test("missing sessions, corrupt databases and invalid counters fall back without
     )
     const result = usage.apply(amlUsage)
     assert.equal(result.usageSource, "aml-acp", scenario)
-    assert.deepEqual(result.usage, amlUsage, scenario)
+    assert.deepEqual(result.usage, { ...amlUsage, estimatedCostUsd: null }, scenario)
     assert.match(result.usageNote, /using AML counters/u)
   }
+})
+
+test("database and fallback results never promote ACP costs, including reported zero", t => {
+  for (const costUsd of [0, 123]) {
+    for (const hasDatabase of [true, false]) {
+      const usage = collector(t)
+      if (hasDatabase) database(usage, "one", [{}])
+      usage.collect(["session-1"])
+      const original = { ...amlUsage, costUsd }
+      const result = usage.apply(original)
+      assert.deepEqual(result.amlUsage, original)
+      assert.equal(result.usage.costUsd, null)
+      assert.equal(result.usage.totalTokens, hasDatabase ? 1200 : original.totalTokens)
+      assert.equal(result.usage.estimatedCostUsd, hasDatabase ? 0.00021 : null)
+    }
+  }
+})
+
+test("database pricing uses the shared arithmetic for cache writes and reasoning", t => {
+  modelPrices["fixture/model"] = [1, 2, 3, 4]
+  t.after(() => delete modelPrices["fixture/model"])
+  const usage = collector(t)
+  database(usage, "one", [
+    {
+      provider: "fixture",
+      model: "model",
+      tokens: { input: 1000000, output: 2000000, reasoning: 1000000, cache: { read: 3000000, write: 4000000 } }
+    }
+  ])
+  usage.collect(["session-1"])
+  assert.equal(usage.apply(amlUsage).usage.estimatedCostUsd, 32)
 })
 
 test("run-owned directories prevent usage leaking between concurrent reviews", t => {
@@ -178,6 +210,7 @@ test("summary and eval retain source, AML evidence and per-model DB estimate", t
     const summary = renderGitHubStepSummary(result)
     assert.match(summary, /Usage source \| opencode-db/u)
     assert.match(summary, /AML counters retained separately/u)
+    assert.ok(summary.includes(`| Estimated cost | ${model === "unknown" ? "n/a" : "$0.0004"} |`))
     const exported = writeReviewArtifacts(result, usage.directory, result.generatedAt)
     const report = buildEvalSummary({
       runDir: usage.directory,

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 
-import modelPrices from "../model-prices.json" with { type: "json" }
+import { estimateCostUsd } from "./review-pricing.js"
 import type { ReviewUsage } from "./review-telemetry.js"
 
 const counter = z.number().int().nonnegative()
@@ -91,16 +91,15 @@ export class OpenCodeUsage {
             totals.totalTokens +=
               tokens.total ?? tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
 
-            const rates = (modelPrices as Record<string, number[]>)[`${row.provider}/${row.model}`]
-            if (!Array.isArray(rates)) estimatedCostUsd = null
-            if (estimatedCostUsd !== null && Array.isArray(rates)) {
-              const [input = 0, output = 0, read = 0, write = 0] = rates
-              estimatedCostUsd +=
-                (tokens.input * input +
-                  (tokens.output + tokens.reasoning) * output +
-                  tokens.cache.read * read +
-                  tokens.cache.write * write) /
-                1_000_000
+            if (estimatedCostUsd !== null) {
+              const cost = estimateCostUsd(`${row.provider}/${row.model}`, {
+                inputTokens: tokens.input,
+                outputTokens: tokens.output,
+                reasoningTokens: tokens.reasoning,
+                cacheReadTokens: tokens.cache.read,
+                cacheWriteTokens: tokens.cache.write
+              })
+              estimatedCostUsd = cost === null ? null : estimatedCostUsd + cost
             }
           }
         } finally {
@@ -136,7 +135,9 @@ export class OpenCodeUsage {
     usageNote: string
   } {
     return {
-      usage: { ...amlUsage, ...this.#override },
+      // ACP may cover only the final request. Keep its costs as raw evidence,
+      // never as the review cost, even when database collection falls back.
+      usage: { ...amlUsage, costUsd: null, estimatedCostUsd: null, ...this.#override },
       amlUsage,
       usageSource: this.#override ? "opencode-db" : "aml-acp",
       usageNote: this.#note

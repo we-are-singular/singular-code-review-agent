@@ -1,5 +1,5 @@
 import { createTraceSummaryCollector, type AmlTraceEvent, type TraceSink, type TraceSummary } from "@aml-jsx/sdk"
-import modelPrices from "../model-prices.json" with { type: "json" }
+import { estimateCostUsd } from "./review-pricing.js"
 
 export type ReviewUsage = {
   agentCalls: number
@@ -9,7 +9,7 @@ export type ReviewUsage = {
   cacheReadTokens: number | null
   cacheWriteTokens: number | null
   totalTokens: number | null
-  /** Complete provider-reported cost only; never a price-table estimate. */
+  /** ACP-reported cost is diagnostic only in amlUsage; the main review result leaves this null. */
   costUsd: number | null
   /** Fixed model rates applied to available tokens; not a reconciled provider bill. */
   estimatedCostUsd: number | null
@@ -285,17 +285,15 @@ export class ReviewTelemetryCollector {
 
     // A reported subtotal must not appear to be the cost of the whole review.
     if (reportedCosts !== agentCalls) costUsd = null
-    const rates = (modelPrices as Record<string, number[]>)[model]
     let estimatedCostUsd: number | null = null
-    if (Array.isArray(rates) && agentCalls > 0 && pricedTurns === agentCalls) {
-      const [input = 0, output = 0, read = 0, write = 0] = rates
-      // OpenCode excludes reasoning from output and omits zero-valued cache counters.
-      estimatedCostUsd =
-        ((inputTokens ?? 0) * input +
-          ((outputTokens ?? 0) + (reasoningTokens ?? 0)) * output +
-          (cacheReadTokens ?? 0) * read +
-          (cacheWriteTokens ?? 0) * write) /
-        1_000_000
+    if (agentCalls > 0 && pricedTurns === agentCalls) {
+      estimatedCostUsd = estimateCostUsd(model, {
+        inputTokens,
+        outputTokens,
+        reasoningTokens,
+        cacheReadTokens,
+        cacheWriteTokens
+      })
     }
 
     return {
