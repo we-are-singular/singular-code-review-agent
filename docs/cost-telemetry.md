@@ -4,7 +4,9 @@
 
 The current snapshot was fetched from [Models.dev's API](https://models.dev/api.json) on 2026-09-11, with DeepSeek set to the highest rates in [OpenCode Go's published table](https://opencode.ai/docs/go/#usage-limits): `[0.30, 1.20, 0.006]`. Models.dev is the [catalog consumed by OpenCode](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/core/src/models-dev.ts). OpenCode's public `/zen/go/v1/models` endpoint lists model IDs but does not expose prices. These are approximate fixed values, not a claim about the Go account's actual charges or allowances.
 
-`usage.costUsd` is reserved for a complete provider-reported cost, including an explicit zero. `usage.estimatedCostUsd` applies the map to available tokens. The database override prices each step using its actual provider/model, rather than assuming every request used the configured review model. An unknown model leaves the entire estimate unavailable. OpenCode's stored `cost` is itself a catalog estimate and is not treated as provider-reported cost. Reasoning is charged at the output rate: [OpenCode normalizes output to exclude reasoning, and input to exclude caches](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/opencode/src/session/session.ts#L338). The optional ACP reasoning/cache fields are omitted when zero.
+Review costs come only from recovered database tokens: `usage.costUsd` stays null, and `usage.estimatedCostUsd` applies the map to those tokens. AML-reported costs and estimates remain diagnostic evidence in `amlUsage`, never the displayed review cost, including when database collection falls back. The summary retains `Estimated cost | n/a` when no estimate is available. Eval reports enforce the same rule, including for older ACP-only captures.
+
+The shared `estimateCostUsd` function owns the arithmetic for database steps, diagnostic AML estimates, and eval pricing. The database override prices each step using its actual provider/model, rather than assuming every request used the configured review model. An unknown model leaves the entire estimate unavailable. OpenCode's stored `cost` is itself a catalog estimate and is not treated as provider-reported cost. Reasoning is charged at the output rate: [OpenCode normalizes output to exclude reasoning, and input to exclude caches](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/opencode/src/session/session.ts#L338). The optional ACP reasoning/cache fields are omitted when zero.
 
 The Go API advertises `deepseek-flash`; [OpenCode maps that name to DeepSeek V4.1 Flash](https://github.com/anomalyco/opencode/blob/dev/packages/stats/core/src/domain/model-normalization.ts). Both names have explicit entries in the map with the same fixed maximum rates. Models.dev currently lists `deepseek-v4.1-flash` but omits the alias. The pinned image's bundled model catalog includes neither name; adding prices does not make them selectable through that catalog.
 
@@ -69,7 +71,15 @@ The non-publishing AML #56 review on 2026-09-11 at 00:42–00:45 UTC ran before 
 
 Exactly one subset of six UI rows accounts for the entire difference: 62,263 input plus 7,615 output tokens, costing $0.0139. The remaining 38 rows match the database token totals exactly. Their displayed cost is $0.0491, consistent with the database's $0.04898634 estimate at off-peak rates within per-row display rounding. The production map intentionally retains the fixed maximum rates, giving $0.09797268 for the stored steps.
 
-The Go UI does not expose request contents, so these six requests cannot be conclusively classified as titles, compaction, or other calls from those rows alone. Title generation is disabled as an independently justified reduction in unnecessary calls, not a claim that all live accounting gaps are now resolved. No additional paid run has verified the post-disable behavior yet.
+The Go UI does not expose request contents, so these six requests cannot be conclusively classified as titles, compaction, or other calls from those rows alone. Title generation is disabled as an independently justified reduction in unnecessary calls, not a claim that all live accounting gaps are now resolved.
+
+## Live run with titles disabled
+
+A second non-publishing review of the same AML #56 base/head ran on 2026-09-11 at 01:14:21–01:17:40 UTC (02:14–02:17 Lisbon). It used the branch's compiled code with the same stock OpenCode 1.18.18 and AML SDK 0.8.1. All eight Agent completions ended with `end_turn`; publication receipts were prepared only, canonical artifacts were retained, and the container was removed.
+
+Database collection recovered 30 model steps: 783,126 input tokens including cache and 33,836 output tokens including reasoning, totaling 816,962. AML alone reported 208,827 total tokens. The fixed maximum-rate database estimate was $0.098068488.
+
+The user supplied 28 distinct Go rows across all eight sessions, totaling 744,881 input tokens, 32,112 output tokens, and $0.0846 in displayed costs. The `AtpNJ4YQ` row pasted twice is counted once. These supplied rows total 39,969 fewer tokens than the database: 38,245 input and 1,724 output. The UI excerpt has two fewer rows than the stored step count; their session attribution and the full bill remain unverified. This is a partial comparison, not evidence that the title-disable change closed every accounting gap.
 
 ## Comparing a real Go trace
 
