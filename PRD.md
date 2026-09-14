@@ -95,7 +95,7 @@ The workflow's 40-minute process ceiling is a stuck-provider safety boundary, no
 
 ## Operations and evaluation
 
-Production uses OpenCode with opencode-go/deepseek-flash by default and opencode-go/deepseek-v4-flash as its fallback. The model and maximum Agent concurrency are selected once at the runtime edge.
+Production uses OpenCode with opencode-go/deepseek-v4-flash by default and opencode-go/glm-5.3-flash as its fallback. The model and maximum Agent concurrency are selected once at the runtime edge.
 
 Every eval capture preserves the raw typed result, provider/model identity, immutable image identity, exact PR revisions, judge views, timing, usage, and completion state. Exit zero alone is insufficient; required artifacts and a complete typed review must exist before judgment or cache promotion.
 

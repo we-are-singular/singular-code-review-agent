@@ -31,7 +31,7 @@ Runs the review in memory. GitHub mutations are recorded by default; pass
 
 Options:
   --workspace <path>          checked-out pull request workspace
-  --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-flash)
+  --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-v4-flash)
   --concurrency <number>      maximum parallel AML Agents (default: 6)
   --publish                   allow live GitHub mutations
 `

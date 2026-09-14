@@ -8,11 +8,11 @@ const workflow = fs.readFileSync(path.resolve(".github/workflows/review.yml"), "
 test("review workflow falls back only after a safe pre-publication failure", () => {
   assert.match(
     workflow,
-    /REVIEW_MODEL: \$\{\{ vars\.REVIEW_MODEL \|\| vars\.OPENCODE_MODEL \|\| 'opencode-go\/deepseek-flash' \}\}/u
+    /REVIEW_MODEL: \$\{\{ vars\.REVIEW_MODEL \|\| vars\.OPENCODE_MODEL \|\| 'opencode-go\/deepseek-v4-flash' \}\}/u
   )
   assert.match(
     workflow,
-    /REVIEW_FALLBACK_MODEL: \$\{\{ vars\.REVIEW_FALLBACK_MODEL \|\| vars\.OPENCODE_MODEL_FALLBACK \|\| 'opencode-go\/deepseek-v4-flash' \}\}/u
+    /REVIEW_FALLBACK_MODEL: \$\{\{ vars\.REVIEW_FALLBACK_MODEL \|\| vars\.OPENCODE_MODEL_FALLBACK \|\| 'opencode-go\/glm-5.3-flash' \}\}/u
   )
   assert.match(workflow, /if \[ "\$primary_status" -ne 2 \]; then\s+exit "\$primary_status"/u)
   assert.match(workflow, /timeout-minutes: 42/u)
