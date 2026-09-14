@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=wearesingular/aml-agent-sandbox:0.5.1-opencode
+ARG BASE_IMAGE=ghcr.io/we-are-singular/aml-agent-sandbox:dev@sha256:4ad464883e4a55fbb87aa900e9b0d07e82d063c116f1bd64f55ba2e5a6c17da8
 FROM ${BASE_IMAGE} AS review-build
 
 USER root
@@ -25,13 +25,10 @@ USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG CONTEXT7_MCP_VERSION=3.2.4
-ARG OPENCODE_VERSION=1.18.30
 ARG SKILLS_CLI_VERSION=1.5.23
 ARG SINGULAR_SKILLS_REF=5be9e96f7423205fa9a01d7e448b69e2a3704ab5
 
-RUN npm install --prefix /opt/aml-agent-sandbox --omit=dev --no-audit --no-fund \
-      --no-save --package-lock=false opencode-ai@${OPENCODE_VERSION} \
-    && npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION} \
+RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION} \
     && rm -rf /root/.npm
 
 RUN mkdir -p /usr/local/lib/singular-code-review
