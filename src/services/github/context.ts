@@ -4,7 +4,7 @@ import {
   CONTEXT_REFERENCE_BATCH_SIZE,
   compactContextText,
   compactHistory,
-  parseRelatedReferences,
+  selectRelatedReferences,
   type CompactHistoryEntry,
   type CompactIssueContext,
   type CompactRelatedPullRequestContext,
@@ -414,16 +414,11 @@ export class GitHubContextService {
 
     // GitHub closing references are authoritative. Explicit `related to` clauses
     // add context, but never weaken or duplicate an existing closing relationship.
-    const closingKeys = new Set(closingIssues.map(issue => `${issue.repository || repository}#${issue.number}`))
     const related = includeReferences
-      ? parseRelatedReferences(pullRequest.body || "", repository).filter(
-          reference =>
-            !closingKeys.has(`${reference.repository}#${reference.number}`) &&
-            !(reference.repository === repository && reference.number === prNumber)
-        )
+      ? selectRelatedReferences({ body: pullRequest.body || "", repository, prNumber, closingIssues })
       : []
     // Resolve the shared number namespace before selecting the evidence source.
-    // Failed reads propagate rather than silently removing review requirements.
+    // Failed reads propagate rather than silently dropping explicitly selected evidence.
     const relatedEvidence: Array<
       | { kind: "issue"; evidence: ReferencedIssueContext }
       | { kind: "pull_request"; context: CompactRelatedPullRequestContext }

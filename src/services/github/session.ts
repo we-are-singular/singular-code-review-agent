@@ -9,7 +9,7 @@ import type {
   ReviewThreadsResult
 } from "./client.js"
 import { GitHubContextService } from "./context.js"
-import { CONTEXT_REFERENCE_BATCH_SIZE, parseRelatedReferences } from "./context-model.js"
+import { CONTEXT_REFERENCE_BATCH_SIZE, contextReferenceSignature, selectRelatedReferences } from "./context-model.js"
 import { ReviewEvidence } from "../review-evidence.js"
 import { ReviewDiff } from "../../lib/review-diff.js"
 import type { ReviewRequest, ReviewSnapshot } from "../../types/review.js"
@@ -223,14 +223,12 @@ export class GitHubReviewSession {
       this.#request.prNumber,
       this.#request.repository
     )
-    const closingKeys = new Set(
-      closingIssues.map(issue => `${issue.repository || this.#request.repository}#${issue.number}`)
-    )
-    const related = parseRelatedReferences(current.body || "", this.#request.repository).filter(
-      reference =>
-        !closingKeys.has(`${reference.repository}#${reference.number}`) &&
-        !(reference.repository === this.#request.repository && reference.number === this.#request.prNumber)
-    )
+    const related = selectRelatedReferences({
+      body: current.body || "",
+      repository: this.#request.repository,
+      prNumber: this.#request.prNumber,
+      closingIssues
+    })
     // Resolve through the same union as gathering, but bypass the session cache.
     // PR pushes can change the head even when updatedAt has not advanced yet.
     const latestRelated: string[] = []
@@ -242,30 +240,42 @@ export class GitHubReviewSession {
             const resolved = await this.#github.getIssueOrPullRequest(reference.number, reference.repository)
             if (resolved.kind === "issue") {
               const issue = resolved.issue
-              return `issue:related:${issue.repository || reference.repository}#${issue.number}@${issue.updated_at || "unknown"}`
+              return contextReferenceSignature({
+                kind: "issue",
+                relation: "related",
+                repository: issue.repository || reference.repository,
+                number: issue.number,
+                updatedAt: issue.updated_at || null
+              })
             }
             const pr = resolved.pullRequest
-            return `pull_request:related:${reference.repository}#${pr.number}@${pr.updatedAt || "unknown"}:${pr.headRefOid || "unknown"}`
+            return contextReferenceSignature({
+              kind: "pull_request",
+              relation: "related",
+              repository: reference.repository,
+              number: pr.number,
+              updatedAt: pr.updatedAt || null,
+              headRefOid: pr.headRefOid || null
+            })
           })
         ))
       )
     }
     const latestReferences = [
-      ...closingIssues.map(
-        issue =>
-          `issue:closes:${issue.repository || this.#request.repository}#${issue.number}@${issue.updated_at || "unknown"}`
+      ...closingIssues.map(issue =>
+        contextReferenceSignature({
+          kind: "issue",
+          relation: "closes",
+          repository: issue.repository || this.#request.repository,
+          number: issue.number,
+          updatedAt: issue.updated_at || null
+        })
       ),
       ...latestRelated
     ].toSorted()
-    const reviewedReferences = [
-      ...snapshot.context.issues.map(
-        issue => `issue:${issue.relation}:${issue.repository}#${issue.number}@${issue.updatedAt || "unknown"}`
-      ),
-      ...snapshot.context.pullRequests.map(
-        pr =>
-          `pull_request:related:${pr.repository}#${pr.number}@${pr.updatedAt || "unknown"}:${pr.headRefOid || "unknown"}`
-      )
-    ].toSorted()
+    const reviewedReferences = [...snapshot.context.issues, ...snapshot.context.pullRequests]
+      .map(contextReferenceSignature)
+      .toSorted()
 
     // Issue `updatedAt` covers body, comment, and lifecycle changes without
     // replaying every compact history event solely for a freshness comparison.

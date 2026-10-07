@@ -206,6 +206,22 @@ test("related clauses accept numbered references and GitHub URLs without promoti
   )
 })
 
+test("related clauses stop at sentence punctuation outside reference tokens", () => {
+  for (const body of ["Related to #17.) Then #99 is unrelated.", "Related to #17.See #99."]) {
+    assert.deepEqual(parseRelatedReferences(body, repository), [{ repository, number: 17 }])
+  }
+  assert.deepEqual(
+    parseRelatedReferences(
+      "Related to [earlier PR](https://github.com/other/project.name/pull/91).) See #99.",
+      repository
+    ),
+    [{ repository: "other/project.name", number: 91 }]
+  )
+  assert.deepEqual(parseRelatedReferences("Related to other/project.name#91. See #99.", repository), [
+    { repository: "other/project.name", number: 91 }
+  ])
+})
+
 test("snapshots retain mixed issue and PR context with one-hop PR history and cached Tool reads", async () => {
   const { session, calls } = fixture()
   const snapshot = await session.snapshot()
@@ -239,6 +255,8 @@ test("snapshots retain mixed issue and PR context with one-hop PR history and ca
   const tools = createGitHubReadTools(session)
   const serialized = await tools.getPullRequest.execute({ pull_number: 42 })
   assert.equal(serialized.pullRequests[0].number, 1875)
+  assert.deepEqual(serialized.pullRequests[0].changedFiles, ["src/example.ts"])
+  assert.deepEqual(serialized.pullRequests[0].ignoredFiles, [])
   assert.ok(serialized.pullRequests[0].history.entries.some(entry => entry.includes("Discussion for PR 1875")))
   assert.ok(serialized.pullRequests[0].commits[0].includes("Earlier implementation"))
   assert.deepEqual(
@@ -345,24 +363,46 @@ test("many related PRs load and recheck with bounded concurrency without droppin
   }
   let active = 0
   let peak = 0
-  const readPullRequest = client.getPullRequest
-  client.getPullRequest = async (number, target) => {
-    if (number === 42) return readPullRequest(number, target)
-    active += 1
-    peak = Math.max(peak, active)
-    // Hold one endpoint open so the measurement includes PR expansion, rather
-    // than only the preceding reference-type lookup.
-    await new Promise(resolve => setImmediate(resolve))
-    const result = await readPullRequest(number, target)
-    active -= 1
-    return result
+  const loadedEndpoints = []
+  const expansionEndpoints = [
+    "getPullRequest",
+    "getPullRequestDiff",
+    "listPullRequestCommits",
+    "listPullRequestComments",
+    "listReviewComments",
+    "listReviews",
+    "listPullRequestTimeline",
+    "listReviewThreads"
+  ]
+  for (const endpoint of expansionEndpoints) {
+    const readEndpoint = client[endpoint]
+    client[endpoint] = async (number, target) => {
+      if (number === 42) return readEndpoint(number, target)
+      loadedEndpoints.push([endpoint, number])
+      active += 1
+      peak = Math.max(peak, active)
+      // Hold every expansion endpoint open to measure the full fan-out of
+      // each reference, not just its metadata read.
+      await new Promise(resolve => setImmediate(resolve))
+      try {
+        return await readEndpoint(number, target)
+      } finally {
+        active -= 1
+      }
+    }
   }
   const snapshot = await session.snapshot()
   assert.deepEqual(
     snapshot.context.pullRequests.map(pr => pr.number),
     numbers
   )
-  assert.ok(peak > 1 && peak <= 4, `PR enrichment concurrency was ${peak}`)
+  assert.ok(peak > 8 && peak <= 32, `PR endpoint concurrency was ${peak}`)
+  for (const number of numbers) {
+    assert.deepEqual(
+      loadedEndpoints.filter(([, loadedNumber]) => loadedNumber === number).map(([endpoint]) => endpoint),
+      expansionEndpoints
+    )
+  }
 
   peak = 0
   const readReference = client.getIssueOrPullRequest
@@ -393,4 +433,11 @@ test("referenced API failures propagate instead of dropping review evidence", as
     throw new Error("GitHub unavailable")
   }
   await assert.rejects(session.snapshot(), /GitHub unavailable/u)
+})
+
+test("snapshot gathering rejects a null union response as unavailable evidence", async t => {
+  const { session, client } = fixture("related to #999")
+  const { client: liveClient } = mockGraphQL(t, { data: { repository: { issueOrPullRequest: null } } })
+  client.getIssueOrPullRequest = liveClient.getIssueOrPullRequest
+  await assert.rejects(session.snapshot(), /not accessible/u)
 })
