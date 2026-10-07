@@ -24,7 +24,7 @@ export function createGitHubReadTools(session: GitHubReviewSession) {
     getPullRequest: defineTool({
       name: "get_pr",
       description:
-        "Get a referenced pull request with metadata, refs, git-status-like file lines (A/M/D plus churn; I means omitted from the review diff), one-line commits, one-line chronological comments/reviews/timeline, and full context for closing or explicitly related issues. The active pull request is already supplied in the review context; do not call this just in case",
+        "Get a referenced pull request with metadata, refs, git-status-like file lines (A/M/D plus churn; I means omitted from the review diff), one-line commits, one-line chronological comments/reviews/timeline, and context for closing issues or explicitly related issues and PRs. Related PRs include their own metadata, files, commits, and history without recursively following references. The active pull request is already supplied in the review context; do not call this just in case",
       input: z
         .object({
           pull_number: z.number().int().positive(),

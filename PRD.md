@@ -29,9 +29,10 @@ One accepted run freezes the pull-request head and gathers:
 - PR title, body, author, refs, commits, and changed-file manifest;
 - a filtered unified diff and valid GitHub comment ranges;
 - issue comments, reviews, review comments, thread state, and action items;
+- closing issue requirements and explicit related issue/PR descriptions and decision history, with PR enrichment bounded to one hop;
 - previous bot activity needed for re-review decisions.
 
-The application materializes pr.md, pr.diff, and history.md for Agent evidence. Everything else remains typed and request-local.
+The application materializes pr.md, pr.diff, history.md, and issues.md for Agent evidence. The reference document contains closing issues and explicitly related issues and PRs. Everything else remains typed and request-local.
 
 Six parallel lanes investigate distinct concerns:
 
@@ -79,6 +80,7 @@ Replies to existing inline threads remain inline replies. Top-level questions or
 - An incomplete provider attempt never produces a publishable result.
 - Audit failure never falls back to unaudited lane output.
 - Publication verifies the current head against the reviewed head.
+- Publication rechecks referenced issue timestamps and related PR timestamps and heads against the gathered context.
 - Model execution starts only when the checked-out commit matches the API snapshot.
 - Prepared GitHub writes are idempotent within a run.
 - An ambiguous mutation outcome is recorded and never replayed.

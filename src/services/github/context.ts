@@ -1,15 +1,17 @@
 import type { ReviewDiff } from "../../lib/review-diff.js"
-import { NotAnIssueError } from "./client.js"
 import {
   CONTEXT_HISTORY_ENTRY_LIMIT,
+  CONTEXT_REFERENCE_BATCH_SIZE,
   compactContextText,
   compactHistory,
-  parseRelatedIssueReferences,
+  parseRelatedReferences,
   type CompactHistoryEntry,
   type CompactIssueContext,
+  type CompactRelatedPullRequestContext,
   type CompactPullRequestContext
 } from "./context-model.js"
 import type {
+  GitHubReference,
   IssueComment,
   IssueSummary,
   IssueTimelineEvent,
@@ -57,6 +59,7 @@ export type GitHubContextSource = {
   getPullRequest(prNumber?: number, repository?: string): Promise<PullRequestSummary>
   getPullRequestDiff(prNumber?: number, repository?: string): Promise<ReviewDiff>
   getIssue(issueNumber: number, repository?: string): Promise<IssueSummary>
+  getIssueOrPullRequest(number: number, repository?: string): Promise<GitHubReference>
   listPullRequestClosingIssues(prNumber?: number, repository?: string): Promise<IssueSummary[]>
   listPullRequestComments(prNumber?: number, repository?: string): Promise<IssueComment[]>
   listIssueComments(issueNumber: number, repository?: string): Promise<IssueComment[]>
@@ -374,12 +377,17 @@ export class GitHubContextService {
   }
 
   /**
-   * Loads one complete PR context, including closing and explicitly related issues.
+   * Loads one complete PR context, including closing issues and related issues/PRs.
    *
    * The PR diff remains rich application evidence but only its file inventory is
    * included in the compact DTO; `get_pr_diff` owns the independently large patch.
+   * Related PRs are gathered with references disabled to bound enrichment to one hop.
    */
-  async pullRequest(prNumber: number, repository = this.#defaultRepository): Promise<PullRequestEvidence> {
+  async pullRequest(
+    prNumber: number,
+    repository = this.#defaultRepository,
+    includeReferences = true
+  ): Promise<PullRequestEvidence> {
     // Fetch independent GitHub surfaces concurrently. GitHubReviewSession caches
     // only the endpoint reads; assembly below remains disposable application work.
     const [
@@ -397,7 +405,7 @@ export class GitHubContextService {
       this.#source.getPullRequestDiff(prNumber, repository),
       this.#source.listPullRequestCommits(prNumber, repository),
       this.#source.listPullRequestComments(prNumber, repository),
-      this.#source.listPullRequestClosingIssues(prNumber, repository),
+      includeReferences ? this.#source.listPullRequestClosingIssues(prNumber, repository) : Promise.resolve([]),
       this.#source.listReviewComments(prNumber, repository),
       this.#source.listReviews(prNumber, repository),
       this.#source.listPullRequestTimeline(prNumber, repository),
@@ -407,26 +415,45 @@ export class GitHubContextService {
     // GitHub closing references are authoritative. Explicit `related to` clauses
     // add context, but never weaken or duplicate an existing closing relationship.
     const closingKeys = new Set(closingIssues.map(issue => `${issue.repository || repository}#${issue.number}`))
-    const related = parseRelatedIssueReferences(pullRequest.body || "", repository).filter(
-      reference => !closingKeys.has(`${reference.repository}#${reference.number}`)
-    )
-    // `related to` clauses are enrichment-only: a clause naming a pull request
-    // is skipped instead of failing the whole snapshot.
-    const relatedIssues = (
-      await Promise.all(
-        related.map(async reference => {
-          try {
-            return await this.issue(reference.number, reference.repository, "related").then(result => result.evidence)
-          } catch (error) {
-            if (error instanceof NotAnIssueError) return null
-            throw error
-          }
-        })
+    const related = includeReferences
+      ? parseRelatedReferences(pullRequest.body || "", repository).filter(
+          reference =>
+            !closingKeys.has(`${reference.repository}#${reference.number}`) &&
+            !(reference.repository === repository && reference.number === prNumber)
+        )
+      : []
+    // Resolve the shared number namespace before selecting the evidence source.
+    // Failed reads propagate rather than silently removing review requirements.
+    const relatedEvidence: Array<
+      | { kind: "issue"; evidence: ReferencedIssueContext }
+      | { kind: "pull_request"; context: CompactRelatedPullRequestContext }
+    > = []
+    // Each PR expands into several concurrent reads. Bound that fan-out while
+    // preserving every reference and its original order, including slow reads.
+    for (let start = 0; start < related.length; start += CONTEXT_REFERENCE_BATCH_SIZE) {
+      relatedEvidence.push(
+        ...(await Promise.all(
+          related.slice(start, start + CONTEXT_REFERENCE_BATCH_SIZE).map(async reference => {
+            const resolved = await this.#source.getIssueOrPullRequest(reference.number, reference.repository)
+            if (resolved.kind === "issue") {
+              return {
+                kind: "issue" as const,
+                evidence: await this.#issueEvidence(resolved.issue, reference.repository, "related")
+              }
+            }
+            const {
+              issues: _issues,
+              pullRequests: _pullRequests,
+              ...context
+            } = (await this.pullRequest(resolved.pullRequest.number, reference.repository, false)).context
+            return { kind: "pull_request" as const, context: { ...context, relation: "related" as const } }
+          })
+        ))
       )
-    ).flatMap(evidence => (evidence ? [evidence] : []))
+    }
     const referencedIssues = await Promise.all([
       ...closingIssues.map(issue => this.#issueEvidence(issue, issue.repository || repository, "closes")),
-      ...relatedIssues
+      ...relatedEvidence.flatMap(reference => (reference.kind === "issue" ? [reference.evidence] : []))
     ])
     // Build history once before assembling the normalized application context.
     const history = buildPullRequestHistory({
@@ -471,7 +498,8 @@ export class GitHubContextService {
         subject: compactContextText(String(commit.commit?.message || "").split(/\r?\n/u)[0])
       })),
       history,
-      issues: referencedIssues.map(compactIssue)
+      issues: referencedIssues.map(compactIssue),
+      pullRequests: relatedEvidence.flatMap(reference => (reference.kind === "pull_request" ? [reference.context] : []))
     }
 
     return {

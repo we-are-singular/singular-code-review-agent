@@ -48,10 +48,10 @@ export const ReviewContextPrompt: AML.Component<ReviewContextPromptProps> = ({
 
   if (issues) {
     sections.push({
-      label: "referenced issue requirements and decision history",
+      label: "referenced issue requirements, related PRs, and decision history",
       path: REVIEW_CONTEXT_PATHS.issues,
       instruction:
-        "Treat issues marked closes as the active claimed contract and issues marked related as context only. Compare every closing issue's current description and acceptance criteria with the patch. Use compact edits, comments, and timeline as decision evidence, never as an implicit amendment.",
+        "Treat issues marked closes as the active claimed contract and issues or pull requests marked related as context only. Compare every closing issue's current description and acceptance criteria with the patch. Use compact edits, comments, reviews, and timeline as decision evidence, never as an implicit amendment.",
       tag: "referenced-issues-context"
     })
   }
