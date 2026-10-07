@@ -8,9 +8,8 @@ import type {
   ReviewComment,
   ReviewThreadsResult
 } from "./client.js"
-import { NotAnIssueError } from "./client.js"
 import { GitHubContextService } from "./context.js"
-import { parseRelatedIssueReferences } from "./context-model.js"
+import { CONTEXT_REFERENCE_BATCH_SIZE, contextReferenceSignature, selectRelatedReferences } from "./context-model.js"
 import { ReviewEvidence } from "../review-evidence.js"
 import { ReviewDiff } from "../../lib/review-diff.js"
 import type { ReviewRequest, ReviewSnapshot } from "../../types/review.js"
@@ -69,6 +68,11 @@ export class GitHubReviewSession {
   /** Resolves an issue explicitly referenced by review evidence. */
   getIssue(issueNumber: number, repository = this.#request.repository) {
     return this.#once(`issue:${repository}#${issueNumber}`, () => this.#github.getIssue(issueNumber, repository))
+  }
+
+  /** Resolves a numbered reference without assuming it names an issue. */
+  getIssueOrPullRequest(number: number, repository = this.#request.repository) {
+    return this.#once(`reference:${repository}#${number}`, () => this.#github.getIssueOrPullRequest(number, repository))
   }
 
   /** Discovers issues GitHub will close when the active pull request merges. */
@@ -207,9 +211,9 @@ export class GitHubReviewSession {
     }
 
     // The description owns explicit `related to` references, so a body change
-    // can change both stated intent and the issue set without changing the head.
+    // can change both stated intent and the reference set without changing the head.
     if (String(current.body || "") !== snapshot.context.description) {
-      throw new Error("pull request description or referenced issue set changed during review; run the review again")
+      throw new Error("pull request description or reference set changed during review; run the review again")
     }
 
     // Re-resolve GitHub-native closing references and explicit related clauses.
@@ -219,53 +223,64 @@ export class GitHubReviewSession {
       this.#request.prNumber,
       this.#request.repository
     )
-    const closingKeys = new Set(
-      closingIssues.map(issue => `${issue.repository || this.#request.repository}#${issue.number}`)
-    )
-    const related = parseRelatedIssueReferences(current.body || "", this.#request.repository).filter(
-      reference => !closingKeys.has(`${reference.repository}#${reference.number}`)
-    )
-    // A `related to` clause naming a pull request resolves the same way during
-    // the initial snapshot, so the freshness signature skips it identically.
-    const latestRelated = (
-      await Promise.all(
-        related.map(async reference => {
-          try {
-            return {
-              relation: "related" as const,
-              issue: await this.#github.getIssue(reference.number, reference.repository),
-              repository: reference.repository
+    const related = selectRelatedReferences({
+      body: current.body || "",
+      repository: this.#request.repository,
+      prNumber: this.#request.prNumber,
+      closingIssues
+    })
+    // Resolve through the same union as gathering, but bypass the session cache.
+    // PR pushes can change the head even when updatedAt has not advanced yet.
+    const latestRelated: string[] = []
+    // Freshness must retain the gathering bound even for a long reference list.
+    for (let start = 0; start < related.length; start += CONTEXT_REFERENCE_BATCH_SIZE) {
+      latestRelated.push(
+        ...(await Promise.all(
+          related.slice(start, start + CONTEXT_REFERENCE_BATCH_SIZE).map(async reference => {
+            const resolved = await this.#github.getIssueOrPullRequest(reference.number, reference.repository)
+            if (resolved.kind === "issue") {
+              const issue = resolved.issue
+              return contextReferenceSignature({
+                kind: "issue",
+                relation: "related",
+                repository: issue.repository || reference.repository,
+                number: issue.number,
+                updatedAt: issue.updated_at || null
+              })
             }
-          } catch (error) {
-            if (error instanceof NotAnIssueError) return null
-            throw error
-          }
+            const pr = resolved.pullRequest
+            return contextReferenceSignature({
+              kind: "pull_request",
+              relation: "related",
+              repository: reference.repository,
+              number: pr.number,
+              updatedAt: pr.updatedAt || null,
+              headRefOid: pr.headRefOid || null
+            })
+          })
+        ))
+      )
+    }
+    const latestReferences = [
+      ...closingIssues.map(issue =>
+        contextReferenceSignature({
+          kind: "issue",
+          relation: "closes",
+          repository: issue.repository || this.#request.repository,
+          number: issue.number,
+          updatedAt: issue.updated_at || null
         })
-      )
-    ).flatMap(entry => (entry ? [entry] : []))
-    const latestIssues = (
-      await Promise.all([
-        ...closingIssues.map(async issue => ({
-          relation: "closes" as const,
-          issue,
-          repository: issue.repository || this.#request.repository
-        })),
-        ...latestRelated
-      ])
-    )
-      .map(
-        context =>
-          `${context.relation}:${context.repository}#${context.issue.number}@${context.issue.updated_at || "unknown"}`
-      )
-      .toSorted()
-    const reviewedIssues = snapshot.context.issues
-      .map(issue => `${issue.relation}:${issue.repository}#${issue.number}@${issue.updatedAt || "unknown"}`)
+      ),
+      ...latestRelated
+    ].toSorted()
+    const reviewedReferences = [...snapshot.context.issues, ...snapshot.context.pullRequests]
+      .map(contextReferenceSignature)
       .toSorted()
 
     // Issue `updatedAt` covers body, comment, and lifecycle changes without
     // replaying every compact history event solely for a freshness comparison.
-    if (JSON.stringify(latestIssues) !== JSON.stringify(reviewedIssues)) {
-      throw new Error("referenced issue requirements changed during review; run the review again")
+    if (JSON.stringify(latestReferences) !== JSON.stringify(reviewedReferences)) {
+      throw new Error("referenced issue or pull request context changed during review; run the review again")
     }
   }
 

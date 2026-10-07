@@ -1,6 +1,9 @@
 export const CONTEXT_HISTORY_TEXT_LIMIT = 500
 export const CONTEXT_HISTORY_ENTRY_LIMIT = 200
 
+/** Four concurrent PR expansions leave headroom for other GitHub endpoint reads. */
+export const CONTEXT_REFERENCE_BATCH_SIZE = 4
+
 /** One provider-neutral history record retained by deterministic application context. */
 export type CompactHistoryEntry = {
   at: string | null
@@ -66,6 +69,12 @@ export type CompactPullRequestContext = {
   }>
   history: CompactHistory
   issues: CompactIssueContext[]
+  pullRequests: CompactRelatedPullRequestContext[]
+}
+
+/** One related PR's complete context without recursively following its references. */
+export type CompactRelatedPullRequestContext = Omit<CompactPullRequestContext, "issues" | "pullRequests"> & {
+  relation: "related"
 }
 
 /** Reduces untrusted historical prose to one useful model-facing line. */
@@ -91,25 +100,63 @@ export function compactHistory(entries: CompactHistoryEntry[], limit?: number): 
   }
 }
 
-/** Finds only explicit `related to` clauses; ordinary issue mentions remain cheap links. */
-export function parseRelatedIssueReferences(body: string, repository: string) {
+/** Finds explicit issue/PR relationship clauses; incidental mentions remain cheap links. */
+export function parseRelatedReferences(body: string, repository: string) {
   const references = new Map<string, { repository: string; number: number }>()
   // First isolate explicit relationship clauses. Parsing every #123 in a PR
   // body would turn incidental links and examples into review requirements.
-  const clausePattern = /\b(?:related\s+to|relates\s+to)\s*:?\s*(?<references>[^.;\n]+)/giu
-  const referencePattern = /(?:(?<owner>[\w.-]+)\/(?<repo>[\w.-]+))?#(?<number>\d+)\b/gu
+  const clausePattern = /\b(?:related\s+to|relates\s+to)\s*:?\s*(?<references>[^;\n]+)/giu
+  // Consume Markdown link labels together with their URLs so a cross-repository
+  // link labelled #123 does not also become an unrelated local reference.
+  const referencePattern =
+    /(?:\[[^\]\n]*\]\()?https:\/\/github\.com\/(?<urlOwner>[\w.-]+)\/(?<urlRepo>[\w.-]+)\/(?:issues|pull)\/(?<urlNumber>\d+)\b(?:[/?#][^\s)]*)?\)?|(?:(?<owner>[\w.-]+)\/(?<repo>[\w.-]+))?#(?<number>\d+)\b/gu
 
   for (const clause of body.matchAll(clausePattern)) {
     // A clause may list local and owner/repository-qualified references. The
     // map preserves first-seen order while collapsing repeated references.
-    for (const match of String(clause.groups?.references || "").matchAll(referencePattern)) {
-      const targetRepository =
-        match.groups?.owner && match.groups.repo ? `${match.groups.owner}/${match.groups.repo}` : repository
-      const number = Number(match.groups?.number)
+    const text = String(clause.groups?.references || "")
+    let previousEnd = 0
+    for (const match of text.matchAll(referencePattern)) {
+      // Periods within a matched URL or repository token remain intact. A
+      // period between references ends the clause even before closing punctuation.
+      if (text.slice(previousEnd, match.index).includes(".")) break
+      previousEnd = match.index + match[0].length
+      const owner = match.groups?.urlOwner || match.groups?.owner
+      const repo = match.groups?.urlRepo || match.groups?.repo
+      const targetRepository = owner && repo ? `${owner}/${repo}` : repository
+      const number = Number(match.groups?.urlNumber || match.groups?.number)
       if (number > 0) {
         references.set(`${targetRepository}#${number}`, { repository: targetRepository, number })
       }
     }
   }
   return [...references.values()]
+}
+
+/** Keeps gathering and publication on the same closing, related, and self-link rules. */
+export function selectRelatedReferences(input: {
+  body: string
+  repository: string
+  prNumber: number
+  closingIssues: ReadonlyArray<{ repository?: string | null; number: number }>
+}) {
+  const closingKeys = new Set(
+    input.closingIssues.map(issue => `${issue.repository || input.repository}#${issue.number}`)
+  )
+  return parseRelatedReferences(input.body, input.repository).filter(
+    reference =>
+      !closingKeys.has(`${reference.repository}#${reference.number}`) &&
+      !(reference.repository === input.repository && reference.number === input.prNumber)
+  )
+}
+
+/** Defines one freshness vocabulary for reviewed records and uncached GitHub reads. */
+export function contextReferenceSignature(
+  reference:
+    | Pick<CompactIssueContext, "kind" | "relation" | "repository" | "number" | "updatedAt">
+    | Pick<CompactRelatedPullRequestContext, "kind" | "relation" | "repository" | "number" | "updatedAt" | "headRefOid">
+): string {
+  const signature = `${reference.kind}:${reference.relation}:${reference.repository}#${reference.number}@${reference.updatedAt || "unknown"}`
+  // A PR head can advance before its updatedAt timestamp changes.
+  return reference.kind === "pull_request" ? `${signature}:${reference.headRefOid || "unknown"}` : signature
 }

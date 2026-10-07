@@ -196,6 +196,11 @@ export type PullRequestSummary = {
   } | null
 }
 
+/** A numbered GitHub reference, with a full issue contract or PR identity and freshness. */
+export type GitHubReference =
+  | { kind: "issue"; issue: IssueSummary }
+  | { kind: "pull_request"; pullRequest: Pick<PullRequestSummary, "number" | "updatedAt" | "headRefOid"> }
+
 export type Reaction = {
   id: number
   content: string
@@ -216,6 +221,7 @@ export type ReviewThreadsResult = {
 export type GitHubClient = {
   getPullRequest(prNumber: number, repository?: string): Promise<PullRequestSummary>
   getPullRequestDiff(prNumber: number, repository?: string): Promise<string>
+  getIssueOrPullRequest(number: number, repository?: string): Promise<GitHubReference>
   getIssue(issueNumber: number, repository?: string): Promise<IssueSummary>
   listPullRequestClosingIssues(prNumber: number, repository?: string): Promise<IssueSummary[]>
   getCommit(ref: string, repository?: string): Promise<RepositoryCommit>
@@ -236,9 +242,8 @@ export type GitHubClient = {
 }
 
 /**
- * Rejects a literal issue read that names a pull request or an inaccessible
- * number. Related-clause enrichment catches this to skip the reference;
- * the literal get_issue Tool lets it propagate.
+ * Rejects a literal issue read that names a pull request. Missing resources
+ * and API failures remain ordinary errors rather than type mismatches.
  */
 export class NotAnIssueError extends Error {}
 
@@ -287,9 +292,12 @@ type GraphQLIssueNode = {
   } | null
 }
 
-type GraphQLIssueResponse = {
+type GraphQLReferenceResponse = {
   repository?: {
-    issue?: GraphQLIssueNode | null
+    issueOrPullRequest?:
+      | (GraphQLIssueNode & { __typename: "Issue" })
+      | { __typename: "PullRequest"; number: number; updatedAt?: string | null; headRefOid?: string | null }
+      | null
   } | null
 }
 
@@ -453,6 +461,46 @@ export function createGitHubClient(options: { token: string; repository: string 
     userAgent: "singular-code-review-agent"
   })
 
+  // Issue and PR numbers share a namespace. Query the union first because
+  // GitHub throws a GraphQL response error for an issue-only read of a PR.
+  async function getIssueOrPullRequest(number: number, repository = options.repository): Promise<GitHubReference> {
+    const { owner, repo } = splitRepository(repository)
+    const query = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue {
+        ${ISSUE_GRAPHQL_FIELDS}
+      }
+      ... on PullRequest {
+        number
+        updatedAt
+        headRefOid
+      }
+    }
+  }
+}`
+    const response = (await octokit.graphql(query, { owner, name: repo, number })) as GraphQLReferenceResponse
+    const reference = response.repository?.issueOrPullRequest
+    if (reference?.__typename === "Issue") {
+      return { kind: "issue", issue: normalizeIssue(reference) }
+    }
+    if (reference?.__typename === "PullRequest") {
+      // The existing PR read owns full metadata; this projection only resolves
+      // the reference type and supports the uncached publication comparison.
+      return {
+        kind: "pull_request",
+        pullRequest: {
+          number: reference.number,
+          updatedAt: reference.updatedAt || null,
+          headRefOid: reference.headRefOid || null
+        }
+      }
+    }
+    throw new Error(`${repository}#${number} is not an issue or pull request or is not accessible`)
+  }
+
   return {
     async getPullRequest(prNumber, repository = options.repository) {
       const { owner, repo } = splitRepository(repository)
@@ -477,28 +525,14 @@ export function createGitHubClient(options: { token: string; repository: string 
       return String(response.data || "")
     },
 
+    getIssueOrPullRequest,
+
     async getIssue(issueNumber, repository = options.repository) {
-      const { owner, repo } = splitRepository(repository)
-      // GraphQL's `issue` field deliberately returns null for pull requests.
-      // This keeps the literal get_issue Tool from silently returning a PR.
-      const query = `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      ${ISSUE_GRAPHQL_FIELDS}
-    }
-  }
-}`
-      const response = (await octokit.graphql(query, {
-        owner,
-        name: repo,
-        number: issueNumber
-      })) as GraphQLIssueResponse
-      const issue = response.repository?.issue
-      if (!issue) {
-        throw new NotAnIssueError(`${repository}#${issueNumber} is not an issue or is not accessible`)
+      const reference = await getIssueOrPullRequest(issueNumber, repository)
+      if (reference.kind !== "issue") {
+        throw new NotAnIssueError(`${repository}#${issueNumber} is a pull request; use get_pr`)
       }
-      return normalizeIssue(issue)
+      return reference.issue
     },
 
     async listPullRequestClosingIssues(prNumber, repository = options.repository) {

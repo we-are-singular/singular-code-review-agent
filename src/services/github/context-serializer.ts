@@ -110,6 +110,11 @@ export function serializePullRequestContext(
     files,
     commits,
     history: serializeHistory(context.history),
-    issues: context.issues.map(serializeIssueContext)
+    issues: context.issues.map(serializeIssueContext),
+    pullRequests: context.pullRequests.map(pr => ({
+      ...pr,
+      commits: pr.commits.map(serializeCommit),
+      history: serializeHistory(pr.history)
+    }))
   }
 }

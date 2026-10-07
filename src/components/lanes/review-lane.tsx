@@ -43,7 +43,7 @@ export const ReviewLane: AML.Component<ReviewLaneProps> = async ({ lane, childre
           - ${REVIEW_CONTEXT_PATHS.pullRequest}: PR description, refs, changed files, and commits
           - ${REVIEW_CONTEXT_PATHS.diff}: filtered unified diff
           - ${REVIEW_CONTEXT_PATHS.history}: prior comments, reviews, threads, and timeline
-          - ${REVIEW_CONTEXT_PATHS.issues}: closing and explicitly related issue requirements and compact history
+          - ${REVIEW_CONTEXT_PATHS.issues}: closing issue requirements, related issues and PRs, and compact history
         `}</Block>
         <ReviewContextPrompt diff history issues />
         <Block>## Your lane is `{lane}`</Block>
