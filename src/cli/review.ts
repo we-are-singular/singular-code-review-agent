@@ -6,11 +6,13 @@ import { parseArgs, promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 
 import { DEFAULT_REVIEW_CONCURRENCY, DEFAULT_REVIEW_MODEL } from "../config.js"
+import { OpenCodeModelCatalog } from "../lib/opencode-models.js"
 import { renderGitHubStepSummary } from "../lib/render/github-summary.js"
 import { ReviewUnavailableError, runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github/client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN, ReviewEvidence } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
+import type { ReviewRunResult } from "../types/review.js"
 
 type CliOptions = {
   repository: string
@@ -113,6 +115,24 @@ async function checkedOutHead(workspace: string): Promise<string> {
   throw new Error(`git returned an invalid checked-out commit in ${workspace}`)
 }
 
+/** Joins an error with its causes so network failures keep their root reason. */
+function errorChain(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error)
+  }
+  return error.cause === undefined ? error.message : `${error.message}: ${errorChain(error.cause)}`
+}
+
+/** Pins one model catalog for every Agent; without it, each Agent loads OpenCode's catalog as before. */
+async function pinModelCatalog(env: NodeJS.ProcessEnv): Promise<OpenCodeModelCatalog | null> {
+  try {
+    return await OpenCodeModelCatalog.pin(env)
+  } catch (error) {
+    process.stderr.write(`review_runner: OpenCode model catalog not pinned: ${errorChain(error)}\n`)
+    return null
+  }
+}
+
 /** Parses the executable edge and emits one complete in-memory result. */
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const options = parseOptions(argv, env)
@@ -143,26 +163,38 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     }
   }
 
-  const result = await runReview({
-    request: {
-      repository: options.repository,
-      prNumber: options.prNumber,
-      workspace: options.workspace,
-      workspaceHeadSha: await checkedOutHead(options.workspace),
-      botLogin: env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN,
-      eventName: trigger.eventName,
-      eventPath: env.GITHUB_EVENT_PATH || null,
-      actor: trigger.actor,
-      triggerCommentId,
-      ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true"
-    },
-    github,
-    actionMode: options.publish ? "live" : "dry-run",
-    model: options.model,
-    reviewEmojis: env.REVIEW_EMOJIS !== "false",
-    maximumConcurrency: options.concurrency,
-    progress: line => process.stderr.write(`${line}\n`)
-  })
+  const catalog = await pinModelCatalog(env)
+  let result: ReviewRunResult
+  try {
+    const unavailable = catalog?.unavailableReason(options.model)
+    if (unavailable) {
+      // Exit code 2 lets the workflow retry its fallback model; nothing has been published.
+      throw new ReviewUnavailableError(`review unsuccessful: ${unavailable}`)
+    }
+    result = await runReview({
+      request: {
+        repository: options.repository,
+        prNumber: options.prNumber,
+        workspace: options.workspace,
+        workspaceHeadSha: await checkedOutHead(options.workspace),
+        botLogin: env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN,
+        eventName: trigger.eventName,
+        eventPath: env.GITHUB_EVENT_PATH || null,
+        actor: trigger.actor,
+        triggerCommentId,
+        ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true"
+      },
+      github,
+      actionMode: options.publish ? "live" : "dry-run",
+      model: options.model,
+      modelsPath: catalog?.path,
+      reviewEmojis: env.REVIEW_EMOJIS !== "false",
+      maximumConcurrency: options.concurrency,
+      progress: line => process.stderr.write(`${line}\n`)
+    })
+  } finally {
+    catalog?.close()
+  }
 
   // The result stays in memory; only the Agent-readable evidence files are
   // materialized in the isolated review checkout.
