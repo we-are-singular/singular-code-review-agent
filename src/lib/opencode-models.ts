@@ -16,6 +16,19 @@ const FETCH_TIMEOUT_MS = 5_000
  */
 const CATALOG_PROVIDERS = new Set(["opencode", "opencode-go"])
 
+/** OpenCode's `truthy()` for process flags such as OPENCODE_DISABLE_MODELS_FETCH. */
+function openCodeFlag(value: string | undefined): boolean {
+  return ["true", "1"].includes(value?.toLowerCase() || "")
+}
+
+/**
+ * OpenCode's Effect `Config.boolean` for runtime flags such as OPENCODE_ENABLE_EXPERIMENTAL_MODELS.
+ * It is case-sensitive: OpenCode exits on values like "TRUE", so those must not count as enabled.
+ */
+function openCodeConfigFlag(value: string | undefined): boolean {
+  return ["true", "yes", "on", "1", "y"].includes(value || "")
+}
+
 // Checks only the fields read here; OpenCode parses the pinned file itself.
 const catalogSchema = z
   .record(z.string(), z.looseObject({ models: z.record(z.string(), z.looseObject({ status: z.string().optional() })) }))
@@ -59,7 +72,7 @@ export class OpenCodeModelCatalog {
    */
   static async pin(env: NodeJS.ProcessEnv, options: { timeoutMs?: number } = {}): Promise<OpenCodeModelCatalog | null> {
     // An operator-supplied file or disabled fetching already gives every Agent the same catalog.
-    if (env.OPENCODE_MODELS_PATH || ["true", "1"].includes(env.OPENCODE_DISABLE_MODELS_FETCH?.toLowerCase() || "")) {
+    if (env.OPENCODE_MODELS_PATH || openCodeFlag(env.OPENCODE_DISABLE_MODELS_FETCH)) {
       return null
     }
     const source = `${env.OPENCODE_MODELS_URL || DEFAULT_MODELS_URL}/api.json`
@@ -94,8 +107,7 @@ export class OpenCodeModelCatalog {
       directory,
       path,
       catalog,
-      // Mirrors OpenCode's boolean config parsing for its alpha-model filter.
-      experimentalModels: ["true", "yes", "on", "1", "y"].includes(env.OPENCODE_ENABLE_EXPERIMENTAL_MODELS || "")
+      experimentalModels: openCodeConfigFlag(env.OPENCODE_ENABLE_EXPERIMENTAL_MODELS)
     })
   }
 

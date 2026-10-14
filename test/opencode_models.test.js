@@ -91,6 +91,9 @@ test("OpenCode-provided models are judged by the status OpenCode filters on", as
 
   const experimental = await pinned(t, { OPENCODE_MODELS_URL: server.url, OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "true" })
   assert.equal(experimental.unavailableReason("opencode-go/glm-6-preview"), null)
+  // OpenCode's case-sensitive config parser rejects "TRUE", so it must not enable alpha models here either.
+  const uppercase = await pinned(t, { OPENCODE_MODELS_URL: server.url, OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "TRUE" })
+  assert.match(uppercase.unavailableReason("opencode-go/glm-6-preview"), /alpha model/u)
 })
 
 test("providers whose model lists plugins replace are left for OpenCode to judge", async t => {
