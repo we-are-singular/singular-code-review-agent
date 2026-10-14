@@ -5,8 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { prepareGate } from "../dist/lib/review-gate.js"
-import { ReviewDiff } from "../dist/lib/review-diff.js"
+import { prepareGate } from "../../dist/lib/review-gate.js"
+import { ReviewDiff } from "../../dist/lib/review-diff.js"
 
 const botLogin = "singular-code-review[bot]"
 
@@ -71,7 +71,7 @@ function reviewSnapshot(options, rawDiff = "diff") {
     },
     diff: {
       text: diff.text,
-      files: diff.files.length > 0 ? diff.files.map(file => file.path) : ["src/app.js"],
+      files: diff.files,
       ignoredFiles: diff.ignoredFiles,
       commentRanges: diff.commentRanges
     },

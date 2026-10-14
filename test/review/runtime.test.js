@@ -7,12 +7,12 @@ import test from "node:test"
 
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { createReviewProvider } from "../dist/lib/review-provider.js"
-import { reviewExitCode } from "../dist/cli/review.js"
-import { ReviewUnavailableError, runReview } from "../dist/run-review.js"
-import { ReviewGitHubActions } from "../dist/services/github-actions.js"
-import { createGitHubClient } from "../dist/services/github-client.js"
-import { createGitHubWriteTools } from "../dist/tools/github-write.js"
+import { createReviewProvider } from "../../dist/lib/review-provider.js"
+import { reviewExitCode } from "../../dist/cli/review.js"
+import { ReviewUnavailableError, runReview } from "../../dist/run-review.js"
+import { ReviewGitHubActions } from "../../dist/services/github/actions.js"
+import { createGitHubClient } from "../../dist/services/github/client.js"
+import { createGitHubWriteTools } from "../../dist/tools/github-write.js"
 
 const lanes = [
   "intent-contract",
@@ -56,8 +56,14 @@ function githubFixture(overrides = {}) {
       async getPullRequestDiff() {
         return overrides.diff ?? reviewDiff
       },
+      async listPullRequestClosingIssues() {
+        return []
+      },
       async getIssueComment(commentId) {
         return { id: commentId, body: "@singular-code-review what does this do?", user: { login: "author" } }
+      },
+      async listPullRequestComments() {
+        return overrides.issueComments ?? []
       },
       async listIssueComments() {
         return overrides.issueComments ?? []
@@ -83,7 +89,7 @@ function githubFixture(overrides = {}) {
       async createIssueCommentReaction(commentId, content) {
         writes.push({ kind: "reaction", commentId, content })
       },
-      async createIssueComment(prNumber, body) {
+      async createPullRequestComment(prNumber, body) {
         writes.push({ kind: "issue-comment", prNumber, body })
       },
       async submitReview(prNumber, headSha, payload) {
@@ -213,7 +219,7 @@ function completeProvider(publisher) {
           structured: {
             direct_answer: null,
             summary: "The change is focused and no actionable issue remains.",
-            next_steps: null
+            recommendation: null
           }
         }
       }
@@ -227,7 +233,7 @@ test("review CLI reserves fallback exit status for pre-publication review failur
   assert.equal(reviewExitCode(new Error("publication failed")), 1)
 })
 
-test("runtime materializes only the three Agent-readable review context files", async t => {
+test("runtime materializes only the four Agent-readable review context files", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
   const github = githubFixture({
@@ -289,7 +295,7 @@ test("runtime materializes only the three Agent-readable review context files", 
   )
   const contextDirectory = path.join(workspace, ".singular-code-review")
   assert.deepEqual(fs.readdirSync(workspace), [".singular-code-review"])
-  assert.deepEqual(fs.readdirSync(contextDirectory).sort(), ["history.md", "pr.diff", "pr.md"])
+  assert.deepEqual(fs.readdirSync(contextDirectory).sort(), ["history.md", "issues.md", "pr.diff", "pr.md"])
   const pullRequestContext = fs.readFileSync(path.join(contextDirectory, "pr.md"), "utf8")
   assert.match(pullRequestContext, /Review this change\./u)
   assert.match(pullRequestContext, /Keep the review context readable/u)
@@ -309,7 +315,7 @@ test("runtime rejects a checkout that does not match the pull request head befor
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
   const github = githubFixture()
   const base = options(github.client, workspace)
-  let providers = 0
+  const providers = []
 
   await assert.rejects(
     runReview(
@@ -320,16 +326,20 @@ test("runtime rejects a checkout that does not match the pull request head befor
         }
       }),
       () => {
-        providers += 1
-        return completeProvider(() => {
-          throw new Error("mismatched checkouts must stop before provider construction")
+        const provider = completeProvider(() => {
+          throw new Error("mismatched checkouts must stop before any Agent starts")
         })
+        providers.push(provider)
+        return provider
       }
     ),
     /checked-out head .* does not match pull request head/u
   )
 
-  assert.equal(providers, 0)
+  assert.deepEqual(
+    providers.flatMap(provider => provider.calls),
+    []
+  )
   assert.deepEqual(github.writes, [])
 })
 
@@ -346,19 +356,23 @@ test("runtime rejects a push during snapshot assembly before starting an Agent",
       headRefOid: reads === 1 ? "2".repeat(40) : "3".repeat(40)
     }
   }
-  let providers = 0
+  const providers = []
 
   await assert.rejects(
     runReview(options(github.client, workspace), () => {
-      providers += 1
-      return completeProvider(() => {
-        throw new Error("a drifting snapshot must stop before provider construction")
+      const provider = completeProvider(() => {
+        throw new Error("a drifting snapshot must stop before any Agent starts")
       })
+      providers.push(provider)
+      return provider
     }),
     /pull request head changed during review/u
   )
   assert.equal(reads, 2)
-  assert.equal(providers, 0)
+  assert.deepEqual(
+    providers.flatMap(provider => provider.calls),
+    []
+  )
 })
 
 test("OpenCode provider inherits AML permissions while preserving launch configuration", async t => {
@@ -408,7 +422,12 @@ sleep 30
       trace: {}
     }
   )
-  setTimeout(() => controller.abort(), 100)
+  // Abort once the fake launch has been captured; a fixed delay races provider startup.
+  const deadline = Date.now() + 10_000
+  while (!fs.existsSync(capture) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  controller.abort()
   await assert.rejects(run)
 
   const [configText, autoUpdate, projectConfig, launchDirectory] = fs
@@ -429,7 +448,7 @@ sleep 30
   }
   assert.equal(autoUpdate, "true")
   assert.equal(projectConfig, "1")
-  assert.equal(launchDirectory, workspace)
+  assert.equal(launchDirectory, fs.realpathSync(workspace))
 })
 
 test("GitHub client binds a review request to the inspected commit", async t => {
@@ -541,7 +560,7 @@ test("publication rejects findings when the pull request head changed during rev
 
 test("concurrent duplicate Tools share one live GitHub mutation", async () => {
   const github = githubFixture()
-  github.client.createIssueComment = async (prNumber, body) => {
+  github.client.createPullRequestComment = async (prNumber, body) => {
     github.writes.push({ kind: "issue-comment", prNumber, body })
     await new Promise(resolve => setImmediate(resolve))
   }
@@ -554,8 +573,8 @@ test("concurrent duplicate Tools share one live GitHub mutation", async () => {
   })
 
   const receipts = await Promise.all([
-    actions.postIssueComment(42, "same prepared answer"),
-    actions.postIssueComment(42, "same prepared answer")
+    actions.postPullRequestComment(42, "same prepared answer"),
+    actions.postPullRequestComment(42, "same prepared answer")
   ])
 
   assert.equal(github.writes.length, 1)
@@ -590,7 +609,7 @@ test("review reply Tool accepts only prepared indexes and coalesces duplicates",
   assert.deepEqual(github.writes, [{ kind: "reply", prNumber: 42, commentId: 123, body: "Prepared reply" }])
 })
 
-test("gate answers publish through post_issue_comment without starting review lanes", async t => {
+test("gate answers publish through post_pr_comment without starting review lanes", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
   const eventFile = path.join(workspace, "event.json")
   fs.writeFileSync(
