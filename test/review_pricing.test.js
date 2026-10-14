@@ -12,11 +12,6 @@ import { priceUsage } from "../eval/lib/pricing.mjs"
 import modelPrices from "../dist/model-prices.json" with { type: "json" }
 import sourceModelPrices from "../src/model-prices.json" with { type: "json" }
 
-// npm test currently discovers root tests only. Include the related existing suites.
-import "./review/telemetry.test.js"
-import "./github/github_summary.test.js"
-import "./eval/pricing.test.js"
-
 const model = "opencode-go/minimax-m3"
 // OpenCode omits zero cache-write usage and separates reasoning from output.
 const tokens = { inputTokens: 200, outputTokens: 160, thoughtTokens: 40, cachedReadTokens: 2000, totalTokens: 2400 }

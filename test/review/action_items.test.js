@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ReviewEvidence } from "../dist/services/review-evidence.js"
+import { ReviewEvidence } from "../../dist/services/review-evidence.js"
 
 const botLogin = "singular-code-review[bot]"
 
@@ -60,6 +60,7 @@ function actionItems(overrides = {}) {
     reviewThreadsAvailable: true,
     reviews: [],
     commits: [],
+    context: { history: { olderEntriesOmitted: 0, entries: [] } },
     ...overrides
   }).snapshot().actionItems
 }

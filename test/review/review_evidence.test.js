@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ReviewEvidence } from "../dist/services/review-evidence.js"
+import { buildPullRequestHistory } from "../../dist/services/github/context.js"
+import { serializeHistory } from "../../dist/services/github/context-serializer.js"
+import { ReviewEvidence } from "../../dist/services/review-evidence.js"
 
 function snapshot(overrides = {}) {
   return new ReviewEvidence({
@@ -25,12 +27,28 @@ function snapshot(overrides = {}) {
     reviewThreadsAvailable: true,
     reviews: [],
     commits: [],
+    context: { history: { olderEntriesOmitted: 0, entries: [] } },
     ...overrides
   }).snapshot()
 }
 
+function history(overrides = {}) {
+  return serializeHistory(
+    buildPullRequestHistory({
+      pullRequest: { number: 42, author: { login: "author" } },
+      commits: [],
+      issueComments: [],
+      reviewComments: [],
+      reviews: [],
+      timelineEvents: [],
+      threadsResult: { available: true, threads: [] },
+      ...overrides
+    })
+  ).entries
+}
+
 test("review history is a chronological GraphQL-thread-aware event stream", () => {
-  const result = snapshot({
+  const entries = history({
     commits: [
       {
         sha: "abcdef123456",
@@ -51,33 +69,36 @@ test("review history is a chronological GraphQL-thread-aware event stream", () =
       }
     ],
     reviewComments: [{ id: 20, pull_request_review_id: 10 }],
-    reviewThreads: [
-      {
-        id: "thread-1",
-        is_resolved: true,
-        is_outdated: false,
-        path: "src/example.ts",
-        line: 12,
-        start_line: 10,
-        comments: [
-          {
-            id: 20,
-            user: { login: "reviewer" },
-            body: "Please apply:\n```suggestion\nconst value = true\n```",
-            path: "src/example.ts",
-            line: 12,
-            created_at: "2026-08-31T10:02:00Z"
-          }
-        ]
-      }
-    ]
+    threadsResult: {
+      available: true,
+      threads: [
+        {
+          id: "thread-1",
+          is_resolved: true,
+          is_outdated: false,
+          path: "src/example.ts",
+          line: 12,
+          start_line: 10,
+          comments: [
+            {
+              id: 20,
+              user: { login: "reviewer" },
+              body: "Please apply:\n```suggestion\nconst value = true\n```",
+              path: "src/example.ts",
+              line: 12,
+              created_at: "2026-08-31T10:02:00Z"
+            }
+          ]
+        }
+      ]
+    }
   })
 
-  assert.deepEqual(result.timeline.entries, [
-    "2026-08-31T10:00:00Z | commit | abcdef1 | @author\n> Fix the contract",
-    "2026-08-31T10:02:00Z | review comment | #20 | @reviewer | resolved | src/example.ts:10-12\n> Please apply: suggestion: const value = true"
+  assert.deepEqual(entries, [
+    "2026-08-31T10:00:00Z | commit abcdef1 | @author — Fix the contract",
+    "2026-08-31T10:02:00Z | review comment 20 | @reviewer | resolved | src/example.ts:10-12 — Please apply: suggestion: const value = true"
   ])
-  assert.doesNotMatch(result.timeline.entries.join("\n"), /Long commit body/u)
+  assert.doesNotMatch(entries.join("\n"), /Long commit body/u)
 })
 
 test("participants preserve exact human handles and prefer commit names", () => {
@@ -100,7 +121,7 @@ test("participants preserve exact human handles and prefer commit names", () => 
 })
 
 test("review history compacts long bodies to a bounded single line", () => {
-  const result = snapshot({
+  const [entry] = history({
     issueComments: [
       {
         id: 30,
@@ -112,15 +133,14 @@ test("review history compacts long bodies to a bounded single line", () => {
     ]
   })
 
-  const [entry] = result.timeline.entries
-  assert.match(entry, /^2026-08-31T10:00:00Z \| issue comment \| #30 \| @author \| MEMBER\n> Decision:/u)
-  assert.equal(entry.split("\n").length, 2)
-  assert.ok(entry.split("\n")[1].length <= 502)
+  assert.match(entry, /^2026-08-31T10:00:00Z \| issue comment 30 \| @author \| MEMBER — Decision:/u)
+  assert.equal(entry.split("\n").length, 1)
+  assert.ok(entry.split(" — ")[1].length <= 500)
   assert.match(entry, /… \(truncated\)$/u)
 })
 
 test("review history retains substantive review bodies and bodyless decisions", () => {
-  const result = snapshot({
+  const entries = history({
     reviewComments: [{ id: 42, pull_request_review_id: 40 }],
     reviews: [
       {
@@ -140,14 +160,14 @@ test("review history retains substantive review bodies and bodyless decisions", 
     ]
   })
 
-  assert.deepEqual(result.timeline.entries, [
-    "2026-08-31T10:00:00Z | review | #40 | @reviewer | COMMENTED\n> The migration order needs another pass.",
-    "2026-08-31T10:01:00Z | review | #41 | @reviewer | APPROVED"
+  assert.deepEqual(entries, [
+    "2026-08-31T10:00:00Z | review 40 | @reviewer | COMMENTED — The migration order needs another pass.",
+    "2026-08-31T10:01:00Z | review 41 | @reviewer | APPROVED"
   ])
 })
 
 test("review history includes pull-request lifecycle and scope events", () => {
-  const result = snapshot({
+  const entries = history({
     pullRequest: {
       number: 42,
       author: { login: "author" },
@@ -190,7 +210,7 @@ test("review history includes pull-request lifecycle and scope events", () => {
     ]
   })
 
-  assert.deepEqual(result.timeline.entries, [
+  assert.deepEqual(entries, [
     "2026-08-31T09:00:00Z | pull request opened | @author | draft",
     "2026-08-31T10:00:00Z | ready for review | @author",
     "2026-08-31T10:01:00Z | labeled | @automation | api",
