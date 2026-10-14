@@ -17,6 +17,8 @@ export type ReviewRuntimeOptions = {
   github: GitHubClient
   actionMode: GitHubActionMode
   model: string
+  /** OpenCode model catalog pinned for this run; Agents load their own when absent. */
+  modelsPath?: string
   reviewEmojis?: boolean
   maximumConcurrency: number
   progress?: (line: string) => unknown
@@ -77,7 +79,8 @@ export async function runReview(
     const provider = createProvider({
       model: options.model,
       workspace: options.request.workspace,
-      usageDirectory: opencodeUsage.directory
+      usageDirectory: opencodeUsage.directory,
+      modelsPath: options.modelsPath
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,
