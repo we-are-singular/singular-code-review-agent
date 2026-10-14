@@ -161,10 +161,14 @@ test("diff anchors include right-side context and left-side deletions", () => {
   const diff = ReviewDiff.from(fs.readFileSync(fixture, "utf8"))
   const app = diff.files.find(file => file.path === "src/app.js")
 
-  assert.deepEqual(app?.addedLines, [2, 4, 6])
-  assert.deepEqual(app?.deletedLines, [3])
-  assert.deepEqual(app?.rightLines, [1, 2, 3, 4, 5, 6])
-  assert.deepEqual(app?.leftLines, [1, 2, 3, 4])
+  assert.deepEqual(app?.addedLines, [
+    [2, 2],
+    [4, 4],
+    [6, 6]
+  ])
+  assert.deepEqual(app?.deletedLines, [[3, 3]])
+  assert.deepEqual(app?.rightLines, [[1, 6]])
+  assert.deepEqual(app?.leftLines, [[1, 4]])
 })
 
 test("review diff filtering excludes lockfiles and binary hunks", () => {

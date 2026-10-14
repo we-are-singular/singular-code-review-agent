@@ -1,4 +1,5 @@
 import type { ReviewSnapshot } from "../../types/review.js"
+import { countDiffLines } from "../review-diff.js"
 import { serializeCommit, serializeFileChange, serializeHistory } from "../../services/github/context-serializer.js"
 import type { CompactIssueContext, CompactRelatedPullRequestContext } from "../../services/github/context-model.js"
 
@@ -23,7 +24,7 @@ export function renderPullRequestContext(snapshot: ReviewSnapshot): string {
   // selects its own snapshot fields instead of constructing a full Tool DTO.
   const fileLines = [
     ...snapshot.diff.files.map(file =>
-      serializeFileChange(file.status, file.path, file.addedLines.length, file.deletedLines.length)
+      serializeFileChange(file.status, file.path, countDiffLines(file.addedLines), countDiffLines(file.deletedLines))
     ),
     ...snapshot.diff.ignoredFiles.map(path => serializeFileChange("ignored", path))
   ]

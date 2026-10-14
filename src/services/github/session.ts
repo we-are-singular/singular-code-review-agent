@@ -1,5 +1,14 @@
+import { spawn } from "node:child_process"
+import { createWriteStream } from "node:fs"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { once } from "node:events"
+import { pipeline } from "node:stream/promises"
+
 import type {
   GitHubClient,
+  PullRequestSummary,
   IssueComment,
   PullRequestReview,
   PullRequestTimelineEvent,
@@ -13,8 +22,45 @@ import { CONTEXT_REFERENCE_BATCH_SIZE, contextReferenceSignature, selectRelatedR
 import { ReviewEvidence } from "../review-evidence.js"
 import { ReviewDiff } from "../../lib/review-diff.js"
 import type { ReviewRequest, ReviewSnapshot } from "../../types/review.js"
+import { REVIEW_DELETED_CONTENT_THRESHOLD } from "../../config.js"
 
 const TRIGGER_TEXT_LIMIT = 1_600
+
+/** Streams Git evidence to disk and settles process/stream failures together. */
+async function writeGitOutput(args: string[], cwd: string, destination: string): Promise<void> {
+  const output = createWriteStream(destination)
+  const child = spawn("git", args, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+  })
+  const closed = once(child, "close")
+  const written = pipeline(child.stdout, output)
+  // Keep only the tail: git diagnostics can be long, and the full stream has
+  // no value once the failure is reported.
+  let errorText = ""
+  child.stderr.setEncoding("utf8")
+  child.stderr.on("data", (chunk: string) => {
+    errorText = (errorText + chunk).slice(-8_192)
+  })
+
+  let code: number | null
+  try {
+    // `once` also rejects on a spawn `error` (e.g. git missing), so a failed
+    // start cannot leave the caller waiting on a stream that never ends.
+    const [result] = await Promise.all([closed, written])
+    ;[code] = result
+  } catch (error) {
+    child.kill()
+    output.destroy()
+    await Promise.allSettled([closed, written])
+    throw new Error(`git diff failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (code !== 0) {
+    const detail = errorText.trim()
+    throw new Error(`git diff failed${detail ? `: ${detail}` : ""}`)
+  }
+}
 
 /**
  * One request-scoped GitHub boundary. Every Tool and deterministic phase sees
@@ -55,14 +101,87 @@ export class GitHubReviewSession {
     return this.#once(`pull-request:${repository}#${prNumber}`, () => this.#github.getPullRequest(prNumber, repository))
   }
 
-  /** Parses a fresh projection from the cached raw diff response. */
-  async getPullRequestDiff(prNumber = this.#request.prNumber, repository = this.#request.repository) {
-    // Cache only the endpoint response. Filtering and comment-range derivation
-    // are deterministic, cheap consumer work and do not belong in session state.
-    const raw = await this.#once(`pull-request-diff:${repository}#${prNumber}`, () =>
-      this.#github.getPullRequestDiff(prNumber, repository)
-    )
-    return ReviewDiff.from(raw)
+  /** Loads complete evidence once, preserving full anchors when large PRs omit deleted bodies. */
+  getPullRequestDiff(prNumber = this.#request.prNumber, repository = this.#request.repository): Promise<ReviewDiff> {
+    return this.#once(`pull-request-diff:${repository}#${prNumber}`, async () => {
+      // Only the active PR belongs to this checkout. Linked PRs still use GitHub.
+      const active = prNumber === this.#request.prNumber && repository === this.#request.repository
+      const pullRequest = active ? await this.getPullRequest() : null
+      const compactDeletes =
+        pullRequest !== null &&
+        (pullRequest.additions || 0) + (pullRequest.deletions || 0) > REVIEW_DELETED_CONTENT_THRESHOLD
+      if (pullRequest && compactDeletes) {
+        try {
+          const { rawDiff, modelDiff } = await this.#localDiff(pullRequest, true)
+          return ReviewDiff.from(rawDiff, modelDiff)
+        } catch (localError) {
+          // Local reconstruction is an optimization for diffs GitHub often
+          // refuses, not the only source of truth: a complete GitHub diff is
+          // still complete evidence, just uncompacted. Only when GitHub also
+          // fails is the local error the actionable one.
+          try {
+            return ReviewDiff.from(await this.#github.getPullRequestDiff(prNumber, repository))
+          } catch {
+            throw localError
+          }
+        }
+      }
+
+      try {
+        return ReviewDiff.from(await this.#github.getPullRequestDiff(prNumber, repository))
+      } catch (error) {
+        // GitHub's diff limit includes context lines, so even a PR below our
+        // changed-line threshold can need local retrieval without compaction.
+        if (pullRequest && typeof error === "object" && error !== null && "status" in error && error.status === 406) {
+          const { rawDiff } = await this.#localDiff(pullRequest, false)
+          return ReviewDiff.from(rawDiff)
+        }
+        throw error
+      }
+    })
+  }
+
+  /** Reconstructs the frozen PR comparison locally, bypassing GitHub's large-diff limit. */
+  async #localDiff(pullRequest: PullRequestSummary, compactDeletes: boolean) {
+    const { baseRefOid, headRefOid } = pullRequest
+    if (!baseRefOid || !headRefOid || headRefOid !== this.#request.workspaceHeadSha) {
+      throw new Error("Cannot reconstruct the PR diff without pinned base and matching checkout head commits")
+    }
+
+    // Blank context markers drive anchor counters; user Git settings must not strip them.
+    const args = [
+      "-c",
+      "diff.suppressBlankEmpty=false",
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--find-renames",
+      "--unified=3",
+      "--src-prefix=a/",
+      "--dst-prefix=b/"
+    ]
+    const range = `${baseRefOid}...${headRefOid}`
+    const directory = await mkdtemp(join(tmpdir(), "singular-code-review-diff-"))
+    const rawPath = join(directory, "raw.diff")
+    const modelPath = join(directory, "model.diff")
+    try {
+      const rawOutput = writeGitOutput([...args, range, "--"], this.#request.workspace, rawPath)
+      const modelOutput = compactDeletes
+        ? writeGitOutput([...args, "--irreversible-delete", range, "--"], this.#request.workspace, modelPath)
+        : Promise.resolve()
+      // Both children must stop before removing their directory, including
+      // when one fails while the other is still writing its diff.
+      const outputs = await Promise.allSettled([rawOutput, modelOutput])
+      for (const output of outputs) {
+        if (output.status === "rejected") throw output.reason
+      }
+      const rawDiff = await readFile(rawPath, "utf8")
+      if (!compactDeletes) return { rawDiff }
+      return { rawDiff, modelDiff: await readFile(modelPath, "utf8") }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 
   /** Resolves an issue explicitly referenced by review evidence. */

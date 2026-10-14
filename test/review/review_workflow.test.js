@@ -447,6 +447,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.equal(call.request.toolPrefix, "review")
   }
   for (const call of laneCalls) {
+    assert.deepEqual(call.request.permissions, { filesystem: "read-only", network: false, shell: false })
     assert.deepEqual(
       call.request.tools.map(tool => tool.name),
       [
@@ -550,6 +551,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
 
   const audit = provider.calls.find(call => call.request.system.includes("calibrate pull-request findings"))
   assert.ok(audit)
+  assert.deepEqual(audit.request.permissions, { filesystem: "read-only", network: false, shell: false })
   assert.deepEqual(
     audit.request.tools.map(tool => tool.name),
     ["merge_review_findings", "demote_review_finding", "drop_review_findings", "add_audit_note", "get_full_comment"]
@@ -593,6 +595,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
 
   const synthesis = provider.calls.find(call => call.request.system.includes("concise pull-request review summary"))
   assert.ok(synthesis)
+  assert.deepEqual(synthesis.request.permissions, { filesystem: "read-only", network: false, shell: false })
   assert.deepEqual(synthesis.request.tools, [])
   assert.match(synthesis.request.prompt, /<synthesis-policy>/u)
   assert.match(synthesis.request.prompt, /<audit-handoff>/u)
@@ -983,6 +986,7 @@ test("a contained synchronize renders a concise since-last-review body", async t
   )
   const gate = provider.calls.find(call => call.request.system.includes("route pull-request follow-up"))
   assert.ok(gate)
+  assert.deepEqual(gate.request.permissions, { filesystem: "read-only", network: false, shell: false })
   assert.match(gate.request.prompt, /around 500 characters/u)
   assert.match(gate.request.prompt, /Do not recap the pull request/u)
 })
@@ -1594,10 +1598,10 @@ function queueOptions() {
     botLogin: "singular-code-review[bot]",
     commentRanges: {
       "src/example.ts": {
-        added_lines: [12],
+        added_lines: [[12, 12]],
         deleted_lines: [],
-        left_lines: [10, 11],
-        right_lines: [10, 11, 12]
+        left_lines: [[10, 11]],
+        right_lines: [[10, 12]]
       }
     },
     reviewThreadsAvailable: false,

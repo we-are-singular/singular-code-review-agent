@@ -93,7 +93,9 @@ The workflow's 40-minute process ceiling is a stuck-provider safety boundary, no
 - Preflight rejects fork heads, untrusted or bot triggers, missing resources, and explicit skip directives before App-token creation and checkout.
 - The workflow uses pull_request and issue_comment, never pull_request_target.
 - Target dependency installation is opt-in and assumes trusted contributors.
-- Agents receive a read-only filesystem, no native shell, no native network, staged-finding Tools, focused read-only GitHub reference Tools, and the explicit Context7 MCP. Snapshot reads and publication remain application-owned.
+- Agents receive read-only filesystem permissions, no native shell, no native network, staged-finding Tools, focused read-only GitHub reference Tools, and the explicit Context7 MCP. Historical source inspection must use bounded application-owned Tools rather than arbitrary shell commands.
+- Above 10,000 total added and deleted lines, the model-facing PR diff omits whole-file deletion bodies while retaining their headers. The complete diff still determines file inventory and comment anchors. Deleted contents are not available through unrestricted shell; a bounded historical-file Tool may provide them when implemented. When local reconstruction is unavailable, a complete GitHub diff remains valid evidence; the review fails only when GitHub also cannot serve the diff.
+- Canonical `DiffFile` anchors and snapshot `commentRanges` store sorted, disjoint inclusive `[start, end]` pairs, including singleton lines as `[line, line]`. They never expand into per-line arrays. Queue validation checks complete ranges without bridging gaps between hunks, and inventory churn counts covered lines rather than interval entries. This is an internal snapshot-format change; model-facing inventories and GitHub comment payloads keep their existing shape.
 
 ## Operations and evaluation
 

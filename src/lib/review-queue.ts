@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path"
 import { z } from "zod"
 
 import type { ReviewComment, ReviewThread } from "../services/github/client.js"
-import type { ValidCommentRanges } from "./review-diff.js"
+import { containsDiffRange, type ValidCommentRanges } from "./review-diff.js"
 
 /** Canonical lane names and their short, model-facing finding ID prefixes. */
 export const REVIEW_LANES = {
@@ -436,7 +436,7 @@ export class ReviewQueue {
       throw new Error("cannot queue review comment: path is not present in the PR diff")
     }
     const changed = comment.side === "LEFT" ? ranges.deleted_lines : ranges.added_lines
-    if (!changed.includes(comment.line)) {
+    if (!containsDiffRange(changed, comment.line)) {
       throw new Error(`cannot queue review comment: line is not a changed ${comment.side}-side line`)
     }
     if (comment.start_line === undefined) {
@@ -446,19 +446,16 @@ export class ReviewQueue {
     const startSide = comment.start_side || comment.side
     const available = startSide === "LEFT" ? ranges.left_lines : ranges.right_lines
     if (startSide !== comment.side) {
-      if (!available.includes(comment.start_line)) {
+      if (!containsDiffRange(available, comment.start_line)) {
         throw new Error(`cannot queue review comment: start line is not present on the ${startSide} side of the diff`)
       }
       return
     }
 
-    const lineSet = new Set(available)
-    for (let line = comment.start_line; line <= comment.line; line += 1) {
-      if (!lineSet.has(line)) {
-        throw new Error(
-          `cannot queue review comment: multi-line range is not fully present on the ${comment.side} side of the diff`
-        )
-      }
+    if (!containsDiffRange(available, comment.start_line, comment.line)) {
+      throw new Error(
+        `cannot queue review comment: multi-line range is not fully present on the ${comment.side} side of the diff`
+      )
     }
   }
 

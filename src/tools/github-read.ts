@@ -40,7 +40,8 @@ export function createGitHubReadTools(session: GitHubReviewSession) {
     // reference-following calls need metadata or history without the patch.
     getPullRequestDiff: defineTool({
       name: "get_pr_diff",
-      description: "Get the filtered unified diff for a pull request; lockfiles and binary hunks are omitted",
+      description:
+        "Get the same filtered unified diff projection as the active review context; for large active pull requests, deleted-file bodies are omitted while lockfiles and binary hunks are always omitted",
       input: z
         .object({
           pull_number: z.number().int().positive(),

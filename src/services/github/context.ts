@@ -380,7 +380,7 @@ export class GitHubContextService {
    * Loads one complete PR context, including closing issues and related issues/PRs.
    *
    * The PR diff remains rich application evidence but only its file inventory is
-   * included in the compact DTO; `get_pr_diff` owns the independently large patch.
+   * included in the compact DTO; `get_pr_diff` reuses the same cached projection.
    * Related PRs are gathered with references disabled to bound enrichment to one hop.
    */
   async pullRequest(

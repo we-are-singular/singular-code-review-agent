@@ -1,4 +1,4 @@
-import type { ReviewDiff } from "../../lib/review-diff.js"
+import { countDiffLines, type ReviewDiff } from "../../lib/review-diff.js"
 import { type CompactHistory, type CompactIssueContext, type CompactPullRequestContext } from "./context-model.js"
 
 // `I` is intentionally outside git's tracked-file states: it means the file
@@ -80,7 +80,7 @@ export function serializePullRequestContext(
 ) {
   const files = [
     ...diff.files.map(file =>
-      serializeFileChange(file.status, file.path, file.addedLines.length, file.deletedLines.length)
+      serializeFileChange(file.status, file.path, countDiffLines(file.addedLines), countDiffLines(file.deletedLines))
     ),
     // Ignored blocks have already left the filtered diff, so their exact churn
     // is unavailable. `I` reports that omission instead of inventing counts.

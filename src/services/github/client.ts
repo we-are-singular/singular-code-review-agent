@@ -163,6 +163,8 @@ export type ReviewThread = {
 
 export type PullRequestSummary = {
   number: number
+  additions?: number
+  deletions?: number
   title?: string | null
   body?: string | null
   author?: { login?: string | null } | null
