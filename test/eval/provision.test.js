@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const provision = path.join(repoRoot, "bin", "provision.sh")
 // provision.sh targets the runtime image's bash; macOS still ships bash 3.2 without `${var,,}`.
-const requiresModernBash =
-  spawnSync("bash", ["-c", 'value=A; : "${value,,}"']).status === 0 ? false : "bin/provision.sh requires bash >= 4"
+const skipReason =
+  spawnSync("bash", ["-c", 'value=A; : "${value,,}"']).status === 0 ? undefined : "bin/provision.sh requires bash >= 4"
 
 function makeExecutable(file, body) {
   fs.writeFileSync(file, body, { mode: 0o755 })
@@ -70,7 +70,7 @@ fs.writeFileSync(process.env.NPM_ARGS_FILE, JSON.stringify(process.argv.slice(1)
   }
 }
 
-test("provision runs npm ci with install scripts allowed", { skip: requiresModernBash }, () => {
+test("provision runs npm ci with install scripts allowed", { skip: skipReason }, () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")
@@ -81,7 +81,7 @@ test("provision runs npm ci with install scripts allowed", { skip: requiresModer
   ])
 })
 
-test("provision runs npm install with install scripts allowed", { skip: requiresModernBash }, () => {
+test("provision runs npm install with install scripts allowed", { skip: skipReason }, () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
 
@@ -92,7 +92,7 @@ test("provision runs npm install with install scripts allowed", { skip: requires
   ])
 })
 
-test("provision skips dependency install by default", { skip: requiresModernBash }, () => {
+test("provision skips dependency install by default", { skip: skipReason }, () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")
