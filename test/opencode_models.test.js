@@ -51,7 +51,9 @@ function isolatedTemp(t) {
   const previous = process.env.TMPDIR
   process.env.TMPDIR = directory
   t.after(() => {
-    process.env.TMPDIR = previous
+    // Assigning undefined would store the string "undefined" where TMPDIR was unset (e.g. Linux CI).
+    if (previous === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previous
     rmSync(directory, { recursive: true, force: true })
   })
   return directory
