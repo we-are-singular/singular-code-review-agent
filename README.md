@@ -164,9 +164,11 @@ The reusable workflow accepts:
 | `runner`             | `ubuntu-latest` | GitHub Actions runner label                          |
 | `npm_install`        | `false`         | Install target-repository dependencies before review |
 
-Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-flash`. The older `OPENCODE_MODEL` variable remains compatible.
+Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4.1-flash`. The older `OPENCODE_MODEL` variable remains compatible.
 
-If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/deepseek-v4-flash`. Each attempt has a 20-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
+If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/glm-5.3-flash`. Each attempt has a 20-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
+
+Both variables must name a model that the image's OpenCode advertises. Each Agent's OpenCode refreshes its catalog from Models.dev at startup, hides deprecated models, and uses its bundled snapshot until the refresh completes. The default model appears only in the refreshed catalog; the fallback appears in both.
 
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
@@ -236,7 +238,7 @@ Run one real pull request through the production review boundary without publish
 OPENCODE_API_KEY=... npm run eval -- \
   --no-config-input \
   --pr trpc/trpc/7262 \
-  --model opencode-go/deepseek-flash \
+  --model opencode-go/deepseek-v4.1-flash \
   --out eval/runs/smoke
 ```
 
