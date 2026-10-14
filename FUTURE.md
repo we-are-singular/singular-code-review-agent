@@ -18,13 +18,15 @@ Keep repository code and model credentials inside isolated workers. The control 
 
 ## Very large pull requests
 
-Current lanes can inspect a large diff, but one monolithic context file becomes less efficient as the changed surface grows. Evaluate an AML-native partition that preserves the visible tree:
+The engine already compacts whole-file deletions above 10,000 changed lines and keeps comment anchors as inclusive ranges. Large additions and modified-file bodies still create a large model context. Evaluate an AML-native partition that preserves the visible tree:
 
 - deterministic file classification and changed-surface summaries;
 - compact omission records for binary, generated, vendor, lock, snapshot, and oversized data files;
 - parallel file-group investigation only above an evidence-backed threshold;
 - one shared findings owner and the existing audit/validation/synthesis path;
 - explicit author-facing coverage caveats when material input is omitted.
+
+Add bounded, read-only historical-file inspection so lanes can investigate omitted deleted source without native shell access.
 
 Avoid fixed comment targets or a maze of size profiles. Any partition must improve repeated scores and latency on the same large-PR corpus.
 

@@ -72,6 +72,7 @@ The `src/review.tsx` section maps directly to the component tree in [src/review.
     </ReviewSynthesis>
   </ReviewRouter>
   <ReviewPublication />
+  <ReviewUsageCollection />
 </Workspace>
 ```
 
@@ -85,7 +86,7 @@ AML reads the model tree from the leaves back to the trunk. The nesting defines 
 
 The shared review Context carries request-scoped dependencies plus small APIs for the typed queue, completed routing handoff, and final publication outcome. Its top-level value is not reactive state: components share the same request binding, and mutable workflow transitions remain behind the owning APIs. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
-The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Block`, `File`, `Include`, `Parallel`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
+The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Block`, `File`, `Include`, `Parallel`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state. See [Architecture](docs/architecture.md) for the request-context and snapshot details.
 
 ### The six lanes
 
@@ -102,9 +103,9 @@ Each lane can read the checkout and the same frozen PR evidence. Agents have rea
 
 PRs above 10,000 total added and deleted lines use a local diff of the pinned base/head commits, with only deletion headers shown for wholly deleted files. Historical source inspection is not available through unrestricted shell; a future bounded file-inspection tool must provide that evidence. The application retains complete changed-line ranges for comment validation. Smaller PRs keep their full filtered diff; if GitHub rejects a diff as too large, local Git supplies it without changing the compaction threshold. If local reconstruction is unavailable for a large PR, a complete GitHub diff is used uncompacted, and the review fails only when GitHub also cannot serve it.
 
-Internally, file anchors and snapshot `commentRanges` use sorted inclusive `[start, end]` pairs, with a single line represented as `[line, line]`. This keeps memory and serialized evidence proportional to changed ranges rather than individual lines. File inventories still report exact added/deleted line counts, and comment validation rejects ranges that cross lines missing from the diff.
+Canonical comment anchors remain complete and use compact inclusive ranges internally. Inventories retain exact line counts, and validation rejects comment spans that cross missing diff lines. See [Architecture](docs/architecture.md#the-six-lanes) for the representation and large-diff limits.
 
-The snapshot includes GitHub closing issues and explicit `related to` or `relates to` references to issues and pull requests. References accept local numbers, `owner/repository#number`, and GitHub issue or PR URLs. Related PRs supply their descriptions, files, commits, and discussion history; gathering stops after one hop. The `get_pr` Tool returns nested PR inventories as name-only `changedFiles` and `ignoredFiles` arrays; `get_pr_diff` supplies their patches when needed. Related references load in bounded batches that retain every reference. Closing issues define claimed requirements, while related issues and PRs provide context. Publication rechecks referenced issue timestamps and related PR timestamps and heads.
+The snapshot includes closing issue requirements and explicitly related issue and PR descriptions, decisions, commits, and discussion history. Related PR enrichment stops after one hop. Closing issues define claimed requirements; related references supply context. Publication rechecks their timestamps and PR heads.
 
 ### Model judgment and application authority
 
@@ -143,15 +144,9 @@ Copy [examples/singular-code-review.yml](examples/singular-code-review.yml) into
 
 ### Fork it and make it yours
 
-1. Fork this repository.
-2. Create a GitHub App with `Contents: read`, `Issues: write`, and `Pull requests: write`, then install it on the repositories you want reviewed.
-3. Update the App client ID and container image in [.github/workflows/review.yml](.github/workflows/review.yml). The image should point at your fork's GHCR package.
-4. Update the reusable-workflow owner in [examples/singular-code-review.yml](examples/singular-code-review.yml) from `we-are-singular` to your GitHub owner.
-5. If you rename the bot, change the mention and default bot login in [src/services/review-evidence.ts](src/services/review-evidence.ts), then update the example workflow trigger.
-6. Push to your fork's `main` branch to publish `ghcr.io/YOUR_OWNER/YOUR_REPOSITORY:latest`.
-7. Store your App private key and model credentials as repository or organization secrets in each consuming repository, then copy your edited trigger workflow there.
+Fork this repository, create and install a GitHub App, and configure your fork's image and reusable-workflow references. You own the App private key, model account, runner capacity, and review policy; consuming repositories receive short-lived installation tokens.
 
-The consuming repository receives a short-lived installation token during each run. It does not receive a long-lived GitHub token. You own the App, private key, image, model account, runner capacity, and any changes to the review policy.
+The [setup guide](docs/running.md#create-your-deployment) covers App permissions, workflow edits, runner selection, secrets, image publication, and bot renaming.
 
 ## Configuration
 
@@ -172,7 +167,7 @@ Both variables must name a model that the image's OpenCode advertises. Each atte
 
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
-The runner writes concise review progress to standard error while keeping its complete JSON result on standard output. Progress includes the main review components, Agent turn boundaries, durations, and each completed turn's response. It excludes framework plumbing, trace identities, prompts, streamed reasoning, and usage payloads. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.
+The runner writes review progress to standard error and its complete JSON result to standard output. GitHub Actions adds a job summary with the model, turns, available usage, findings, and publication status. The [setup guide](docs/running.md#configuration) explains the output and configuration options.
 
 Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
 
@@ -197,7 +192,9 @@ We maintain an eval framework that runs the reviewer against a corpus of private
 
 It is not a foolproof benchmark. The corpus reflects the code and review problems we care about, and LLM-as-judge has its own blind spots. It gives us a useful ruler for checking whether changes to the reviewer improve review quality without making reviews slower or more expensive.
 
-Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed snapshot, not a same-revision model comparison.
+### Model snapshots
+
+Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed calibration snapshot, not a same-revision model comparison.
 
 | Model                | Score |    Time |              Cost |
 | -------------------- | ----: | ------: | ----------------: |
@@ -209,11 +206,7 @@ Time and reviewer cost are averages per review; cost excludes judge inference. E
 | GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
 | MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
 
-\* DeepSeek V4 Flash uses separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The range applies both prices to this snapshot's measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
-
-The DeepSeek row was refreshed on 2026-08-31 after separating conditional routing into `<ReviewRouter>`, keeping publication as the next authored component, and allowing review handoffs to resolve natively from the specialist leaves through audit and synthesis. On the same pinned, history-blind ten-PR corpus and unchanged rubric, all ten reviews completed and the score moved from 88.0 to 87.6 while mean reviewer time moved from 3m 49s to 5m 45s. The reviewer used 79 model completions instead of 80; total reviewer token volume increased 4.8%, while the combined audit and synthesis volume remained effectively flat. This is one directly comparable run, not a repeated-run confidence interval, and observed latency varies with provider load.
-
-See [eval/README.md](eval/README.md) for the capture, judgment, reporting, comparison, and private-corpus rules.
+\* The DeepSeek V4 Flash range applies the [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits) used for that snapshot to its measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
 
 ## Local development
 
@@ -255,8 +248,10 @@ ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
 
 Version tags publish matching image tags. The final pre-[AML](https://agent-markup-language.com/) reviewer is frozen as the manually published `legacy` tag with a matching [.github/workflows/review-legacy.yml](.github/workflows/review-legacy.yml). Normal pushes do not update it. It is a rollback path for Singular's existing deployment and does not receive new review features.
 
-## Project documents
+## Documentation
 
-- [PRD.md](PRD.md) defines the review engine's product and safety contract.
-- [eval/README.md](eval/README.md) documents repeatable model and reviewer evaluation.
-- [FUTURE.md](FUTURE.md) tracks the managed service and reviewer work that remains.
+- [Setup and configuration](docs/running.md): GitHub App, workflows, credentials, models, images, and rollback.
+- [Architecture](docs/architecture.md): AML composition, finding ownership, evidence, and safety.
+- [Evaluation](eval/README.md): capture, judge, compare, and reproduce benchmarks.
+- [Cost accounting](docs/cost-telemetry.md): usage recovery, price estimates, and billing limits.
+- [Product contract](PRD.md) and [Future work](FUTURE.md): current guarantees and planned capabilities.

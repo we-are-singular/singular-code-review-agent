@@ -103,6 +103,8 @@ Production uses OpenCode with opencode-go/deepseek-v4.1-flash by default and ope
 
 Every eval capture preserves the raw typed result, provider/model identity, immutable image identity, exact PR revisions, judge views, timing, usage, and completion state. Exit zero alone is insufficient; required artifacts and a complete typed review must exist before judgment or cache promotion.
 
+Public documentation and committed examples may describe this reviewer, public open-source projects, and anonymized benchmark aggregates. Private project identities and review contents stay local, including repository names and links, PR identifiers, pinned revisions, excerpts, and machine-specific paths.
+
 ## Managed-service acceptance criteria
 
 The future hosted product must add, without weakening the engine contract:

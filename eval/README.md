@@ -35,27 +35,46 @@ Small score changes are not proof on their own. Model output varies between atte
 
 ## Latest reviewer-change snapshot
 
-On 2026-08-31, the explicit `<ReviewRouter>` and ordered `<ReviewPublication>` implementation ran against the same ten pinned, history-blind private pull-request revisions as the previous leaf-first AML snapshot. Both snapshots used `opencode-go/deepseek-v4-flash` for review and judgment with the same rubric.
+On 2026-10-14, the inclusive-range candidate and the starting compaction implementation each reviewed eleven pinned revisions: a fixed ten-revision corpus plus one deletion-heavy large change. Both variants completed all eleven fresh captures and all eleven judgments. The reviewer and judge used `opencode-go/deepseek-v4-flash`, with history ignored and concurrency 1. Both images shared the same runtime parent; the control already included deleted-file compaction.
 
-| Metric | Previous AML tree | Router tree | Change |
+Only anonymous aggregates are published here. Private repository names, PR identifiers, titles, revisions, review excerpts, and raw artifacts remain local.
+
+| Cohort | Judge score / 100, control → candidate | Mean reviewer time, control → candidate | Mean estimated reviewer cost, control → candidate |
 | --- | ---: | ---: | ---: |
-| Completed captures | 10/10 | 10/10 | unchanged |
-| Judge score | 88.0 | 87.6 | -0.4 points |
-| Mean reviewer time | 3m 49s | 5m 45s | 1m 56s slower (51%) |
-| Reviewer completions | 80 | 79 | one fewer |
-| Reviewer tokens | 4.09M | 4.28M | 4.8% more |
-| Retained comments | 30 | 38 | eight more |
-| Reviewer cost per PR | $0.0088 off-peak | $0.0129 off-peak / $0.0258 peak | usage and tariff changed |
+| Ten fixed revisions | 84.5 → 85.7 | 8m 32s → 8m 18s | $0.617 → $0.574 |
+| One large deletion-heavy revision | 84.0 → 82.0 | 14m 23s → 11m 55s | $0.646 → $1.407 |
+| All eleven | 84.5 → 85.4 | 9m 04s → 8m 38s | $0.619 → $0.650 |
 
-The router run completed every capture on its first attempt and recorded no hard failures. Combined audit and synthesis token volume remained effectively flat at about 333K versus 328K despite one fewer model completion, so the native upward handoff did not duplicate parent work. Most additional token volume came from the six investigative lanes.
+Reviewer time excludes checkout, judgment, and orchestration gaps. Costs use recovered `opencode-db` usage and the committed fixed price table, exclude judge inference, and are estimates rather than billed charges. The benchmark model's rates are `[0.30, 1.20, 0.006]` USD per million input, output, and cached-input tokens. See [Cost accounting](../docs/cost-telemetry.md). These values replace the August snapshot; its earlier usage-accounting basis is not a direct cost comparator.
 
-DeepSeek V4 Flash has separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The previous capture ran during off-peak pricing; the router capture ran during a peak window. The normalized $0.0129 and observed $0.0258 values apply both tariffs to the same router-run token usage and exclude judge inference. Actual cost also varies with review content, cache behavior, and future provider pricing.
+The candidate's mean time is 2.9% lower on the ten and 4.9% lower across all eleven. Three of its ten reviews exceeded the advisory ten-minute target, versus four for the control, and several individual reviews were slower. The large case was faster but scored slightly lower and cost more. One paired capture per revision does not establish a causal speedup, quality equivalence, or a stable cost improvement. The candidate cohort ran before the control, leaving provider load and execution-order effects uncontrolled; the judge was the same model used for review.
 
-The router run retained one high, 13 low, 23 nit, and one question finding. The previous snapshot retained 15 low and 15 nit findings. Manual inspection and judge feedback found stronger behavioral-edge-case, public-contract, documentation, and output-hygiene coverage, but weaker severity calibration in two reviews; the material-finding count remained nearly flat while nit volume increased.
+The candidate retained 40 comments versus 30 for the control, with no deterministic validation drops in either cohort. Manual inspection found overlapping major findings, different investigations and severity choices, and duplicate feedback in one candidate review. Comment volume and a small aggregate score change do not establish improved coverage.
 
-One judgment exceeded the corpus's 180-second judge timeout. The initial failed attempt was retained, and a targeted retry with a 360-second ceiling completed the tenth judgment. The score above uses ten completed judgments; reviewer time and cost remain reviewer-only and are unaffected by that retry.
+The initial packaging canary failed before model execution and was retained as a diagnostic, excluded from reviewer timing. Every successful primary capture and judgment completed on its first model attempt. The images predate the final filename and Git blank-context corrections; local checks verify byte-identical raw/model patches and equivalent anchors on all eleven revisions, with dedicated regression tests for those edges. Those fixes did not receive another provider capture.
 
-This is one directly comparable before-and-after run, not a repeated-run confidence interval. It shows that the router tree preserved aggregate quality without adding model turns, while the observed latency, lane token volume, and severity calibration should be rechecked in later prompt changes.
+### Deterministic preparation benchmark
+
+Ten fresh-process trials per variant at each size alternate control and candidate order. A synthetic repository contains one contiguous deleted file with fixed 54-byte source lines and a small active-file edit. Peak RSS includes session loading and diff-fragment serialization in the reviewer process; it excludes fixture generation, Git child-process RSS, and model execution.
+
+| Deleted lines | Mean load + serialization, control → candidate | Mean peak RSS, control → candidate | Serialized diff fragment, control → candidate |
+| ---: | ---: | ---: | ---: |
+| 1,000,000 | 434.6 → 266.7 ms | 377.1 → 212.5 MiB | 27,556,296 → 792 bytes |
+| 2,500,000 | 1,110.6 → 630.8 ms | 755.1 → 402.6 MiB | 75,556,296 → 792 bytes |
+
+At 2.5 million deleted lines, the raw patch is 137,500,304 bytes and the model projection is 252 bytes. Each pair verifies the model-text hash, complete anchor counts and coordinate sums, and exclusions. The small fixture retains its full filtered model text. The complete raw patch still occupies memory during parsing, and fragmented changes require more ranges. This deletion-heavy fixture does not measure addition-heavy model context or lane-investigation limits.
+
+Reproduce the preparation benchmark with separately compiled baseline and candidate code:
+
+```bash
+node eval/diff-benchmark.mjs \
+  --before /path/to/baseline/dist \
+  --after dist \
+  --runs 10 \
+  --out /tmp/diff-benchmark.json
+```
+
+The default sizes are 1,000, 1,000,000, and 2,500,000 deleted lines. `--lines` accepts a comma-separated override. Keep all trial samples; this preparation benchmark does not establish end-to-end review latency.
 
 ## Requirements
 
