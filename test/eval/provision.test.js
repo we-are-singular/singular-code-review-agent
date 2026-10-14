@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFileSync, spawnSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -8,9 +8,6 @@ import { fileURLToPath } from "node:url"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const provision = path.join(repoRoot, "bin", "provision.sh")
-// provision.sh targets the runtime image's bash; macOS still ships bash 3.2 without `${var,,}`.
-const skipReason =
-  spawnSync("bash", ["-c", 'value=A; : "${value,,}"']).status === 0 ? undefined : "bin/provision.sh requires bash >= 4"
 
 function makeExecutable(file, body) {
   fs.writeFileSync(file, body, { mode: 0o755 })
@@ -70,7 +67,7 @@ fs.writeFileSync(process.env.NPM_ARGS_FILE, JSON.stringify(process.argv.slice(1)
   }
 }
 
-test("provision runs npm ci with install scripts allowed", { skip: skipReason }, () => {
+test("provision runs npm ci with install scripts allowed", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")
@@ -81,7 +78,7 @@ test("provision runs npm ci with install scripts allowed", { skip: skipReason },
   ])
 })
 
-test("provision runs npm install with install scripts allowed", { skip: skipReason }, () => {
+test("provision runs npm install with install scripts allowed", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
 
@@ -92,7 +89,18 @@ test("provision runs npm install with install scripts allowed", { skip: skipReas
   ])
 })
 
-test("provision skips dependency install by default", { skip: skipReason }, () => {
+test("provision accepts mixed-case install flags", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
+  fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
+  fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")
+
+  assert.deepEqual(runProvision(workspace, { SINGULAR_CODE_REVIEW_INSTALL_DEPS: "Yes" }).npmArgs, [
+    "ci",
+    "--dangerously-allow-all-scripts"
+  ])
+})
+
+test("provision skips dependency install by default", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "provision-workspace-"))
   fs.writeFileSync(path.join(workspace, "package.json"), "{}\n")
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}\n")

@@ -28,9 +28,11 @@ resolve_workspace() {
 
 install_dependencies() {
   local workspace="$1"
-  local install_deps="${SINGULAR_CODE_REVIEW_INSTALL_DEPS:-false}"
+  local install_deps
+  # `tr` instead of `${var,,}` keeps this runnable under macOS's bash 3.2.
+  install_deps="$(printf '%s' "${SINGULAR_CODE_REVIEW_INSTALL_DEPS:-false}" | tr '[:upper:]' '[:lower:]')"
 
-  case "${install_deps,,}" in
+  case "$install_deps" in
     true|1|yes|on)
       ;;
     *)
