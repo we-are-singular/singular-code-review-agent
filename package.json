@@ -11,7 +11,7 @@
   "scripts": {
     "review": "node dist/cli/review.js",
     "build": "bash scripts/build.sh",
-    "test": "npm run build && node --test test/*.test.js",
+    "test": "npm run build && node --test 'test/**/*.test.js'",
     "eval": "node eval/run.mjs",
     "eval:cache": "node eval/cache.mjs",
     "eval:judge": "node eval/judge.mjs",
