@@ -194,19 +194,20 @@ It is not a foolproof benchmark. The corpus reflects the code and review problem
 
 ### Model snapshots
 
-Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed calibration snapshot, not a same-revision model comparison.
+Actual 30-minute review timeouts count as zero; other errors remain unscored. Time and reviewer cost average completed reviews, excluding judge inference and failed-attempt spend. Each row is that model's latest calibration snapshot. Reviewer revisions, judges, usage accounting, time limits, and concurrency vary across snapshots, so these are not controlled comparisons.
 
-| Model                | Score |    Time |              Cost |
-| -------------------- | ----: | ------: | ----------------: |
-| DeepSeek V4 Flash    |  87.6 |  5m 45s | $0.0129–$0.0258\* |
-| GLM 5.3 Flash        |  87.8 |  5m 43s |           $0.0108 |
-| MiMo V2.5            |  86.0 |  7m 32s |           $0.0128 |
-| HY3                  |  83.0 |  3m 23s |           $0.0307 |
-| Qwen 3.7 Max         |  83.0 | 18m 41s |           $0.9504 |
-| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
-| MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
-
-\* The DeepSeek V4 Flash range applies the [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits) used for that snapshot to its measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
+| Model                      | Score |    Time |             Cost |
+| -------------------------- | ----: | ------: | ---------------: |
+| GLM 5.3 Flash              |  87.8 |  5m 43s |          $0.0108 |
+| Qwen3.8 Flash              |  86.0 | 11m 15s |          $0.2425 |
+| DeepSeek V4.1 Flash        |  84.7 |  7m 17s |          $0.2145 |
+| Space Bunny                |  84.5 |  1m 47s |          $0.1338 |
+| LongCat 2.5 Preview        |  83.8 | 10m 46s | $0 (promotional) |
+| HY3                        |  83.0 |  3m 23s |          $0.0307 |
+| GPT-5.6 Luna `xhigh`       |  76.5 | 17m 14s |          $0.0838 |
+| Muse Spark 1.3 Contributor |  76.4 |  1m 05s |          $0.0247 |
+| MiniMax M3                 |  74.7 |  9m 42s |          $0.6012 |
+| MiMo V2.6 Flash            |  31.9 | 17m 57s |          $0.1621 |
 
 ## Local development
 
