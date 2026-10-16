@@ -166,6 +166,8 @@ export class ReviewTelemetryCollector {
   readonly #completed: TraceSummary[] = []
   readonly #providerCompletions: ReviewProviderCompletion[] = []
   readonly #sessionIds = new Set<string>()
+  readonly #promptedTurns = new Set<string>()
+  #additionalPrompts = 0
   readonly #progress?: ReviewProgressRenderer
 
   readonly trace: TraceSink
@@ -198,6 +200,9 @@ export class ReviewTelemetryCollector {
       this.#sessionIds.add(event.attributes.sessionId)
     }
     if (event.type === "event" && event.name === "acp.session.prompt.completed") {
+      // Structured-output repair adds prompt samples without adding authored turns.
+      if (this.#promptedTurns.has(event.spanId)) this.#additionalPrompts += 1
+      this.#promptedTurns.add(event.spanId)
       const sessionId = event.attributes.sessionId
       const stopReason = event.attributes.stopReason
       if (typeof sessionId === "string" && sessionId && typeof stopReason === "string" && stopReason) {
@@ -209,6 +214,9 @@ export class ReviewTelemetryCollector {
           })
         )
       }
+    }
+    if (event.type === "span.end" && event.kind === "agent" && event.name === "agent.turn") {
+      this.#promptedTurns.delete(event.spanId)
     }
     if (event.type !== "span.end" || event.kind !== "evaluation") {
       return
@@ -252,7 +260,7 @@ export class ReviewTelemetryCollector {
     let totalTokens: number | null = null
     let costUsd: number | null = null
     let reportedCosts = 0
-    let pricedTurns = 0
+    let pricedSamples = 0
 
     for (const summary of this.#completed) {
       agentCalls += summary.agents.turns.count
@@ -276,17 +284,18 @@ export class ReviewTelemetryCollector {
               value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)
             )
           )
-            pricedTurns += 1
+            pricedSamples += 1
         } catch {
           // Provider telemetry must never decide whether a valid review completes.
         }
       }
     }
 
-    // A reported subtotal must not appear to be the cost of the whole review.
-    if (reportedCosts !== agentCalls) costUsd = null
+    // Require every completed prompt, retaining one fallback sample for turns without ACP events.
+    const expectedSamples = agentCalls + this.#additionalPrompts
+    if (reportedCosts !== expectedSamples) costUsd = null
     let estimatedCostUsd: number | null = null
-    if (agentCalls > 0 && pricedTurns === agentCalls) {
+    if (expectedSamples > 0 && pricedSamples === expectedSamples) {
       estimatedCostUsd = estimateCostUsd(model, {
         inputTokens,
         outputTokens,
