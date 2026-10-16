@@ -44,27 +44,29 @@ function event(runId, name, attributes) {
 test("review telemetry derives usage and summaries from completed AML evaluations", () => {
   const telemetry = new ReviewTelemetryCollector()
   const runId = "review-run"
+  const usage = {
+    inputTokens: 100,
+    outputTokens: 20,
+    thoughtTokens: 8,
+    cachedReadTokens: 80,
+    cachedWriteTokens: 5,
+    totalTokens: 208,
+    costUsd: 0.01
+  }
   telemetry.trace(
     event(runId, "acp.session.prompt.completed", {
       sessionId: "session-1",
       stopReason: "end_turn",
-      usage: JSON.stringify({ totalTokens: 208 })
+      usage: JSON.stringify(usage)
     })
   )
   telemetry.trace(
     spanEnd(runId, {
       kind: "agent",
       name: "agent.turn",
+      spanId: "agent-turn",
       attributes: {
-        usage: JSON.stringify({
-          inputTokens: 100,
-          outputTokens: 20,
-          thoughtTokens: 8,
-          cachedReadTokens: 80,
-          cachedWriteTokens: 5,
-          totalTokens: 208,
-          costUsd: 0.01
-        })
+        usage: JSON.stringify(usage)
       }
     })
   )
@@ -99,6 +101,22 @@ test("review telemetry ignores incomplete provider completion events", () => {
   telemetry.trace(event("review-run", "unrelated", { sessionId: "session-2", stopReason: "end_turn" }))
 
   assert.deepEqual(telemetry.providerCompletions(), [])
+})
+
+test("providers without ACP prompt events retain turn-level usage", () => {
+  const telemetry = new ReviewTelemetryCollector()
+  telemetry.trace(
+    spanEnd("fallback", {
+      kind: "agent",
+      name: "agent.turn",
+      attributes: { usage: JSON.stringify({ inputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0.1 }) }
+    })
+  )
+  telemetry.trace(spanEnd("fallback", { kind: "evaluation", name: "evaluation" }))
+
+  assert.equal(telemetry.usage().agentCalls, 1)
+  assert.equal(telemetry.usage().totalTokens, 15)
+  assert.equal(telemetry.usage().costUsd, 0.1)
 })
 
 test("review telemetry renders only review components and completed turn text", () => {

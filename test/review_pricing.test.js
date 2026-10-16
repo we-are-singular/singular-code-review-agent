@@ -16,18 +16,34 @@ const model = "opencode-go/minimax-m3"
 // OpenCode omits zero cache-write usage and separates reasoning from output.
 const tokens = { inputTokens: 200, outputTokens: 160, thoughtTokens: 40, cachedReadTokens: 2000, totalTokens: 2400 }
 
-function collect(samples, selectedModel = model) {
+function collect(samples, selectedModel = model, status = "ok") {
   const telemetry = new ReviewTelemetryCollector()
   samples.forEach((usage, index) => {
+    const prompts = Array.isArray(usage) ? usage : [usage]
     const common = {
       runId: "fixture",
       spanId: `turn-${index}`,
       timestamp: 1,
-      sequence: index + 1,
-      attributes: usage ? { usage: JSON.stringify(usage) } : {}
+      sequence: index + 1
     }
-    telemetry.trace({ ...common, type: "event", name: "acp.session.prompt.completed" })
-    telemetry.trace({ ...common, type: "span.end", kind: "agent", name: "agent.turn", status: "ok", durationMs: 1 })
+    for (const promptUsage of prompts) {
+      telemetry.trace({
+        ...common,
+        type: "event",
+        name: "acp.session.prompt.completed",
+        attributes: promptUsage ? { usage: JSON.stringify(promptUsage) } : {}
+      })
+    }
+    const lastUsage = prompts.at(-1)
+    telemetry.trace({
+      ...common,
+      type: "span.end",
+      kind: "agent",
+      name: "agent.turn",
+      status,
+      durationMs: 1,
+      attributes: status === "ok" && lastUsage ? { usage: JSON.stringify(lastUsage) } : {}
+    })
   })
   telemetry.trace({
     runId: "fixture",
@@ -38,7 +54,7 @@ function collect(samples, selectedModel = model) {
     type: "span.end",
     kind: "evaluation",
     name: "evaluation",
-    status: "ok",
+    status,
     durationMs: 2
   })
   return telemetry.usage(selectedModel)
@@ -95,6 +111,38 @@ test("a partial reported subtotal is not the full review cost", () => {
   const usage = collect([{ ...tokens, costUsd: 0.1 }, tokens])
   assert.equal(usage.costUsd, null)
   assert.ok(usage.estimatedCostUsd > 0)
+})
+
+test("repair prompts contribute usage and costs once without adding authored turns", () => {
+  const usage = collect([
+    [
+      { ...tokens, costUsd: 0.1 },
+      { ...tokens, costUsd: 0.2 }
+    ]
+  ])
+  assert.equal(usage.agentCalls, 1)
+  assert.equal(usage.totalTokens, 4800)
+  assert.equal(usage.cacheReadTokens, 4000)
+  assert.ok(Math.abs(usage.costUsd - 0.3) < 1e-12)
+  assert.ok(Math.abs(usage.estimatedCostUsd - 0.00084) < 1e-12)
+})
+
+test("completed prompt usage survives a later repair failure", () => {
+  const usage = collect([[{ ...tokens, costUsd: 0.1 }]], model, "error")
+  assert.equal(usage.agentCalls, 1)
+  assert.equal(usage.totalTokens, 2400)
+  assert.equal(usage.costUsd, 0.1)
+  assert.ok(Math.abs(usage.estimatedCostUsd - 0.00042) < 1e-12)
+})
+
+test("repair samples cannot hide missing usage in another prompt or turn", () => {
+  const reported = { ...tokens, costUsd: 0.1 }
+  for (const samples of [[[reported, null]], [[null, reported]], [[reported, reported], null]]) {
+    const usage = collect(samples)
+    assert.ok(usage.totalTokens > 0)
+    assert.equal(usage.costUsd, null)
+    assert.equal(usage.estimatedCostUsd, null)
+  }
 })
 
 test("unknown models, missing turns and invalid counters do not become free estimates", () => {

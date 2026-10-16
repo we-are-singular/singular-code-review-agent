@@ -8,7 +8,7 @@ Review costs come only from recovered database tokens: `usage.costUsd` stays nul
 
 The shared `estimateCostUsd` function owns the arithmetic for database steps, diagnostic AML estimates, and eval pricing. The database override prices each step using its actual provider/model, rather than assuming every request used the configured review model. An unknown model leaves the entire estimate unavailable. OpenCode's stored `cost` is itself a catalog estimate and is not treated as provider-reported cost. Reasoning is charged at the output rate: [OpenCode normalizes output to exclude reasoning, and input to exclude caches](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/opencode/src/session/session.ts#L338). The optional ACP reasoning/cache fields are omitted when zero.
 
-The Go API advertises `deepseek-flash`; [OpenCode maps that name to DeepSeek V4.1 Flash](https://github.com/anomalyco/opencode/blob/dev/packages/stats/core/src/domain/model-normalization.ts). Both names have explicit entries in the map with the same fixed maximum rates. Models.dev lists `deepseek-v4.1-flash` but omits the alias, so OpenCode can select only the versioned name, and only from its refreshed catalog: the pinned image's bundled snapshot includes neither name. Adding prices does not make a model selectable. Models.dev deprecated `deepseek-v4-flash` on 2026-10-14, and OpenCode hides deprecated models.
+The Go API advertises `deepseek-flash`; [OpenCode maps that name to DeepSeek V4.1 Flash](https://github.com/anomalyco/opencode/blob/dev/packages/stats/core/src/domain/model-normalization.ts). Both names have explicit entries in the map with the same fixed maximum rates. Models.dev lists `deepseek-v4.1-flash` but omits the alias, so OpenCode can select only the versioned name; OpenCode 1.19.0 includes it in the bundled catalog. Adding prices does not make a model selectable. Models.dev deprecated `deepseek-v4-flash` on 2026-10-14, and OpenCode hides deprecated models.
 
 ## Confirmed token gap
 
@@ -30,7 +30,7 @@ OpenCode also emits a separate `usage_update` containing cumulative session cost
 
 ## Temporary database override
 
-AML 0.8.1 closes and deletes each Agent's invocation state before that Agent's component finishes, not at the end of `evaluate()` or the script. A final sibling cannot read those original databases. `opencode-usage.sh` therefore launches the unmodified OpenCode executable with each Agent's database redirected into a private, review-owned temporary directory. All other AML state and cleanup remain unchanged; databases stay separate per Agent.
+AML closes and deletes each Agent's invocation state before that Agent's component finishes, not at the end of `evaluate()` or the script. A final sibling cannot read those original databases. `opencode-usage.sh` therefore launches the unmodified OpenCode executable with each Agent's database redirected into a private, review-owned temporary directory. All other AML state and cleanup remain unchanged; databases stay separate per Agent.
 
 `ReviewUsageCollection` is the final deterministic sibling in the review tree, after routing, all model work, and publication. It collects stored `step-finish` parts through Node's built-in read-only SQLite connection. It does not export prompts or tool content, add duplicated message totals, sum context-occupancy updates, or query the user's global OpenCode history. If a routed evaluation fails or is cancelled before that sibling, the runner collects in `finally` after AML settles, then removes the retained directory in either case.
 
@@ -38,7 +38,7 @@ Results retain `amlUsage` and raw `traceSummaries` unchanged. `usageSource` is `
 
 Failed `runReview` calls attach accounting to `ReviewUnavailableError.accounting`. The separate workflow fallback still does not merge previous process attempts into the successful result; cross-attempt invoice reconciliation remains outside this override.
 
-The database is not a complete billing ledger: requests without recorded usage cannot be recovered. Title generation is now disabled with `agent.title.disable: true` because these disposable review sessions do not need titles and OpenCode does not store that usage. Compaction remains enabled; there is no verified attribution of the remaining live-run gap to compaction. Remove the launcher and override only after a stock OpenCode release passes the multi-request reconciliation probe; see [OpenCode #41660](https://github.com/anomalyco/opencode/issues/41660). The separate AML repair-prompt summary issue is tracked in [AML #55](https://github.com/we-are-singular/aml/issues/55); no AML changes are required here.
+The database is not a complete billing ledger: requests without recorded usage cannot be recovered. Title generation is now disabled with `agent.title.disable: true` because these disposable review sessions do not need titles and OpenCode does not store that usage. Compaction remains enabled; there is no verified attribution of the remaining live-run gap to compaction. Remove the launcher and override only after a stock OpenCode release passes the multi-request reconciliation probe; see [OpenCode #41660](https://github.com/anomalyco/opencode/issues/41660). AML SDK 0.9.0 fixes the separate [repair-prompt summary issue](https://github.com/we-are-singular/aml/issues/55): summaries retain each completed ACP prompt's usage once, including when a later repair fails. The reviewer counts those samples separately from authored Agent turns when checking diagnostic cost completeness; this does not recover OpenCode's intermediate model calls.
 
 ## Offline verification
 
@@ -50,6 +50,8 @@ The production launcher and collector were exercised against the existing stock 
 | Same loop with one HTTP retry        |            2,400 |                 3,600 |
 | Later request fails                  |      unavailable |                 1,200 |
 | Two parallel Agents                  |            4,800 |                 7,200 |
+
+All four scenarios passed again on 2026-10-16 using the rebuilt reviewer image with AML SDK 0.9.0 and `wearesingular/aml-agent-sandbox:0.6.1-opencode` (OpenCode 1.19.0, AML CLI 0.3.4). The counters in the table were unchanged, so the database override remains necessary. The new CLI also ran a deterministic TSX workflow with the embedded SDK while networking was disabled.
 
 These are deterministic fixture counters, not a measured production multiplier. Run from the repository root after `npm run build`:
 
