@@ -37,7 +37,7 @@ test("production OpenCode launch disables titles without disabling compaction", 
   const config = JSON.parse(await captureLaunch(t, '"$OPENCODE_CONFIG_CONTENT"'))
   assert.equal(config.agent.title.disable, true)
   assert.notEqual(config.agent.compaction?.disable, true)
-  assert.equal(config.tools.task, false)
+  assert.equal(config.permission.task, "deny")
 })
 
 const catalogEnvironment = '"$OPENCODE_MODELS_PATH|$OPENCODE_DISABLE_MODELS_FETCH"'

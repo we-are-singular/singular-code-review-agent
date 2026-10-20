@@ -439,12 +439,17 @@ sleep 30
   for (const tool of ["bash", "edit", "webfetch", "websearch"]) {
     assert.equal(config.permission[tool], "deny")
   }
-  assert.deepEqual(config.tools, { task: false })
-  assert.equal(config.agent.aml.permission["*"], "allow")
-  assert.equal(config.agent.aml.tools.task, false)
+  assert.deepEqual(config.permission.external_directory, {
+    "*": "deny",
+    "/home/aml/.agents/skills/backend-architecture/*": "allow",
+    "/home/aml/.agents/skills/frontend-architecture/*": "allow"
+  })
+  assert.equal(config.experimental.continue_loop_on_deny, true)
+  assert.equal(config.permission.task, "deny")
+  assert.notEqual(config.tools["*"], true)
+  assert.notEqual(config.agent.aml.permission["*"], "allow")
   for (const tool of ["bash", "edit", "webfetch", "websearch", "write"]) {
     assert.equal(config.agent.aml.permission[tool], "deny")
-    assert.equal(config.agent.aml.tools[tool], false)
   }
   assert.equal(autoUpdate, "true")
   assert.equal(projectConfig, "1")
