@@ -101,6 +101,8 @@ The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agen
 
 Each lane can read the checkout and the same frozen PR evidence. Agents have read-only filesystem permissions, no native shell, and no native network access. Context7 and narrow read-only GitHub tools are available when the change depends on external documentation or linked GitHub evidence. Findings reach the author only through typed review tools.
 
+OpenCode's native permission rules deny lookups targeting directories outside the checkout, with exceptions for the image's pinned architecture skills and inputs staged by AML for that Agent. A denied lookup lets the Agent narrow its search and continue the review.
+
 PRs above 10,000 total added and deleted lines use a local diff of the pinned base/head commits, with only deletion headers shown for wholly deleted files. Historical source inspection is not available through unrestricted shell; a future bounded file-inspection tool must provide that evidence. The application retains complete changed-line ranges for comment validation. Smaller PRs keep their full filtered diff; if GitHub rejects a diff as too large, local Git supplies it without changing the compaction threshold. If local reconstruction is unavailable for a large PR, a complete GitHub diff is used uncompacted, and the review fails only when GitHub also cannot serve it.
 
 Canonical comment anchors remain complete and use compact inclusive ranges internally. Inventories retain exact line counts, and validation rejects comment spans that cross missing diff lines. See [Architecture](docs/architecture.md#the-six-lanes) for the representation and large-diff limits.

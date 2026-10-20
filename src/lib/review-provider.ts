@@ -18,6 +18,16 @@ export function createReviewProvider(options: CreateReviewProviderOptions): Agen
     config: {
       // These sessions are disposable; generating titles adds unrecorded model usage.
       agent: { title: { disable: true } },
+      permission: {
+        external_directory: {
+          "*": "deny",
+          // The image installs these pinned skills outside the reviewed checkout.
+          "/home/aml/.agents/skills/backend-architecture/*": "allow",
+          "/home/aml/.agents/skills/frontend-architecture/*": "allow"
+        }
+      },
+      // A rejected lookup should let the Agent narrow its search and finish the review.
+      experimental: { continue_loop_on_deny: true },
       tools: { task: false }
     },
     directory: options.workspace,
