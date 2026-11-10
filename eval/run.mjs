@@ -32,7 +32,8 @@ import { canonicalJobArtifacts, completedJobArtifacts } from "./lib/job-artifact
 import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const DEFAULT_BASE_IMAGE = "wearesingular/aml-agent-sandbox:opencode"
+// Match the production Dockerfile unless a capture explicitly selects another runtime.
+const DEFAULT_BASE_IMAGE = "wearesingular/aml-agent-sandbox:0.6.3-opencode"
 const REVIEW_PROVIDER = "opencode"
 const EXTRACTED_ARTIFACTS = [
   "review.md",
@@ -433,7 +434,7 @@ Options:
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
   --image <tag>             Docker image tag. Default: singular-code-review:eval
-  --base-image <tag>        AML base image. Example: wearesingular/aml-agent-sandbox:0.6.2-opencode
+  --base-image <tag>        AML base image. Default: ${DEFAULT_BASE_IMAGE}
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
 `)
