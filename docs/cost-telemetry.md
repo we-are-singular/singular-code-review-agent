@@ -53,6 +53,8 @@ The production launcher and collector were exercised against the existing stock 
 
 All four scenarios passed again on 2026-10-16 using the rebuilt reviewer image with AML SDK 0.9.0 and `wearesingular/aml-agent-sandbox:0.6.1-opencode` (OpenCode 1.19.0, AML CLI 0.3.4). The counters in the table were unchanged, so the database override remains necessary. The new CLI also ran a deterministic TSX workflow with the embedded SDK while networking was disabled.
 
+The same four scenarios passed on 2026-11-10 with SDK 0.9.2 and sandbox `0.6.3-opencode` (OpenCode 1.19.4, AML CLI 0.3.5). The counters and cleanup assertions remained unchanged; the embedded CLI also passed an offline TSX execution check. This verifies the local runtime integration, without credentialed provider or production billing reconciliation.
+
 These are deterministic fixture counters, not a measured production multiplier. Run from the repository root after `npm run build`:
 
 ```bash
