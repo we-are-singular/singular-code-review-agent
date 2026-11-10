@@ -53,6 +53,10 @@ The CLI is dry-run by default; live GitHub mutations require `--publish`. Use th
 
 ## Images and rollback
 
+The production Dockerfile and default evaluation captures use AML sandbox `0.6.3-opencode` with SDK `0.9.2`. Use `--base-image` for an explicit evaluation override.
+
+Run `npm run audit` to check the committed dependency tree, including development tools, against current npm advisories. Image CI blocks on any reported vulnerability; a separate weekly and manually dispatched dependency audit checks for new advisories without installing packages. These checks cover the repository lockfile; the base image's operating-system packages and globally installed tools require separate image audits.
+
 Successful pushes to `main` publish:
 
 ```text
