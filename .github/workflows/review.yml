@@ -103,10 +103,10 @@ jobs:
 
       - name: Run Singular Code Review
         if: steps.review-preflight.outputs.should_review == 'true'
-        timeout-minutes: 42
+        timeout-minutes: 52
         run: |
           set +e
-          timeout 20m /usr/local/bin/review_runner --publish
+          timeout 25m /usr/local/bin/review_runner --publish
           primary_status=$?
           set -e
 
@@ -118,7 +118,7 @@ jobs:
           fi
 
           echo "::warning::primary review model failed before publication; retrying with ${REVIEW_FALLBACK_MODEL}"
-          REVIEW_MODEL="$REVIEW_FALLBACK_MODEL" timeout 20m /usr/local/bin/review_runner --publish
+          REVIEW_MODEL="$REVIEW_FALLBACK_MODEL" timeout 25m /usr/local/bin/review_runner --publish
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]

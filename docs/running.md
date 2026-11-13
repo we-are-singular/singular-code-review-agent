@@ -37,7 +37,7 @@ The reusable workflow accepts:
 
 Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-v4.1-flash`. The older `OPENCODE_MODEL` variable remains compatible.
 
-If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/glm-5.3-flash`. Each attempt has a 20-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
+If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/glm-5.3-flash`. Each attempt has a 25-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
 
 Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
 
